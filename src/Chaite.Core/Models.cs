@@ -108,6 +108,7 @@ namespace Chaite.Core
         public float WingTime;
         public float RocketTime;
         public bool OnGround;
+        public bool OnOneWaySupport;
         public bool Dead;
         public float WorldLeft;
         public float WorldRight;
@@ -133,6 +134,9 @@ namespace Chaite.Core
         public bool CanFlipGravity;
         public bool GravityInverted;
         public bool FeatherFall;
+        // Capability is independent of remaining charge: no wings/rocket boots
+        // and genuinely exhausted flight both have a zero resource fraction.
+        public bool HasFiniteFlightResource;
         public float FlightResourceFraction;
     }
 
@@ -146,10 +150,59 @@ namespace Chaite.Core
         public float ClearanceDown;
         public bool HasFloor;
         public bool HasCeiling;
+        // Exact, locally verified support intervals. Open air/wall clearance does
+        // not establish the existence of a floor across the same horizontal area.
+        public SupportSpan FloorSupport;
+        public SupportSpan CeilingSupport;
+        public SupportSpan RecoverySupport;
         public readonly List<Vec2> GrappleAnchors = new List<Vec2>(12);
 
         public float HorizontalClearance => ClearanceLeft + ClearanceRight;
         public float VerticalClearance => ClearanceUp + ClearanceDown;
+    }
+
+    public struct SupportSpan
+    {
+        public bool Valid;
+        public bool Inverted;
+        public bool OneWay;
+        public float Left;
+        public float Right;
+        public float SurfaceY;
+
+        public bool ContainsBody(float x, int width) => Valid && Right > Left &&
+            x >= Left && x + width <= Right;
+        public bool OverlapsBody(float x, int width) => Valid && Right > Left &&
+            x < Right && x + width > Left;
+    }
+
+    /// <summary>Conservative flat-support geometry; never invents unobserved terrain.</summary>
+    public static class SupportGeometry
+    {
+        public static bool RetainsFooting(SupportSpan support, float x, int width, bool inverted, bool drop)
+        {
+            return support.Inverted == inverted && (!support.OneWay || !inverted && !drop) &&
+                support.OverlapsBody(x, width);
+        }
+
+        public static bool TryLand(SupportSpan support, Vec2 before, ref Vec2 position, ref Vec2 velocity,
+            int width, int height, bool inverted, bool drop)
+        {
+            // Require the full predicted footprint for a NEW landing. Existing
+            // native grounded contact may retain footing until its final overlap.
+            if (!support.ContainsBody(position.X, width) || support.Inverted != inverted ||
+                support.OneWay && (inverted || drop)) return false;
+            var beforeFoot = inverted ? before.Y : before.Y + height;
+            var afterFoot = inverted ? position.Y : position.Y + height;
+            if (!(inverted ? velocity.Y < 0f && beforeFoot >= support.SurfaceY && afterFoot <= support.SurfaceY :
+                velocity.Y > 0f && beforeFoot <= support.SurfaceY && afterFoot >= support.SurfaceY)) return false;
+            var fraction = (support.SurfaceY - beforeFoot) / (afterFoot - beforeFoot);
+            var crossingX = before.X + (position.X - before.X) * fraction;
+            if (!support.ContainsBody(crossingX, width)) return false;
+            position.Y = inverted ? support.SurfaceY : support.SurfaceY - height;
+            velocity.Y = 0f;
+            return true;
+        }
     }
 
     public sealed class DifficultySnapshot

@@ -30,6 +30,7 @@ namespace Chaite.Core
         private int _gravityCooldown;
         private int _mountCooldown;
         private bool _restoringFlight;
+        private SupportSpan _landingSupport;
         private ThreatStep[] _threatSteps = Array.Empty<ThreatStep>();
         private BeamStep[] _beamSteps = Array.Empty<BeamStep>();
 
@@ -87,7 +88,7 @@ namespace Chaite.Core
             var patternHorizontal = PatternHorizontal(snapshot, patternTarget, directive);
             var patternVertical = PatternVertical(snapshot, patternTarget, directive);
             RespectArenaEdges(snapshot, ref patternHorizontal, ref patternVertical);
-            BudgetFlight(snapshot, ref patternVertical);
+            BudgetFlight(snapshot, ref patternHorizontal, ref patternVertical);
 
             var best = FindBestCandidate(snapshot, patternTarget, directive, patternHorizontal, patternVertical);
             var immediateRisk = ImmediateRisk(snapshot, directive);
@@ -193,7 +194,7 @@ namespace Chaite.Core
             var h = hasTarget ? PatternHorizontal(snapshot, target, directive) : ArenaCenterDirection(snapshot);
             var v = hasTarget ? PatternVertical(snapshot, target, directive) : 0;
             RespectArenaEdges(snapshot, ref h, ref v);
-            BudgetFlight(snapshot, ref v);
+            BudgetFlight(snapshot, ref h, ref v);
             var best = FindBestCandidate(snapshot, target, directive, h, v);
             plan.Horizontal = best.Horizontal;
             plan.Jump = best.Posture > 0;
@@ -226,6 +227,7 @@ namespace Chaite.Core
             _stableTicks = 0;
             _hasPreviousPosition = false;
             _restoringFlight = false;
+            _landingSupport = default(SupportSpan);
             _hookCooldown = _gravityCooldown = _mountCooldown = 0;
             _grappleAttachedTicks = _grappleReleaseTicks = 0;
             _relevantThreats.Clear();
@@ -360,18 +362,50 @@ namespace Chaite.Core
             _directionHoldTicks = _settings.DirectionHysteresisTicks;
         }
 
-        private void BudgetFlight(CombatSnapshot snapshot, ref int vertical)
+        private void BudgetFlight(CombatSnapshot snapshot, ref int horizontal, ref int vertical)
         {
-            if (snapshot.Mobility.MountActive && snapshot.Mobility.MountCanFly || snapshot.Mobility.CanFlipGravity)
+            var inverted = snapshot.Mobility.GravityInverted;
+            _landingSupport = snapshot.Arena.RecoverySupport;
+            if (!_landingSupport.Valid || _landingSupport.Inverted != inverted)
+                _landingSupport = inverted ? snapshot.Arena.CeilingSupport : snapshot.Arena.FloorSupport;
+            if (!snapshot.Mobility.HasFiniteFlightResource ||
+                snapshot.Mobility.MountActive && snapshot.Mobility.MountCanFly || snapshot.Mobility.CanFlipGravity)
             {
+                // A normal ground/double jump is not an exhausted flight cycle.
+                // Preserve the Boss strategy's horizontal and vertical intents.
                 _restoringFlight = false;
                 return;
             }
             if (snapshot.Player.OnGround || snapshot.Mobility.FlightResourceFraction >= _settings.FlightResumeFraction)
                 _restoringFlight = false;
-            else if (snapshot.Mobility.FlightResourceFraction < _settings.FlightReserveFraction &&
-                     (snapshot.Mobility.GravityInverted ? snapshot.Arena.HasCeiling : snapshot.Arena.HasFloor))
+            else if (snapshot.Mobility.FlightResourceFraction < _settings.FlightReserveFraction)
                 _restoringFlight = true;
+            if (_landingSupport.Valid && !snapshot.Player.OnGround && _landingSupport.Inverted == inverted &&
+                !(_landingSupport.OneWay && inverted))
+            {
+                var player = snapshot.Player;
+                var halfWidth = player.Width * .5f;
+                var speed = Math.Abs(player.Velocity.X);
+                var brakeTicks = speed / Math.Max(.08f, player.RunAcceleration + player.RunSlowdown);
+                var margin = Math.Min(Math.Max(0f, (_landingSupport.Right - _landingSupport.Left - player.Width) * .25f),
+                    32f + speed * (brakeTicks * .5f + 8f));
+                var left = _landingSupport.Left + halfWidth + margin;
+                var right = _landingSupport.Right - halfWidth - margin;
+                if (left > right) left = right = (_landingSupport.Left + _landingSupport.Right) * .5f;
+                var projectedX = player.Center.X + player.Velocity.X * 8f;
+                var outside = Math.Max(0f, Math.Max(left - projectedX, projectedX - right));
+                var returnTicks = outside / Math.Max(1f, player.MaxRunSpeed) + brakeTicks;
+                var remainingFlight = Math.Max(player.WingTime, player.RocketTime);
+                if (outside > 0f && (snapshot.Mobility.FlightResourceFraction < Math.Min(.5f, _settings.FlightReserveFraction + .25f) ||
+                    remainingFlight < returnTicks + 24f)) _restoringFlight = true;
+                if (_restoringFlight)
+                {
+                    // This is the desired landing route, BEFORE the emergency
+                    // candidate search. Never overwrite its chosen dodge afterward.
+                    horizontal = player.Center.X < left ? 1 : player.Center.X > right ? -1 : 0;
+                    if (_landingSupport.OneWay && vertical < 0) vertical = 0;
+                }
+            }
             if (_restoringFlight && vertical > 0) vertical = 0;
         }
 
@@ -411,6 +445,21 @@ namespace Chaite.Core
             var canInitialJump = player.OnGround || flightTicks > 0f || flyingMount;
             var grounded = player.OnGround && posture <= 0;
             var standingY = player.Position.Y;
+            var support = snapshot.Mobility.GravityInverted ? snapshot.Arena.CeilingSupport : snapshot.Arena.FloorSupport;
+            var actualFoot = snapshot.Mobility.GravityInverted ? player.Position.Y : player.Position.Y + player.Height;
+            if (player.OnGround && (!support.OverlapsBody(player.Position.X, player.Width) ||
+                support.Inverted != snapshot.Mobility.GravityInverted || Math.Abs(actualFoot - support.SurfaceY) > 2f))
+            {
+                // Native OnGround is evidence of current contact, even on shapes
+                // the flat-row scanner deliberately excludes. Preserve only this
+                // actual footprint, never extrapolate it across open arena space.
+                support = new SupportSpan { Valid = true, Inverted = snapshot.Mobility.GravityInverted,
+                    OneWay = player.OnOneWaySupport,
+                    Left = player.Position.X, Right = player.Position.X + player.Width, SurfaceY = actualFoot };
+            }
+            var originalSupport = support;
+            if (grounded && !SupportGeometry.RetainsFooting(support, position.X, player.Width,
+                snapshot.Mobility.GravityInverted, posture < 0)) grounded = false;
             var previousBounds = player.BoundsAt(position);
 
             if (posture > 0 && canInitialJump)
@@ -423,8 +472,12 @@ namespace Chaite.Core
 
             for (var tick = step; tick <= _horizonTicks; tick += step)
             {
+                var beforeStep = position;
                 float horizontalTravel;
                 velocity.X = HorizontalMotion.Advance(player, velocity.X, horizontal, grounded, step, out horizontalTravel, mountedSpeed);
+                position.X += horizontalTravel;
+                if (grounded && !SupportGeometry.RetainsFooting(support, position.X, player.Width,
+                    snapshot.Mobility.GravityInverted, posture < 0)) grounded = false;
                 if (grounded) velocity.Y = 0f;
                 else
                 {
@@ -437,31 +490,32 @@ namespace Chaite.Core
                 }
                 var maxFall = Math.Max(6f, player.MaxFallSpeed);
                 velocity.Y = Math.Max(-maxFall, Math.Min(maxFall, velocity.Y));
-                position.X += horizontalTravel;
                 position.Y += velocity.Y * step;
                 if (grounded) position.Y = standingY;
 
-                // Only land on a floor/ceiling actually observed by the adapter.
-                // This is a conservative local model, not a substitute for tile collision.
-                var arena = snapshot.Arena.LocalOpenBounds;
-                if (!grounded && posture <= 0 && arena.Width > 0f && arena.Height > 0f &&
-                    position.X >= arena.Left && position.X + player.Width <= arena.Right)
+                if (!grounded)
                 {
-                    if (gravityDirection > 0f && snapshot.Arena.HasFloor && velocity.Y > 0f &&
-                        player.Position.Y + player.Height <= arena.Bottom && position.Y + player.Height > arena.Bottom)
+                    var first = originalSupport;
+                    var second = snapshot.Arena.RecoverySupport;
+                    if (second.Valid && second.Inverted == snapshot.Mobility.GravityInverted &&
+                        (!first.Valid || (second.SurfaceY - first.SurfaceY) * gravityDirection < 0f))
                     {
-                        position.Y = arena.Bottom - player.Height;
-                        standingY = position.Y;
-                        grounded = true;
-                        velocity.Y = 0f;
+                        first = second;
+                        second = originalSupport;
                     }
-                    else if (gravityDirection < 0f && snapshot.Arena.HasCeiling && velocity.Y < 0f &&
-                             player.Position.Y >= arena.Top && position.Y < arena.Top)
+                    var landed = SupportGeometry.TryLand(first, beforeStep, ref position, ref velocity,
+                        player.Width, player.Height, snapshot.Mobility.GravityInverted, posture < 0);
+                    if (landed) support = first;
+                    else if (SupportGeometry.TryLand(second, beforeStep, ref position, ref velocity,
+                        player.Width, player.Height, snapshot.Mobility.GravityInverted, posture < 0))
                     {
-                        position.Y = arena.Top;
+                        landed = true;
+                        support = second;
+                    }
+                    if (landed)
+                    {
                         standingY = position.Y;
                         grounded = true;
-                        velocity.Y = 0f;
                     }
                 }
 
@@ -542,6 +596,12 @@ namespace Chaite.Core
             // Landing/restoration is a deliberate sub-loop, not an accidental failure
             // to follow an airborne preferred path. Emergency candidates may override it.
             if (_restoringFlight && posture > 0) risk += _settings.PatternDeviationPenalty * 2f;
+            if (_restoringFlight && _landingSupport.Valid)
+            {
+                var outside = Math.Max(0f, Math.Max(_landingSupport.Left - position.X,
+                    position.X + player.Width - _landingSupport.Right));
+                risk += Math.Min(120f, outside * .5f);
+            }
             return new Candidate { Horizontal = horizontal, Posture = posture, Score = risk, Hazard = hazard };
         }
 
@@ -649,8 +709,20 @@ namespace Chaite.Core
                 bounds.Top < player.WorldTop || bounds.Bottom > player.WorldBottom)
                 return true;
             var arena = snapshot.Arena.LocalOpenBounds;
-            return arena.Width > 0f && arena.Height > 0f &&
-                   (bounds.Left < arena.Left || bounds.Right > arena.Right || bounds.Top < arena.Top || bounds.Bottom > arena.Bottom);
+            if (arena.Width > 0f && (bounds.Left < arena.Left || bounds.Right > arena.Right)) return true;
+            // Up/down scan extents are not horizontal collision planes. Only the
+            // actually verified flat solid tile rows can obstruct this footprint.
+            return IntersectsSolidSupport(snapshot.Arena.FloorSupport, bounds) ||
+                IntersectsSolidSupport(snapshot.Arena.CeilingSupport, bounds) ||
+                IntersectsSolidSupport(snapshot.Arena.RecoverySupport, bounds);
+        }
+
+        private static bool IntersectsSolidSupport(SupportSpan support, RectF bounds)
+        {
+            if (!support.Valid || support.OneWay) return false;
+            var row = new RectF(support.Left, support.SurfaceY - (support.Inverted ? 16f : 0f),
+                support.Right - support.Left, 16f);
+            return row.Intersects(bounds);
         }
 
         private float ImmediateRisk(CombatSnapshot snapshot, BossDirective directive)

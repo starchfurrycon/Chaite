@@ -39,6 +39,10 @@ function Require-Integer($Value, [long]$Minimum, [long]$Maximum, [string]$Name) 
     if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -lt $Minimum -or $Value -gt $Maximum) { throw "Invalid $Name; expected integer $Minimum..$Maximum." }
     return [int]$Value
 }
+function Require-Boolean($Value, [string]$Name) {
+    if ($Value -isnot [bool]) { throw "Invalid $Name; expected JSON boolean." }
+    return $Value
+}
 function Get-Rate([int]$Wins, [int]$Denominator) {
     if ($Denominator -eq 0) { return $null }
     return [Math]::Round(100.0 * $Wins / $Denominator, 2)
@@ -212,6 +216,43 @@ foreach ($case in $plan) {
         # A normal loss/timeout can occur while waiting for the boss. Retain it
         # as an attempted failure without inventing a valid started battle.
         if ($isWin -ne ($status -eq 'win') -or ($status -eq 'win' -and (-not $validBattle -or -not $record.BattleStarted)) -or ($validBattle -and -not $record.BattleStarted) -or ($status -in @('rejected', 'harness-error') -and $validBattle)) { throw 'Contradictory battle/status flags in result.' }
+        if ($validBattle) {
+            # Declared command-line difficulty/seed is not evidence that the
+            # native world and its named RNG streams actually use those values.
+            $mode = @('classic', 'expert', 'master').IndexOf($case.Difficulty)
+            $native = Read-Field $result 'nativeDifficulty'
+            $random = Read-Field $result 'battleRandom'
+            # Validate JSON types before comparing: PowerShell otherwise accepts
+            # strings such as "true" / "1" as genuine Boolean/integer evidence.
+            if ((Require-Boolean (Read-Field $result 'nativeDifficultyVerified') 'nativeDifficultyVerified') -ne $true -or
+                (Require-Integer (Read-Field $native 'gameMode') 0 2 'native gameMode') -ne $mode -or
+                (Require-Integer (Read-Field $native 'worldFileGameMode') 0 2 'native worldFileGameMode') -ne $mode -or
+                (Require-Integer (Read-Field $native 'difficulty') 1 3 'native difficulty') -ne ($mode + 1) -or
+                (Require-Integer (Read-Field $native 'worldFileSeed') 0 2147483647 'native worldFileSeed') -ne $case.Seed -or
+                (Require-Boolean (Read-Field $native 'expertMode') 'native expertMode') -ne ($mode -gt 0) -or
+                (Require-Boolean (Read-Field $native 'masterMode') 'native masterMode') -ne ($mode -eq 2) -or
+                (Require-Boolean (Read-Field $native 'hardMode') 'native hardMode') -ne ($case.Scenario -notin @('eye', 'king-slime')) -or
+                (Require-Boolean (Read-Field $native 'forTheWorthy') 'native forTheWorthy') -ne $false) { throw 'Native difficulty/world seed evidence is missing or disagrees with the requested fixture.' }
+            $nativeFrames = Require-Integer (Read-Field $result 'nativeFrames') 121 24000 'native frames'
+            $fingerprint = @(Read-Field $random 'independentTwinFingerprint')
+            if ((Require-Boolean (Read-Field $random 'installedAfterSetup') 'random installedAfterSetup') -ne $true -or
+                (Require-Boolean (Read-Field $random 'actualAndNativeNamedColdStateVerified') 'random actualAndNativeNamedColdStateVerified') -ne $true -or
+                (Require-Boolean (Read-Field $random 'actualStreamConsumedForFingerprint') 'random actualStreamConsumedForFingerprint') -ne $false -or
+                (Require-Integer (Read-Field $random 'seed') 0 2147483647 'random seed') -ne $case.Seed -or
+                (Require-Integer (Read-Field $random 'unpausedUpdateSeedInitial') 0 2147483647 'random unpausedUpdateSeedInitial') -ne $case.Seed -or
+                (Require-Integer (Read-Field $random 'unpausedUpdateSeedAdvances') 0 24000 'random unpausedUpdateSeedAdvances') -ne $nativeFrames -or
+                (Require-Integer (Read-Field $random 'referenceChecks') 0 2147483647 'random referenceChecks') -lt $nativeFrames -or
+                $fingerprint.Count -ne 8) { throw 'Native battle random-stream verification is incomplete/inconsistent.' }
+            foreach ($sample in $fingerprint) { $null = Require-Integer $sample 0 2147483647 'random fingerprint sample' }
+            $observed = @(Read-Field $result 'firstObservedBosses')
+            if ($observed.Count -eq 0) { throw 'No native Boss difficulty observations were supplied.' }
+            foreach ($boss in $observed) {
+                if ((Require-Integer (Read-Field $boss 'lifeMax') 1 2147483647 'Boss lifeMax') -le 0 -or
+                    (Require-Integer (Read-Field $boss 'gameMode') 0 2 'Boss gameMode') -ne $mode -or
+                    (Require-Integer (Read-Field $boss 'difficulty') 1 3 'Boss difficulty') -ne ($mode + 1) -or
+                    (Require-Integer (Read-Field $boss 'npcDifficulty') 1 3 'Boss npcDifficulty') -ne ($mode + 1)) { throw 'Native spawned Boss difficulty is inconsistent with the case.' }
+            }
+        }
         $record.ValidBattle = $validBattle
         $record.Classification = $status
         $record.Failure = Read-Field $result 'failure'

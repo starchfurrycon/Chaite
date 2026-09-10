@@ -28,11 +28,21 @@ public static class ChaiteGameProbe
     static int deaths, minLife = int.MaxValue, grappleTicks, maximumGrappleTicks, expectedBossMask;
     static long bossDamage, previousRuntimeTotal;
     static int previousRuntimeFrames, nativeSceneMetricRefreshes;
+    static Terraria.Utilities.UnifiedRandom battleRandom;
+    static int[] battleRandomFingerprint;
+    static int battleRandomReferenceChecks;
+    static ulong initialUnpausedUpdateSeed, expectedUnpausedUpdateSeed;
+    static Action<ulong> setUnpausedUpdateSeed;
+    static int unpausedUpdateSeedAdvances;
+    static bool nativeDifficultyVerified, battleRandomInstalled, battleRandomColdStateVerified;
+    static Dictionary<string, object> nativeDifficultyReport;
     static readonly List<double> runtimeSamples = new List<double>(24000);
     static readonly List<double> engineSamples = new List<double>(24000);
     static readonly Dictionary<int, BossLifeSample> previousBosses = new Dictionary<int, BossLifeSample>();
     static readonly List<int> retiredBossSlots = new List<int>(16);
     static readonly HashSet<int> unexpectedBossTypes = new HashSet<int>();
+    static readonly HashSet<int> firstObservedBossTypes = new HashSet<int>();
+    static readonly List<Dictionary<string,object>> firstObservedBosses = new List<Dictionary<string,object>>();
     static Dictionary<string, object> equipmentReport;
     static readonly Type runtimeType = typeof(Chaite.Plugin.Runtime);
     static readonly FieldInfo runtimeTotalField = runtimeType.GetField("_timingTotal", BindingFlags.Static | BindingFlags.NonPublic);
@@ -173,9 +183,6 @@ public static class ChaiteGameProbe
             using(var game = new Game())
             {
                 Terraria.Lang.InitializeLegacyLocalization();
-                // Replaces only Main.rand. WorldGen.genRand, local random generators
-                // and wall-time-dependent systems are not claimed to be seeded.
-                Game.rand=new Terraria.Utilities.UnifiedRandom(seed);
                 typeof(Game).GetMethod("Initialize",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(game,null);
                 Log("HEADLESS_INITIALIZED");
                 ContentReady();
@@ -210,11 +217,20 @@ public static class ChaiteGameProbe
                 }
                 var update = (Action)Delegate.CreateDelegate(typeof(Action),game,typeof(Game).GetMethod("DoUpdateInWorld",BindingFlags.Instance|BindingFlags.NonPublic));
                 var counter=typeof(Game).GetField("_gameUpdateCount",BindingFlags.Static|BindingFlags.NonPublic);
+                // Finish ALL setup, including optional collision comparisons, before
+                // installing combat RNGs. Setup must not consume this battle stream.
+                InstallBattleRandom();
                 while(!failed)
                 {
                     BeforeUpdate();
                     counter.SetValue(null,(uint)ticks);
+                    VerifyNativeBattleContext();
                     long nativeStart=Stopwatch.GetTimestamp();
+                    // Native Main.DoUpdate advances this stream once before
+                    // DoUpdateInWorld. Headless mode bypasses only that outer call.
+                    expectedUnpausedUpdateSeed=Terraria.Utils.RandomNextSeed(expectedUnpausedUpdateSeed);
+                    setUnpausedUpdateSeed(expectedUnpausedUpdateSeed);
+                    unpausedUpdateSeedAdvances++;
                     // A rendered client refreshes nearby tile metrics through its
                     // scene/lighting path, absent in this dedicated presentation.
                     // Use the real scan at the new frame counter, then let native
@@ -223,6 +239,7 @@ public static class ChaiteGameProbe
                     Game.player[0].UpdateSceneMetrics();
                     nativeSceneMetricRefreshes++;
                     update();
+                    VerifyNativeBattleContext();
                     engineSamples.Add((Stopwatch.GetTimestamp()-nativeStart)*1000d/Stopwatch.Frequency);
                     AfterNativeUpdate();
                     // Bound background CPU. Game mechanics still advance in native ticks;
@@ -284,7 +301,6 @@ public static class ChaiteGameProbe
             Game.worldName = "Chaite isolated engine test";
             Game.dayTime = false;
             Game.time = 1000;
-            Game.GameMode = difficultyCode;
             Game.hardMode = scenario.HardMode;
             Game.netMode = 0;
             Game.myPlayer = 0;
@@ -322,6 +338,11 @@ public static class ChaiteGameProbe
             Game.ActiveWorldFileData = new WorldFileData(Path.Combine(Root,"Save","Worlds","ChaiteLab.wld"), false);
             Game.ActiveWorldFileData.SetWorldSize(4200,1200);
             Game.ActiveWorldFileData.Name = Game.worldName;
+            Game.ActiveWorldFileData.SetSeed(seed.ToString(CultureInfo.InvariantCulture));
+            // Main.GameMode is a view over the current WorldFileData, not an
+            // independent global field. Set it only AFTER installing the final WFD.
+            Game.GameMode = difficultyCode;
+            VerifyNativeDifficulty();
             Game.Map = new Terraria.Map.WorldMap(4200,1200);
             Game.sectionManager = new WorldSections(Game.maxSectionsX,Game.maxSectionsY);
             Game.sectionManager.SetAllSectionsLoaded();
@@ -337,6 +358,85 @@ public static class ChaiteGameProbe
             Log("ARENA_READY in-memory; "+difficulty+" life400 "+scenario.Equipment+"; no godmode; no user saves");
         }
         catch(Exception e) { Fail(e); }
+    }
+
+    static void VerifyNativeDifficulty()
+    {
+        var expectedLevel=difficultyCode==2?Terraria.DataStructures.GameDifficultyLevel.Master:
+            difficultyCode==1?Terraria.DataStructures.GameDifficultyLevel.Expert:Terraria.DataStructures.GameDifficultyLevel.Classic;
+        nativeDifficultyReport=new Dictionary<string,object>
+        {
+            {"gameMode",Game.GameMode},{"difficulty",Game.Difficulty},{"expertMode",Game.expertMode},
+            {"masterMode",Game.masterMode},{"hardMode",Game.hardMode},{"forTheWorthy",Game.getGoodWorld},
+            {"worldFileGameMode",Game.ActiveWorldFileData==null?-1:Game.ActiveWorldFileData.GameMode},
+            {"worldFileSeed",Game.ActiveWorldFileData==null?-1:Game.ActiveWorldFileData.Seed}
+        };
+        if(Game.ActiveWorldFileData==null || Game.GameMode!=difficultyCode ||
+            Game.ActiveWorldFileData.GameMode!=difficultyCode || Game.Difficulty!=expectedLevel ||
+            Game.expertMode!=(difficultyCode>0) || Game.masterMode!=(difficultyCode==2) ||
+            Game.hardMode!=scenario.HardMode || Game.getGoodWorld || Game.ActiveWorldFileData.Seed!=seed)
+            throw new InvalidOperationException("Native difficulty/seed mismatch: "+Json(nativeDifficultyReport));
+        nativeDifficultyVerified=true;
+        Log("NATIVE_DIFFICULTY "+Json(nativeDifficultyReport));
+    }
+
+    static void InstallBattleRandom()
+    {
+        VerifyNativeDifficulty();
+        var namedRngs=typeof(Game).GetField("_rngs",BindingFlags.Static|BindingFlags.NonPublic);
+        if(namedRngs==null) throw new MissingFieldException("Native named random-stream registry unavailable");
+        // Native Main.SwapRandom creates each named stream from the WFD seed.
+        // Discard setup streams just as native Initialize creates a new registry.
+        namedRngs.SetValue(null,new Dictionary<string,Terraria.Utilities.UnifiedRandom>());
+        battleRandom=new Terraria.Utilities.UnifiedRandom(seed);
+        Game.rand=battleRandom;
+        initialUnpausedUpdateSeed=(ulong)(uint)seed;
+        expectedUnpausedUpdateSeed=initialUnpausedUpdateSeed;
+        var unpausedProperty=typeof(Game).GetProperty("UnpausedUpdateSeed",BindingFlags.Public|BindingFlags.Static);
+        var unpausedSetter=unpausedProperty==null?null:unpausedProperty.GetSetMethod(true);
+        if(unpausedSetter==null) throw new MissingMethodException("Native UnpausedUpdateSeed setter unavailable");
+        setUnpausedUpdateSeed=(Action<ulong>)Delegate.CreateDelegate(typeof(Action<ulong>),unpausedSetter);
+        setUnpausedUpdateSeed(initialUnpausedUpdateSeed);
+        var fingerprintTwin=new Terraria.Utilities.UnifiedRandom(seed);
+        VerifyFreshRandomState(battleRandom,fingerprintTwin);
+        using(Game.SwapRandom("DoUpdateInWorld")) VerifyFreshRandomState(Game.rand,fingerprintTwin);
+        if(!ReferenceEquals(Game.rand,battleRandom)) throw new InvalidOperationException("Native random swap did not restore the battle RNG");
+        battleRandomColdStateVerified=true;
+        battleRandomFingerprint=new int[8];
+        for(int i=0;i<battleRandomFingerprint.Length;i++) battleRandomFingerprint[i]=fingerprintTwin.Next();
+        battleRandomInstalled=true;
+        Log("BATTLE_RNG_INSTALLED seed="+seed+" independentTwinFingerprint="+Json(battleRandomFingerprint)+
+            " unpausedInitial="+initialUnpausedUpdateSeed+
+            " namedStreams=native-WFD-seed fresh-registry; actual battle RNG not sampled");
+    }
+
+    static void VerifyFreshRandomState(Terraria.Utilities.UnifiedRandom actual,Terraria.Utilities.UnifiedRandom expected)
+    {
+        // Read native state without drawing even one value from the battle RNG.
+        // This binds the displayed independent-twin fingerprint to the real seed.
+        var flags=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
+        var cursor=typeof(Terraria.Utilities.UnifiedRandom).GetField("inext",flags);
+        var state=typeof(Terraria.Utilities.UnifiedRandom).GetField("SeedArray",flags);
+        if(actual==null || cursor==null || state==null || !Equals(cursor.GetValue(actual),cursor.GetValue(expected)))
+            throw new InvalidOperationException("Native RNG initial cursor mismatch");
+        var actualState=state.GetValue(actual) as int[];
+        var expectedState=state.GetValue(expected) as int[];
+        if(actualState==null || expectedState==null || actualState.Length!=expectedState.Length)
+            throw new InvalidOperationException("Native RNG initial state shape mismatch");
+        for(int i=0;i<actualState.Length;i++)
+            if(actualState[i]!=expectedState[i]) throw new InvalidOperationException("Native RNG initial state differs at index "+i);
+    }
+
+    static void VerifyNativeBattleContext()
+    {
+        battleRandomReferenceChecks++;
+        if(!battleRandomInstalled || !ReferenceEquals(Game.rand,battleRandom))
+            throw new InvalidOperationException("Native Main.rand changed outside a scoped swap at tick "+ticks);
+        if(Game.UnpausedUpdateSeed!=expectedUnpausedUpdateSeed)
+            throw new InvalidOperationException("Native UnpausedUpdateSeed changed outside its expected outer-frame advance at tick "+ticks);
+        if(Game.ActiveWorldFileData==null || Game.ActiveWorldFileData.Seed!=seed || Game.GameMode!=difficultyCode ||
+            Game.expertMode!=(difficultyCode>0) || Game.masterMode!=(difficultyCode==2))
+            throw new InvalidOperationException("Native difficulty/world seed changed during battle at tick "+ticks);
     }
 
     static void EquipScenario(Player player)
@@ -466,6 +566,20 @@ public static class ChaiteGameProbe
             if(npc!=null && npc.active && npc.boss)
             {
                 sawBoss=true; bossLife+=npc.life;
+                if(firstObservedBossTypes.Add(npc.type))
+                {
+                    var observed=new Dictionary<string,object>
+                    {
+                        {"type",npc.type},{"key",npc.whoAmI},{"tick",ticks},{"life",npc.life},
+                        {"lifeMax",npc.lifeMax},{"damage",npc.damage},{"defense",npc.defense},
+                        {"gameMode",Game.GameMode},{"difficulty",Game.Difficulty},{"npcDifficulty",npc.difficulty},
+                        {"expertMode",Game.expertMode},{"masterMode",Game.masterMode}
+                    };
+                    firstObservedBosses.Add(observed);
+                    Log("NATIVE_BOSS_FIRST "+Json(observed));
+                    if(npc.lifeMax<=0 || npc.difficulty!=Game.Difficulty)
+                        throw new InvalidOperationException("Native spawned Boss difficulty/lifeMax mismatch: "+Json(observed));
+                }
                 bool expected=false;
                 for(int i=0;i<scenario.BossTypes.Length;i++)
                     if(npc.type==scenario.BossTypes[i]) { expectedBossMask|=1<<i; expected=true; }
@@ -689,13 +803,26 @@ public static class ChaiteGameProbe
             {"schema","chaite-boss-result/v1"},{"schemaVersion",1},{"scenario",scenario==null?null:scenario.Id},
             {"seed",seed},{"difficulty",difficulty},{"difficultyCode",difficultyCode},{"status",status},
             {"processExitCode",exitCode},{"outcome",outcome},{"win",win},{"failure",failure},
-            {"validBattle",status!="harness-error" && expectedSeen && sawSummonConsumed && nativeFrames>120},
+            {"validBattle",status!="harness-error" && expectedSeen && sawSummonConsumed && nativeFrames>120 &&
+                nativeDifficultyVerified && battleRandomInstalled},
             {"battleStarted",expectedBossMask!=0},{"allExpectedBossesSeen",expectedSeen},
             {"death",deaths>0},{"deaths",deaths},{"hits",hits},{"ticks",ticks},{"nativeFrames",nativeFrames},
             {"minLife",minLife==int.MaxValue?0:minLife},{"bossDamage",bossDamage},{"bossLifeRemaining",lastBossLife},
             {"maxGrappleTicks",maximumGrappleTicks},{"maximumShots",maximumShots},
             {"summonConsumed",sawSummonConsumed},{"bossDamaged",sawBossDamage},{"playerMoved",sawMovement},
             {"unexpectedBossTypes",unexpected},{"equipment",equipmentReport},
+            {"nativeDifficultyVerified",nativeDifficultyVerified},{"nativeDifficulty",nativeDifficultyReport},
+            {"firstObservedBosses",firstObservedBosses},
+            {"battleRandom",new Dictionary<string,object>
+                {
+                    {"installedAfterSetup",battleRandomInstalled},{"seed",seed},
+                    {"independentTwinFingerprint",battleRandomFingerprint},{"referenceChecks",battleRandomReferenceChecks},
+                    {"actualAndNativeNamedColdStateVerified",battleRandomColdStateVerified},
+                    {"unpausedUpdateSeedInitial",initialUnpausedUpdateSeed},{"unpausedUpdateSeedFinal",expectedUnpausedUpdateSeed},
+                    {"unpausedUpdateSeedAdvances",unpausedUpdateSeedAdvances},
+                    {"unpausedUpdateSeedPolicy","initial = zero-extended declared numeric seed; native Utils.RandomNextSeed once before each DoUpdateInWorld, matching native DoUpdate order"},
+                    {"actualStreamConsumedForFingerprint",false},{"namedStreams","fresh native registry; Main.SwapRandom derives streams from verified WorldFileData.Seed"}
+                }},
             {"arena",new Dictionary<string,object>
                 {
                     {"kind","in-memory hand-built fixture; not a generated/saved user world"},
@@ -711,7 +838,7 @@ public static class ChaiteGameProbe
             {"limits",new Dictionary<string,object>{{"ticks",tickLimit},{"wallSeconds",wallLimitSeconds}}},
             {"runtime",TimingSummary(runtimeSamples,"production snapshot+plan+capture; excludes vanilla update/render/input presentation")},
             {"nativeUpdate",TimingSummary(engineSamples,"native scene-metric refresh plus headless DoUpdateInWorld including production plugin; excludes harness tracking and Sleep")},
-            {"randomScope","seed initializes Main.rand before Main.Initialize only; not WorldGen.genRand or every local/wall-time random source; not a world-generation seed"},
+            {"randomScope","after all setup, seed installs Main.rand and a fresh native named-stream registry; verified WorldFileData.Seed drives Main.SwapRandom; Main.UnpausedUpdateSeed deterministically initialized and advanced by native Utils.RandomNextSeed each frame; cold states verified without consumption and references checked at every native-frame boundary; WorldGen.genRand and other thread/local/wall-time sources are not controlled; arena is not world-generated"},
             {"scope","one process, one fixed-gear arena fixture, one F8 edge; native boss summon/AI/damage/physics; headless dedicated presentation branches, not a rendered client"},
             {"hitsDefinition","native update frames with decreased player life, including environmental damage; not a damage-event hook"},
             {"bossDamageDefinition","observed expected boss-root life decreases including observed final deaths; shared worm body segments excluded"},

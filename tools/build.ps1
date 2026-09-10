@@ -35,6 +35,9 @@ if ($Package) {
     & (Join-Path $projectRoot "tests\Chaite.Tests\bin\$Configuration\net48\Chaite.Tests.exe") |
         Tee-Object -FilePath (Join-Path $verification 'tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Offline regression tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-boss-evidence.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'native-evidence-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline native-evidence validation tests failed; no package was created.' }
     $uiOutput = Join-Path $verification 'ui'
     $uiCheck = Start-Process -FilePath (Join-Path $managerBin 'Chaite.Manager.exe') `
         -ArgumentList @('--ui-smoke', ('"' + $uiOutput + '"')) -WindowStyle Hidden -PassThru -Wait

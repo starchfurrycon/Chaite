@@ -106,6 +106,7 @@ namespace Chaite.Plugin
         private readonly Func<object, int> _playerWingTimeMax;
         private readonly Func<object, int> _playerRocketTime;
         private readonly Func<object, int> _playerRocketTimeMax;
+        private readonly Func<object, int> _playerRocketBoots;
         private readonly Func<object, int> _playerDashType;
         private readonly Func<object, int> _playerDashDelay;
         private readonly Func<object, int> _playerGrapCount;
@@ -164,6 +165,8 @@ namespace Chaite.Plugin
         private readonly Func<object, ushort> _tileType;
         private readonly Func<object, bool> _tileActive;
         private readonly Func<object, bool> _tileInactive;
+        private readonly Func<object, byte> _tileSlope;
+        private readonly Func<object, bool> _tileHalfBrick;
         private readonly Func<object, bool> _tileWater;
         private readonly Func<object, bool> _tileLava;
         private readonly bool[] _tileSolid;
@@ -198,6 +201,12 @@ namespace Chaite.Plugin
         private ArenaSnapshot _cachedArena;
         private Vec2 _cachedArenaAt;
         private int _arenaCacheTicks;
+        private bool _cachedArenaInverted;
+        private bool _cachedArenaOnGround;
+        private bool _cachedArenaOneWay;
+        private float _cachedArenaFootY;
+        private SupportSpan _recoverySupport;
+        private int _recoverySupportAge;
         private SingleItemDropTransaction _voodooTransaction;
         private int _summonInitialStack = -1;
         private int _summonPulseTick = -1;
@@ -314,6 +323,7 @@ namespace Chaite.Plugin
             _playerWingTimeMax = ReflectionAccess.Getter<int>(playerType, "wingTimeMax");
             _playerRocketTime = ReflectionAccess.Getter<int>(playerType, "rocketTime");
             _playerRocketTimeMax = ReflectionAccess.Getter<int>(playerType, "rocketTimeMax");
+            _playerRocketBoots = ReflectionAccess.Getter<int>(playerType, "rocketBoots");
             _playerDashType = ReflectionAccess.Getter<int>(playerType, "dashType");
             _playerDashDelay = ReflectionAccess.Getter<int>(playerType, "dashDelay");
             _playerGrapCount = ReflectionAccess.Getter<int>(playerType, "grapCount");
@@ -377,6 +387,8 @@ namespace Chaite.Plugin
             _tileType = ReflectionAccess.Getter<ushort>(tileType, "type");
             _tileActive = ReflectionAccess.MethodGetter<bool>(tileType, "active");
             _tileInactive = ReflectionAccess.MethodGetter<bool>(tileType, "inActive");
+            _tileSlope = ReflectionAccess.MethodGetter<byte>(tileType, "slope");
+            _tileHalfBrick = ReflectionAccess.MethodGetter<bool>(tileType, "halfBrick");
             _tileWater = ReflectionAccess.MethodGetter<bool>(tileType, "water");
             _tileLava = ReflectionAccess.MethodGetter<bool>(tileType, "lava");
             var liquidField = ReflectionAccess.Field(tileType, "liquid");
@@ -554,7 +566,10 @@ namespace Chaite.Plugin
             state.JumpSpeedBoost = _playerJumpSpeedBoost(player);
             state.WingTime = _playerWingTime(player);
             state.RocketTime = _playerRocketTime(player);
-            state.OnGround = Math.Abs(vy) < .01f && HasFooting(state, _playerGravDir(player) < 0);
+            bool oneWayFooting;
+            var hasFooting = HasFooting(state, _playerGravDir(player) < 0, out oneWayFooting);
+            state.OnGround = Math.Abs(vy) < .01f && hasFooting;
+            state.OnOneWaySupport = state.OnGround && oneWayFooting;
             state.Dead = _playerDead(player);
             state.WorldLeft = 16f;
             state.WorldRight = _maxTilesX() * 16f - 16f;
@@ -581,6 +596,7 @@ namespace Chaite.Plugin
             mobility.CanFlipGravity = _playerGravControl(player);
             mobility.GravityInverted = _playerGravDir(player) < 0f;
             mobility.FeatherFall = _playerSlowFall(player);
+            mobility.HasFiniteFlightResource = HasFiniteFlightResource(player);
             mobility.FlightResourceFraction = FlightResource(player);
             var difficulty = snapshot.Difficulty;
             difficulty.Expert = _expertMode();
@@ -596,7 +612,7 @@ namespace Chaite.Plugin
             var slot = useBestHotbarWeapon ? FindBestWeaponSlot(player) :
                 Math.Max(0, Math.Min(items.Length - 1, GetSelectedItem(player)));
             ReadWeaponInto(player, items, slot, snapshot.Weapon);
-            snapshot.Arena = ReadArena(snapshot.Player);
+            snapshot.Arena = ReadArena(snapshot.Player, mobility.GravityInverted);
             ReadTargetsAndThreats(player, snapshot);
             snapshot.LineOfSightToPrimary = true;
             return snapshot;
@@ -743,13 +759,20 @@ namespace Chaite.Plugin
             }
         }
 
-        private ArenaSnapshot ReadArena(PlayerSnapshot player)
+        private ArenaSnapshot ReadArena(PlayerSnapshot player, bool inverted)
         {
-            if (_cachedArena != null && _arenaCacheTicks++ < 20 &&
+            _recoverySupportAge++;
+            var footY = inverted ? player.Position.Y : player.Position.Y + player.Height;
+            if (_cachedArena != null && _cachedArenaInverted == inverted && _cachedArenaOnGround == player.OnGround && _arenaCacheTicks++ < 20 &&
+                (!player.OnGround || _cachedArenaOneWay == player.OnOneWaySupport && Math.Abs(footY - _cachedArenaFootY) < 2f) &&
                 Vec2.DistanceSquared(player.Center, _cachedArenaAt) < 64f * 64f)
                 return _cachedArena;
 
             _arenaCacheTicks = 0;
+            _cachedArenaInverted = inverted;
+            _cachedArenaOnGround = player.OnGround;
+            _cachedArenaOneWay = player.OnOneWaySupport;
+            _cachedArenaFootY = footY;
             _cachedArenaAt = player.Center;
             var tiles = _tiles();
             var centerX = Clamp((int)(player.Center.X / 16f), 2, _maxTilesX() - 3);
@@ -770,6 +793,10 @@ namespace Chaite.Plugin
                 HasCeiling = up < maxVertical,
                 SafeCenter = new Vec2((centerX + (right - left) * .5f) * 16f, player.Center.Y)
             };
+            arena.FloorSupport = ReadSupportSpan(tiles, player, false);
+            arena.CeilingSupport = ReadSupportSpan(tiles, player, true);
+            arena.RecoverySupport = RefreshRecoverySupport(tiles, player,
+                inverted ? arena.CeilingSupport : arena.FloorSupport, inverted);
             arena.LocalOpenBounds = new RectF(player.Center.X - arena.ClearanceLeft + 8f,
                 player.Center.Y - arena.ClearanceUp + 8f,
                 Math.Max(16f, arena.HorizontalClearance - 16f),
@@ -777,6 +804,100 @@ namespace Chaite.Plugin
             FindGrappleAnchors(tiles, centerX, centerY, arena);
             _cachedArena = arena;
             return arena;
+        }
+
+        private SupportSpan ReadSupportSpan(Array tiles, PlayerSnapshot player, bool inverted)
+        {
+            // Verify ONE continuous flat row below/above the current footprint.
+            // Limits are independent of world size, and no empty space is bridged.
+            if (player.Width <= 0 || player.Width > 128) return default(SupportSpan);
+            var foot = inverted ? player.Position.Y : player.Position.Y + player.Height;
+            var firstY = (int)((foot + (inverted ? -1f : 0f)) / 16f);
+            var leftX = Clamp((int)(player.Position.X / 16f), 1, _maxTilesX() - 2);
+            var rightX = Clamp((int)((player.Position.X + player.Width - 1f) / 16f), leftX,
+                Math.Min(_maxTilesX() - 2, leftX + 8));
+            for (var distance = 0; distance <= 70; distance++)
+            {
+                var y = firstY + (inverted ? -distance : distance);
+                if (y < 1 || y >= _maxTilesY() - 1) break;
+                for (var x = leftX; x <= rightX; x++)
+                {
+                    bool oneWay;
+                    if (IsSupportCell(tiles, x, y, inverted, player.Height, out oneWay))
+                        return ReadSupportSpanAt(tiles, x, y, inverted, player.Height);
+                    // Shaped or obstructed solids occlude surfaces beyond them.
+                    if (IsSolid(tiles, x, y, !inverted)) return default(SupportSpan);
+                }
+            }
+            return default(SupportSpan);
+        }
+
+        private SupportSpan ReadSupportSpanAt(Array tiles, int x, int y, bool inverted, int bodyHeight)
+        {
+            bool oneWay;
+            if (!IsSupportCell(tiles, x, y, inverted, bodyHeight, out oneWay)) return default(SupportSpan);
+            var left = x;
+            var right = x;
+            for (var distance = 1; distance <= 96; distance++)
+            {
+                bool nextOneWay;
+                if (!IsSupportCell(tiles, x - distance, y, inverted, bodyHeight, out nextOneWay) || nextOneWay != oneWay) break;
+                left = x - distance;
+            }
+            for (var distance = 1; distance <= 96; distance++)
+            {
+                bool nextOneWay;
+                if (!IsSupportCell(tiles, x + distance, y, inverted, bodyHeight, out nextOneWay) || nextOneWay != oneWay) break;
+                right = x + distance;
+            }
+            return new SupportSpan
+            {
+                Valid = true, Inverted = inverted, OneWay = oneWay,
+                Left = left * 16f, Right = (right + 1) * 16f,
+                SurfaceY = (inverted ? y + 1 : y) * 16f
+            };
+        }
+
+        private bool IsSupportCell(Array tiles, int x, int y, bool inverted, int bodyHeight, out bool oneWay)
+        {
+            oneWay = false;
+            if (bodyHeight <= 0 || bodyHeight > 128 || x < 1 || x >= _maxTilesX() - 1 || y < 1 || y >= _maxTilesY() - 1) return false;
+            var tile = TileAt(tiles, x, y);
+            if (tile == null || !_tileActive(tile) || _tileInactive(tile) || _tileSlope(tile) != 0 || _tileHalfBrick(tile)) return false;
+            var type = _tileType(tile);
+            oneWay = type < _tileSolidTop.Length && _tileSolidTop[type];
+            if (oneWay ? inverted : type >= _tileSolid.Length || !_tileSolid[type]) return false;
+            for (var offset = 1; offset <= Math.Min(8, (bodyHeight + 15) / 16); offset++)
+            {
+                var clearY = y + (inverted ? offset : -offset);
+                if (clearY < 1 || clearY >= _maxTilesY() - 1 || IsFullSolid(tiles, x, clearY)) return false;
+            }
+            return true;
+        }
+
+        private SupportSpan RefreshRecoverySupport(Array tiles, PlayerSnapshot player, SupportSpan current, bool inverted)
+        {
+            var sign = inverted ? -1f : 1f;
+            var foot = inverted ? player.Position.Y : player.Position.Y + player.Height;
+            var previous = _recoverySupport;
+            // Retain a recently observed higher row after crossing its edge, but
+            // never assume ascent to a row already passed during an exhausted fall.
+            if (_recoverySupportAge > 240 || previous.Inverted != inverted ||
+                (foot - previous.SurfaceY) * sign > 8f ||
+                player.Center.X < previous.Left - 960f || player.Center.X > previous.Right + 960f)
+                previous = default(SupportSpan);
+            if (current.Valid && (!previous.Valid || (current.SurfaceY - previous.SurfaceY) * sign <= 8f))
+                previous = current;
+            else if (previous.Valid)
+            {
+                var x = Clamp((int)(player.Center.X / 16f), (int)(previous.Left / 16f), (int)(previous.Right / 16f) - 1);
+                var y = (int)(previous.SurfaceY / 16f) - (inverted ? 1 : 0);
+                previous = ReadSupportSpanAt(tiles, x, y, inverted, player.Height);
+            }
+            if (!previous.Valid) previous = current;
+            if (previous.Valid) _recoverySupportAge = 0;
+            _recoverySupport = previous;
+            return previous;
         }
 
         private int ScanHorizontal(Array tiles, int x, int y, int direction, int maximum)
@@ -1120,6 +1241,9 @@ namespace Chaite.Plugin
         {
             _sightCache.Clear();
             _sightFrame = 0;
+            _cachedArena = null;
+            _recoverySupport = default(SupportSpan);
+            _recoverySupportAge = 0;
             if (_voodooTransaction != null && !_voodooTransaction.Completed)
                 throw new InvalidOperationException("Pending item restoration must not be discarded");
             _voodooTransaction = null;
@@ -1353,6 +1477,14 @@ namespace Chaite.Plugin
                 (_mountDataFlightTime(mounts[type]) > 0 || _mountDataUsesHover(mounts[type]));
         }
 
+        private bool HasFiniteFlightResource(object player)
+        {
+            // rocketTimeMax defaults to 7 even without rocket boots, so a positive
+            // capacity alone does not establish that finite flight is equipped.
+            return _playerWingsLogic(player) > 0 && _playerWingTimeMax(player) > 0 ||
+                _playerRocketBoots(player) > 0 && _playerRocketTimeMax(player) > 0;
+        }
+
         private float FlightResource(object player)
         {
             var wingMax = _playerWingTimeMax(player);
@@ -1496,13 +1628,23 @@ namespace Chaite.Plugin
             return ReflectionAccess.Getter<object[]>(type, name);
         }
 
-        private bool HasFooting(PlayerSnapshot player, bool inverted)
+        private bool HasFooting(PlayerSnapshot player, bool inverted, out bool oneWay)
         {
             var tiles = _tiles();
             int y = Clamp((int)((inverted ? player.Position.Y - 1 : player.Position.Y + player.Height + 1) / 16f), 1, _maxTilesY() - 2);
             int left = Clamp((int)(player.Position.X / 16f), 1, _maxTilesX() - 2);
             int right = Clamp((int)((player.Position.X + player.Width - 1) / 16f), 1, _maxTilesX() - 2);
-            return IsSolid(tiles, left, y, !inverted) || IsSolid(tiles, right, y, !inverted);
+            bool found = false;
+            oneWay = !inverted;
+            for (var x = left; x <= right && x <= left + 8; x++)
+            {
+                if (!IsSolid(tiles, x, y, !inverted)) continue;
+                found = true;
+                var type = _tileType(TileAt(tiles, x, y));
+                if (type >= _tileSolidTop.Length || !_tileSolidTop[type]) oneWay = false;
+            }
+            oneWay &= found;
+            return found;
         }
 
         private bool WithinThreatHorizon(Vec2 center, Vec2 velocity, int width, int height, Vec2 playerCenter)

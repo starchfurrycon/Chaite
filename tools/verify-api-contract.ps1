@@ -110,7 +110,7 @@ try {
         worldGenType = 'Terraria.WorldGen'; mountType = 'Terraria.Mount'; tileType = 'Terraria.Tile'
         mountDataType = 'Terraria.Mount/MountData'
     }
-    $types = @{ bool = 'System.Boolean'; int = 'System.Int32'; float = 'System.Single'; double = 'System.Double'
+    $types = @{ bool = 'System.Boolean'; byte = 'System.Byte'; int = 'System.Int32'; float = 'System.Single'; double = 'System.Double'
         ushort = 'System.UInt16'; 'bool[]' = 'System.Boolean[]'; 'float[]' = 'System.Single[]' }
     $pattern = 'ReflectionAccess\.(?<op>Getter|Setter|StaticGetter|StaticSetter|PropertyGetter|PropertySetter|StaticPropertyGetter|MethodGetter)<(?<type>[^>]+)>\((?<owner>\w+),\s*"(?<name>[^"]+)"\)'
     $bindings = [regex]::Matches($source, $pattern)

@@ -42,12 +42,19 @@ jobs:
             Tee-Object -FilePath artifacts\ci\offline-tests.log
           if ($LASTEXITCODE -ne 0) { throw "Offline regressions failed: $LASTEXITCODE" }
 
+      - name: Check native result validation without loading the game
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-boss-evidence.ps1 |
+            Tee-Object -FilePath artifacts\ci\native-evidence-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Native evidence regressions failed: $LASTEXITCODE" }
+
       - name: Retain offline test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: offline-test-log
-          path: artifacts/ci/offline-tests.log
+          path: artifacts/ci/*.log
           if-no-files-found: warn
           retention-days: 14
 

@@ -46,6 +46,7 @@ namespace Chaite.Tests
             RunSafetyRegressions();
             RunBeamRegressions();
             RunMobilityRegressions();
+            RunSupportRegressions();
             RunReflectionRegressions();
             RunTransactionRegressions();
             RunPatcherRegressions();
@@ -469,7 +470,7 @@ namespace Chaite.Tests
                 Mobility = new MobilitySnapshot
                 {
                     CanDash = true, DashReady = true, HasGrapple = true,
-                    FlightResourceFraction = 1f, MountRunSpeed = 8f
+                    HasFiniteFlightResource = true, FlightResourceFraction = 1f, MountRunSpeed = 8f
                 },
                 Arena = new ArenaSnapshot
                 {
