@@ -85,6 +85,7 @@ namespace Chaite.Plugin
         private readonly Func<object, bool> _playerActive;
         private readonly Func<object, bool> _releaseUseItem;
         private readonly Func<object, bool> _releaseJump;
+        private readonly NativeJumpReader _nativeJumpReader;
         private readonly Func<object, int> _playerItemAnimation;
         private readonly Func<object, int> _playerItemTime;
         private readonly Func<object, bool[]> _inventoryChestStack;
@@ -305,6 +306,7 @@ namespace Chaite.Plugin
             _playerActive = ReflectionAccess.Getter<bool>(playerType, "active");
             _releaseUseItem = ReflectionAccess.Getter<bool>(playerType, "releaseUseItem");
             _releaseJump = ReflectionAccess.Getter<bool>(playerType, "releaseJump");
+            _nativeJumpReader = new NativeJumpReader(playerType);
             _playerItemAnimation = ReflectionAccess.Getter<int>(playerType, "itemAnimation");
             _playerItemTime = ReflectionAccess.Getter<int>(playerType, "itemTime");
             _inventoryChestStack = ReflectionAccess.Getter<bool[]>(playerType, "inventoryChestStack");
@@ -591,6 +593,7 @@ namespace Chaite.Plugin
 
             var mount = _playerMount(player);
             var mountActive = mount != null && _mountActive(mount);
+            state.Jump = _nativeJumpReader.Read(player, mountActive);
             var items = _inventory(player);
             float bestMountSpeed;
             bool bestMountCanFly;
@@ -1338,8 +1341,10 @@ namespace Chaite.Plugin
             ClearCombatControls(player);
             SetControl(player, "controlLeft", plan.Horizontal < 0);
             SetControl(player, "controlRight", plan.Horizontal > 0);
-            SetControl(player, "controlJump", MovementActionGate.ShouldHoldJump(plan.Jump,
-                _combatSnapshot.Player.OnGround, _releaseJump(player), _combatSnapshot.Mobility.Grappling));
+            var jumpState = _combatSnapshot.Player.Jump;
+            jumpState.ReleaseReady = _releaseJump(player);
+            SetControl(player, "controlJump", MovementActionGate.ResolveJump(plan.Jump, plan.JumpAction, in jumpState,
+                _combatSnapshot.Player.OnGround, _combatSnapshot.Mobility.Grappling));
             SetControl(player, "controlDown", plan.Drop || plan.GravityControl < 0);
             SetControl(player, "controlUp", plan.GravityControl > 0);
             SetControl(player, "controlDash", plan.Dash);

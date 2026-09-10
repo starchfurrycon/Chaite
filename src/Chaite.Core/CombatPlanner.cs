@@ -128,6 +128,7 @@ namespace Chaite.Core
 
             plan.Horizontal = best.Horizontal;
             plan.Jump = best.Posture > 0;
+            plan.JumpAction = best.JumpAction;
             plan.Drop = best.Posture < 0;
             plan.TargetKey = target.Key;
             plan.RiskScore = best.Score;
@@ -142,6 +143,7 @@ namespace Chaite.Core
             {
                 plan.Horizontal = _lastHorizontal == 0 ? _patternDirection : -_lastHorizontal;
                 plan.Jump = true;
+                plan.JumpAction = JumpAction.Default;
             }
 
             plan.Dash = snapshot.Mobility.CanDash && snapshot.Mobility.DashReady && plan.Horizontal != 0 &&
@@ -201,6 +203,7 @@ namespace Chaite.Core
             var best = FindBestCandidate(snapshot, target, directive, h, v);
             plan.Horizontal = best.Horizontal;
             plan.Jump = best.Posture > 0;
+            plan.JumpAction = best.JumpAction;
             plan.Drop = best.Posture < 0;
             plan.TargetKey = target.Key;
             plan.RiskScore = best.Score;
@@ -457,7 +460,11 @@ namespace Chaite.Core
             var flyingMount = snapshot.Mobility.MountActive && snapshot.Mobility.MountCanFly;
             var flightTicks = Math.Max(player.WingTime, player.RocketTime);
             var canInitialJump = player.OnGround || flightTicks > 0f || flyingMount;
-            var grounded = player.OnGround && posture <= 0;
+            var nativeJump = player.Jump.Known;
+            var jumpState = player.Jump;
+            var jumpAction = posture > 0 ? (directive.JumpAction == JumpAction.Release ? JumpAction.Default : directive.JumpAction) :
+                directive.JumpAction == JumpAction.Release ? JumpAction.Release : JumpAction.Default;
+            var grounded = player.OnGround && (nativeJump || posture <= 0);
             var standingY = player.Position.Y;
             var support = snapshot.Mobility.GravityInverted ? snapshot.Arena.CeilingSupport : snapshot.Arena.FloorSupport;
             var actualFoot = snapshot.Mobility.GravityInverted ? player.Position.Y : player.Position.Y + player.Height;
@@ -476,7 +483,7 @@ namespace Chaite.Core
                 snapshot.Mobility.GravityInverted, posture < 0)) grounded = false;
             var previousBounds = player.BoundsAt(position);
 
-            if (posture > 0 && canInitialJump)
+            if (!nativeJump && posture > 0 && canInitialJump)
             {
                 if (player.OnGround)
                     velocity.Y = -(5.01f + Math.Max(0f, player.JumpSpeedBoost)) * gravityDirection;
@@ -487,6 +494,16 @@ namespace Chaite.Core
             for (var tick = step; tick <= _horizonTicks; tick += step)
             {
                 var beforeStep = position;
+                // Native hold/release/extra-jump transitions have one-tick
+                // semantics even when threat scoring uses a coarser step.
+                if (nativeJump)
+                {
+                    for (var substep = 0; substep < step; substep++)
+                        AdvanceNativeJump(snapshot, horizontal, posture, jumpAction, mountedSpeed, originalSupport,
+                            ref jumpState, ref position, ref velocity, ref grounded, ref support, ref standingY);
+                }
+                else
+                {
                 float horizontalTravel;
                 velocity.X = HorizontalMotion.Advance(player, velocity.X, horizontal, grounded, step, out horizontalTravel, mountedSpeed);
                 position.X += horizontalTravel;
@@ -531,6 +548,7 @@ namespace Chaite.Core
                         standingY = position.Y;
                         grounded = true;
                     }
+                }
                 }
 
                 var bounds = player.BoundsAt(position);
@@ -587,7 +605,7 @@ namespace Chaite.Core
                 if (_settings.EnableScorePruning && risk >= incumbentScore && _settings.CollisionPenalty >= 0f && _settings.DamagePenalty >= 0f &&
                     _settings.NearMissPenalty >= 0f && _settings.PatternDeviationPenalty >= 0f &&
                     _settings.VerticalPatternDeviationPenalty >= 0f && _settings.MovementChangePenalty >= 0f)
-                    return new Candidate { Horizontal = horizontal, Posture = posture, Score = risk, Hazard = risk };
+                    return new Candidate { Horizontal = horizontal, Posture = posture, JumpAction = jumpAction, Score = risk, Hazard = risk };
             }
 
             var hazard = risk;
@@ -616,7 +634,62 @@ namespace Chaite.Core
                     position.X + player.Width - _landingSupport.Right));
                 risk += Math.Min(120f, outside * .5f);
             }
-            return new Candidate { Horizontal = horizontal, Posture = posture, Score = risk, Hazard = hazard };
+            return new Candidate { Horizontal = horizontal, Posture = posture, JumpAction = jumpAction, Score = risk, Hazard = hazard };
+        }
+
+        private static void AdvanceNativeJump(CombatSnapshot snapshot, int horizontal, int posture, JumpAction action,
+            float mountedSpeed, SupportSpan originalSupport, ref JumpSnapshot jump, ref Vec2 position, ref Vec2 velocity,
+            ref bool grounded, ref SupportSpan support, ref float standingY)
+        {
+            var player = snapshot.Player;
+            var inverted = snapshot.Mobility.GravityInverted;
+            var before = position;
+            JumpMotion.RefreshBeforeMovement(ref jump, velocity.Y);
+            var control = JumpMotion.ResolveControl(posture > 0, action, in jump, grounded, snapshot.Mobility.Grappling);
+            float travel;
+            // Native HorizontalMovement runs before JumpMovement: the launch
+            // frame still receives grounded boot acceleration. Losing support
+            // is decided only after this frame's jump opportunity.
+            velocity.X = HorizontalMotion.Advance(player, velocity.X, horizontal, grounded, 1, out travel, mountedSpeed);
+            JumpMotion.ApplyJump(ref jump, ref velocity.Y, control, inverted);
+            if (velocity.Y != 0f) grounded = false;
+            position.X += travel;
+            if (grounded && !SupportGeometry.RetainsFooting(support, position.X, player.Width, inverted, posture < 0))
+                grounded = false;
+            velocity.Y = JumpMotion.ApplyGravity(velocity.Y, Math.Abs(player.Gravity), player.MaxFallSpeed, inverted);
+            position.Y += velocity.Y;
+            if (grounded)
+            {
+                velocity.Y = 0f;
+                position.Y = standingY;
+                return;
+            }
+            var first = originalSupport;
+            var second = snapshot.Arena.RecoverySupport;
+            if (second.Valid && second.Inverted == inverted &&
+                (!first.Valid || (second.SurfaceY - first.SurfaceY) * (inverted ? -1f : 1f) < 0f))
+            {
+                first = second;
+                second = originalSupport;
+            }
+            var landed = SupportGeometry.TryLand(first, before, ref position, ref velocity,
+                player.Width, player.Height, inverted, posture < 0);
+            if (landed) support = first;
+            else if (SupportGeometry.TryLand(second, before, ref position, ref velocity,
+                player.Width, player.Height, inverted, posture < 0))
+            {
+                landed = true;
+                support = second;
+            }
+            if (landed)
+            {
+                // Native TileCollision returns this frame's allowed vertical
+                // displacement, not zero on the first contact. The next tick
+                // settles to zero. Otherwise release/rejump is predicted early.
+                velocity.Y = position.Y - before.Y;
+                grounded = velocity.Y == 0f;
+                standingY = position.Y;
+            }
         }
 
         private void PrepareThreats(CombatSnapshot snapshot, BossDirective directive)
@@ -810,6 +883,7 @@ namespace Chaite.Core
                 return false;
             }
             _grappleAttachedTicks++;
+            plan.JumpAction = JumpAction.Default;
             plan.Hook = plan.Drop = plan.Dash = plan.ToggleMount = false;
             plan.GravityControl = 0;
             _hookCooldown = Math.Max(_hookCooldown, Math.Max(12, _settings.MobilityActionCooldownTicks));
@@ -962,6 +1036,7 @@ namespace Chaite.Core
 
         private struct Candidate
         {
+            public JumpAction JumpAction;
             public int Horizontal;
             public int Posture;
             public float Score;

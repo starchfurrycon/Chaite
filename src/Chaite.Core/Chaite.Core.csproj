@@ -21,6 +21,7 @@
     <Compile Include="Geometry.cs" />
     <Compile Include="BeamGeometry.cs" />
     <Compile Include="HorizontalMotion.cs" />
+    <Compile Include="JumpMotion.cs" />
     <Compile Include="Models.cs" />
     <Compile Include="PlannerSettings.cs" />
     <Compile Include="InterceptSolver.cs" />

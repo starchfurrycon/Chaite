@@ -44,6 +44,13 @@ public static class ChaiteGameProbe
     static readonly HashSet<int> firstObservedBossTypes = new HashSet<int>();
     static readonly List<Dictionary<string,object>> firstObservedBosses = new List<Dictionary<string,object>>();
     static Dictionary<string, object> equipmentReport;
+    static string motionCase;
+    const int MotionWarmupFrames=20, MotionTotalFrames=180;
+    static Dictionary<string,object> motionFrame;
+    static int motionPlayerCalls, motionJumpCalls, motionInputReplays, motionRecordedFrames;
+    static bool motionCloudConsumed, motionSawAirborne, motionReturnedGround;
+    static float motionMinimumY=float.MaxValue;
+    static bool IsMotion { get { return scenario!=null && scenario.Motion; } }
     static readonly Type runtimeType = typeof(Chaite.Plugin.Runtime);
     static readonly FieldInfo runtimeTotalField = runtimeType.GetField("_timingTotal", BindingFlags.Static | BindingFlags.NonPublic);
     static readonly FieldInfo runtimeFramesField = runtimeType.GetField("_timingFrames", BindingFlags.Static | BindingFlags.NonPublic);
@@ -53,7 +60,7 @@ public static class ChaiteGameProbe
         public string Id;
         public int Summon;
         public int[] BossTypes;
-        public bool HardMode, Hallow, Legacy;
+        public bool HardMode, Hallow, Legacy, Motion;
         public string Equipment;
     }
 
@@ -124,7 +131,7 @@ public static class ChaiteGameProbe
         if(settingsRead) return;
         foreach(var key in Terraria.Program.LaunchParameters.Keys)
             if(key!="-savedirectory" && key!="-skipbeam" && key!="-scenario" && key!="-seed" &&
-                key!="-difficulty" && key!="-maxticks" && key!="-wallseconds")
+                key!="-difficulty" && key!="-maxticks" && key!="-wallseconds" && key!="-motioncase")
                 throw new ArgumentException("Unsupported probe argument: "+key);
         string value;
         if(Terraria.Program.LaunchParameters.TryGetValue("-seed",out value))
@@ -152,8 +159,21 @@ public static class ChaiteGameProbe
             case "destroyer": scenario.Summon=ItemID.MechanicalWorm; scenario.BossTypes=new[]{134}; scenario.HardMode=true; break;
             case "twins": scenario.Summon=ItemID.MechanicalEye; scenario.BossTypes=new[]{125,126}; scenario.HardMode=true; break;
             case "prime": scenario.Summon=ItemID.MechanicalSkull; scenario.BossTypes=new[]{127}; scenario.HardMode=true; break;
+            case "motion-jump": scenario.Motion=true; scenario.BossTypes=new int[0]; break;
             default: throw new ArgumentException("Unknown bounded scenario: "+id);
         }
+        if(Terraria.Program.LaunchParameters.TryGetValue("-motioncase",out value)) motionCase=value;
+        if(IsMotion)
+        {
+            if(difficultyCode!=0) throw new ArgumentException("motion-jump requires classic difficulty");
+            switch(motionCase)
+            {
+                case "no-cloud-hold": case "no-cloud-tap": case "no-cloud-release-press":
+                case "cloud-hold": case "cloud-tap": case "cloud-release-press": break;
+                default: throw new ArgumentException("motion-jump requires one reviewed -motioncase");
+            }
+        }
+        else if(motionCase!=null) throw new ArgumentException("-motioncase is valid only with motion-jump");
         settingsRead=true;
     }
 
@@ -167,6 +187,12 @@ public static class ChaiteGameProbe
     public static void PlayerReturned(Player player,string location)
     {
         if(booted && player.whoAmI==0) playerReturnedTick=ticks;
+        if(IsMotion && motionFrame!=null && player.whoAmI==0)
+        {
+            if(motionFrame.ContainsKey("postPlayer")) throw new InvalidOperationException("Multiple native Player.Update returns in one motion frame");
+            motionFrame["postPlayer"]=MotionSnapshot(player);
+            motionFrame["playerReturnLocation"]=location;
+        }
         if(booted && player.whoAmI==0 && (ticks==3 || ticks==121))
             Log("PLAYER_RETURN "+location+" life="+player.statLife+" armorDef="+player.armor[0].defense+" defense="+player.statDefense+
                 " dims="+Game.maxTilesX+","+Game.maxTilesY+" cell="+(Game.tile[(int)(player.Center.X/16),(int)(player.Center.Y/16)]==null?"null":"present"));
@@ -202,12 +228,17 @@ public static class ChaiteGameProbe
                 Game.BackgroundViewMatrix=new Terraria.Graphics.SpriteViewMatrix(null);
                 Game.BackgroundViewMatrix.SetViewportOverride(new Viewport(0,0,1280,720));
                 Lighting.Initialize();
-                if(!Terraria.Program.LaunchParameters.ContainsKey("-skipbeam")) CompareNativeBeamGeometry();
+                if(IsMotion) Log("BEAM_COMPARE_SKIPPED motion-only fixture");
+                else if(!Terraria.Program.LaunchParameters.ContainsKey("-skipbeam")) CompareNativeBeamGeometry();
                 else Log("BEAM_COMPARE_SKIPPED diagnostic combat iteration only");
                 // Surface initialization problems instead of allowing the outer
                 // vanilla per-player exception guard to hide an invalid fixture.
-                Game.player[0].Update(0);
-                Log("DIRECT_PLAYER_UPDATE completed defense="+Game.player[0].statDefense+" accRun="+Game.player[0].accRunSpeed);
+                if(!IsMotion)
+                {
+                    Game.player[0].Update(0);
+                    Log("DIRECT_PLAYER_UPDATE completed defense="+Game.player[0].statDefense+" accRun="+Game.player[0].accRunSpeed);
+                }
+                else Log("MOTION_INITIALIZATION all 20 warmup Player.Update frames will be recorded; no direct unrecorded player update");
                 if(scenario.Hallow)
                 {
                     Game.player[0].UpdateSceneMetrics();
@@ -255,6 +286,7 @@ public static class ChaiteGameProbe
 
     public static void InitializeSocial(SocialMode? ignored)
     {
+        if(IsMotion) throw new InvalidOperationException("Motion microtests require the headless entry point");
         SocialAPI.Initialize(SocialMode.None);
         Log("SOCIAL none; no Steam/cloud/session connection");
     }
@@ -443,6 +475,26 @@ public static class ChaiteGameProbe
 
     static void EquipScenario(Player player)
     {
+        if(IsMotion)
+        {
+            // Only fixture equipment changes here. Jump counters, release edges,
+            // cloud availability, gravity and velocity are NEVER manufactured.
+            foreach(var item in player.inventory) item.SetDefaults(0);
+            foreach(var item in player.armor) item.SetDefaults(0);
+            foreach(var item in player.miscEquips) item.SetDefaults(0);
+            bool cloud=motionCase.StartsWith("cloud-",StringComparison.Ordinal);
+            if(cloud) player.armor[3].SetDefaults(ItemID.CloudinaBottle);
+            var equipped=new int[player.armor.Length];
+            for(int i=0;i<equipped.Length;i++) equipped[i]=player.armor[i].type;
+            scenario.Equipment=cloud?"motion: naked + unprefixed Cloud in a Bottle only":"motion: naked, no accessories";
+            equipmentReport=new Dictionary<string,object>
+            {
+                {"label",scenario.Equipment},{"life",400},{"mana",200},{"armorAndAccessories",equipped},
+                {"cloudEquipped",cloud},{"cloudItemType",cloud?ItemID.CloudinaBottle:0},{"cloudPrefix",player.armor[3].prefix},
+                {"noWeaponsAmmoConsumablesOrMount",true},{"noDirectJumpStateOverrides",true}
+            };
+            return;
+        }
         player.inventory[0].SetDefaults(scenario.HardMode?ItemID.ClockworkAssaultRifle:ItemID.Minishark);
         player.inventory[1].SetDefaults(scenario.Summon);
         player.inventory[1].stack=1;
@@ -522,7 +574,7 @@ public static class ChaiteGameProbe
     }
 
     // Synthetic edges ONLY in test copy's poller. No OS keys or mouse are sent.
-    public static bool ActivateDown() { return booted && ticks == 120; }
+    public static bool ActivateDown() { return !IsMotion && booted && ticks == 120; }
     public static bool CancelDown() { return false; }
 
     public static void BeforeUpdate()
@@ -535,6 +587,19 @@ public static class ChaiteGameProbe
             Game.screenPosition=Game.player[0].Center-new Vector2(Game.screenWidth/2f,Game.screenHeight/2f);
             Game.autoSave = false;
             Game.SettingPlayWhenUnfocused = true;
+            if(IsMotion)
+            {
+                if(ticks>MotionTotalFrames || processClock.Elapsed.TotalSeconds>=wallLimitSeconds)
+                    throw new TimeoutException("Bounded native motion fixture exceeded its time limit");
+                motionPlayerCalls=motionJumpCalls=motionInputReplays=0;
+                motionFrame=new Dictionary<string,object>
+                {
+                    {"schema","chaite-native-motion-frame/v1"},{"tick",ticks},{"nativeFrameBefore",nativeFrames},
+                    {"requestedJump",MotionJumpRequested()},{"phase",MotionPhase()}
+                };
+                ReplayMotionControls(Game.player[0]);
+                return;
+            }
             if (ticks % 60 == 0)
             {
                 var p = Game.player[0];
@@ -567,6 +632,11 @@ public static class ChaiteGameProbe
         var p=Game.player[0];
         if(playerReturnedTick!=ticks) throw new InvalidOperationException("Native Player.Update did not return at tick "+ticks);
         nativeFrames++;
+        if(IsMotion)
+        {
+            AfterMotionUpdate(p);
+            return;
+        }
         if(p.statLife<lastLife) hits++;
         lastLife=p.statLife;
         minLife=Math.Min(minLife,Math.Max(0,p.statLife));
@@ -609,6 +679,179 @@ public static class ChaiteGameProbe
         if(state=="Faulted") throw new InvalidOperationException("Production automation entered fail-closed; inspect Chaite log");
         if(state=="SuccessNoDeath" || state=="SuccessAfterDeath" || state=="FailedAfterDeath" || state=="EncounterInterrupted" || state=="Cancelled") Finish(state);
         if(ticks>=240 && (state=="RejectedNoEncounter" || state=="Idle")) Finish("activation-ended");
+    }
+
+    static bool MotionJumpRequested()
+    {
+        if(ticks<=MotionWarmupFrames || ticks>80) return false;
+        if(motionCase.EndsWith("-tap",StringComparison.Ordinal)) return ticks==21;
+        if(motionCase.EndsWith("-release-press",StringComparison.Ordinal)) return ticks!=26;
+        return true;
+    }
+
+    static string MotionPhase()
+    {
+        if(ticks<=MotionWarmupFrames) return "warmup-release";
+        if(ticks>80) return "final-release-and-land";
+        if(ticks==21) return "ground-initial-press";
+        if(motionCase.EndsWith("-tap",StringComparison.Ordinal)) return "released-after-one-frame-tap";
+        if(motionCase.EndsWith("-release-press",StringComparison.Ordinal))
+            return ticks==26?"airborne-release":ticks==27?"airborne-repress":"hold";
+        return "hold";
+    }
+
+    static void ReplayMotionControls(Player player)
+    {
+        // The native ResetControls helper is PRIVATE in the original reference
+        // assembly. Write only its public input fields; never jump/release state.
+        player.controlLeft=player.controlRight=player.controlUp=player.controlDown=false;
+        player.controlUseItem=player.controlUseTile=player.controlThrow=player.controlInv=false;
+        player.controlHook=player.controlTorch=player.controlSmart=player.controlMount=false;
+        player.controlQuickHeal=player.controlQuickMana=player.controlCreativeMenu=false;
+        player.controlDash=player.controlArmorSetAbility=false;
+        player.controlJump=MotionJumpRequested();
+    }
+
+    // These observer/replay hooks exist only in the isolated test copy. All are
+    // strict no-ops in every existing Boss scenario, including timing counters.
+    public static void MotionBeforePlayerUpdate(Player player)
+    {
+        if(!IsMotion || motionFrame==null || player.whoAmI!=0) return;
+        if(++motionPlayerCalls!=1) throw new InvalidOperationException("Multiple Player.Update calls in one motion frame");
+        motionFrame["prePlayer"]=MotionSnapshot(player);
+    }
+
+    public static void MotionAfterInput(Player player)
+    {
+        if(!IsMotion || motionFrame==null || player.whoAmI!=0) return;
+        ReplayMotionControls(player);
+        motionInputReplays++;
+        motionFrame["afterInputReplay"]=MotionSnapshot(player);
+    }
+
+    public static void MotionBeforeJump(Player player)
+    {
+        if(!IsMotion || motionFrame==null || player.whoAmI!=0) return;
+        if(++motionJumpCalls!=1) throw new InvalidOperationException("Multiple JumpMovement calls in one motion frame");
+        // This is AFTER native equipment/UpdateJumpHeight and BEFORE the real
+        // JumpMovement body. Static Player.jumpSpeed/jumpHeight are frame-correct.
+        motionFrame["preJump"]=MotionSnapshot(player);
+        if(player.controlJump!=MotionJumpRequested())
+            throw new InvalidOperationException("Native motion control replay was lost before JumpMovement");
+    }
+
+    public static void MotionAfterJump(Player player)
+    {
+        if(!IsMotion || motionFrame==null || player.whoAmI!=0) return;
+        if(motionFrame.ContainsKey("postJump")) throw new InvalidOperationException("Multiple JumpMovement returns in one motion frame");
+        motionFrame["postJump"]=MotionSnapshot(player);
+    }
+
+    static Dictionary<string,object> MotionSnapshot(Player p)
+    {
+        return new Dictionary<string,object>
+        {
+            {"tick",ticks},{"gameUpdateCount",Game.GameUpdateCount},{"nativeFramesCompleted",nativeFrames},
+            {"position",new Dictionary<string,object>{{"x",p.position.X},{"y",p.position.Y}}},
+            {"velocity",new Dictionary<string,object>{{"x",p.velocity.X},{"y",p.velocity.Y}}},
+            {"width",p.width},{"height",p.height},{"bottomY",p.Bottom.Y},
+            {"jump",p.jump},{"releaseJump",p.releaseJump},{"canJumpAgain_Cloud",p.canJumpAgain_Cloud},
+            {"hasJumpOption_Cloud",p.hasJumpOption_Cloud},{"isPerformingJump_Cloud",p.isPerformingJump_Cloud},
+            {"jumpSpeed",Player.jumpSpeed},{"jumpHeight",Player.jumpHeight},{"jumpSpeedBoost",p.jumpSpeedBoost},
+            {"gravity",p.gravity},{"maxFallSpeed",p.maxFallSpeed},{"gravDir",p.gravDir},
+            {"maxRunSpeed",p.maxRunSpeed},{"accRunSpeed",p.accRunSpeed},
+            {"autoJump",p.autoJump},{"justJumped",p.justJumped},{"life",p.statLife},{"dead",p.dead},
+            {"grapCount",p.grapCount},{"wingTime",p.wingTime},{"wingTimeMax",p.wingTimeMax},
+            {"controls",new Dictionary<string,object>
+                {
+                    {"left",p.controlLeft},{"right",p.controlRight},{"up",p.controlUp},{"down",p.controlDown},
+                    {"jump",p.controlJump},{"useItem",p.controlUseItem},{"useTile",p.controlUseTile},
+                    {"hook",p.controlHook},{"mount",p.controlMount},{"dash",p.controlDash}
+                }}
+        };
+    }
+
+    static void AfterMotionUpdate(Player p)
+    {
+        if(motionFrame==null || motionPlayerCalls!=1 || motionJumpCalls!=1 || !motionFrame.ContainsKey("postPlayer") ||
+            !motionFrame.ContainsKey("preJump") || !motionFrame.ContainsKey("postJump"))
+            throw new InvalidOperationException("Missing paired native motion observations at tick "+ticks);
+        var preJump=(Dictionary<string,object>)motionFrame["preJump"];
+        var postJump=(Dictionary<string,object>)motionFrame["postJump"];
+        int hostileNpcs=0;
+        foreach(var npc in Game.npc)
+            if(npc!=null && npc.active)
+            {
+                if(npc.boss) throw new InvalidOperationException("Unexpected Boss in no-Boss motion fixture");
+                if(!npc.friendly && npc.damage>0) hostileNpcs++;
+            }
+        if(p.dead || p.statLife!=400 || deaths!=0)
+            throw new InvalidOperationException("Damage/death contaminated the isolated motion trajectory");
+        if(SessionState()!="Idle") throw new InvalidOperationException("Production takeover must remain Idle throughout motion fixture");
+        if(Math.Abs(p.position.X-initialPosition.X)>.01f || Math.Abs(p.velocity.X)>.0001f)
+            throw new InvalidOperationException("Unexpected horizontal movement in jump-only fixture");
+        motionCloudConsumed|=(bool)preJump["canJumpAgain_Cloud"] && !(bool)postJump["canJumpAgain_Cloud"];
+        motionSawAirborne|=p.Bottom.Y<8000-.1f;
+        motionReturnedGround|=ticks>80 && Math.Abs(p.Bottom.Y-8000)<.01f && p.velocity.Y==0;
+        motionMinimumY=Math.Min(motionMinimumY,p.position.Y);
+        motionFrame["nativeFrameAfter"]=nativeFrames;
+        motionFrame["playerUpdateCalls"]=motionPlayerCalls;
+        motionFrame["jumpMovementCalls"]=motionJumpCalls;
+        motionFrame["afterCopyInputReplays"]=motionInputReplays;
+        motionFrame["hostileNpcCount"]=hostileNpcs;
+        motionFrame["productionSessionState"]=SessionState();
+        motionFrame["nativeUpdateMs"]=engineSamples[engineSamples.Count-1];
+        File.AppendAllText(Path.Combine(Root,"motion-frames.jsonl"),Json(motionFrame)+Environment.NewLine,new UTF8Encoding(false));
+        motionRecordedFrames++;
+        motionFrame=null;
+        if(ticks==MotionTotalFrames)
+        {
+            bool expectCloud=motionCase=="cloud-release-press";
+            if(motionRecordedFrames!=MotionTotalFrames || !motionSawAirborne || !motionReturnedGround || motionCloudConsumed!=expectCloud)
+                throw new InvalidOperationException("Motion fixture did not exercise its declared initial jump/cloud/landing sequence");
+            finishing=true;
+            WriteMotionResult("complete",0,null);
+            Log("MOTION_FINISH case="+motionCase+" frames="+motionRecordedFrames+" cloudConsumed="+motionCloudConsumed);
+            Environment.Exit(0);
+        }
+    }
+
+    static void WriteMotionResult(string status,int exitCode,string failure)
+    {
+        var result=new Dictionary<string,object>
+        {
+            {"schema","chaite-native-motion-result/v1"},{"scenario",scenario.Id},{"motionCase",motionCase},
+            {"status",status},{"processExitCode",exitCode},{"validMotion",status=="complete"},{"failure",failure},
+            {"seed",seed},{"difficulty",difficulty},{"difficultyCode",difficultyCode},
+            {"ticks",ticks},{"nativeFrames",nativeFrames},{"recordedFrames",motionRecordedFrames},
+            {"warmupFrames",MotionWarmupFrames},{"totalFrames",MotionTotalFrames},{"equipment",equipmentReport},
+            {"initialPosition",new Dictionary<string,object>{{"x",initialPosition.X},{"y",initialPosition.Y}}},
+            {"minimumY",motionMinimumY==float.MaxValue?0:motionMinimumY},
+            {"maximumRisePixels",motionMinimumY==float.MaxValue?0:initialPosition.Y-motionMinimumY},
+            {"cloudConsumed",motionCloudConsumed},{"sawAirborne",motionSawAirborne},{"returnedGroundAfterRelease",motionReturnedGround},
+            {"nativeDifficultyVerified",nativeDifficultyVerified},{"nativeDifficulty",nativeDifficultyReport},
+            {"nativeRandom",new Dictionary<string,object>
+                {
+                    {"installedAfterSetup",battleRandomInstalled},{"seed",seed},
+                    {"independentTwinFingerprint",battleRandomFingerprint},{"referenceChecks",battleRandomReferenceChecks},
+                    {"actualAndNativeNamedColdStateVerified",battleRandomColdStateVerified},
+                    {"unpausedUpdateSeedInitial",initialUnpausedUpdateSeed},{"unpausedUpdateSeedFinal",expectedUnpausedUpdateSeed},
+                    {"unpausedUpdateSeedAdvances",unpausedUpdateSeedAdvances},{"actualStreamConsumedForFingerprint",false}
+                }},
+            {"arena",new Dictionary<string,object>
+                {
+                    {"kind","in-memory fixture; no generated or saved user world"},{"groundTile","GrayBrick"},
+                    {"groundTop",500},{"groundLeft",800},{"groundRightExclusive",3400},{"groundThickness",6},
+                    {"platformRows",new int[0]},{"nativeSceneMetricRefreshes",nativeSceneMetricRefreshes}
+                }},
+            {"inputSchedule","frames 1..20 released warmup; initial press 21; hold through 80, OR tap only 21, OR hold 21..25/release 26/repress 27..80; release 81..180"},
+            {"frameFile","motion-frames.jsonl"},{"partialUncommittedFrame",motionFrame},
+            {"observationOrder","prePlayer -> native input copy/test-only replay -> native equipment/UpdateJumpHeight -> preJump -> real JumpMovement -> postJump -> remaining native Player.Update -> postPlayer; all warmup frames retained"},
+            {"scope","no-Boss native motion microtest, not Boss victory evidence or rendered-client latency; production remains Idle, no F8; controls only, no jump/velocity/capability overrides"},
+            {"nativeUpdate",TimingSummary(engineSamples,"native headless world update plus instrumentation; not production or end-to-end latency")},
+            {"createdUtc",DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)}
+        };
+        File.WriteAllText(Path.Combine(Root,"result.json"),Json(result),new UTF8Encoding(false));
     }
 
     static void SampleRuntimeTiming()
@@ -810,6 +1053,7 @@ public static class ChaiteGameProbe
 
     static void WriteResult(string status,string outcome,bool win,int exitCode,string failure)
     {
+        if(IsMotion) { WriteMotionResult(status,exitCode,failure); return; }
         bool expectedSeen=scenario!=null && scenario.BossTypes!=null && expectedBossMask==((1<<scenario.BossTypes.Length)-1);
         var unexpected=new int[unexpectedBossTypes.Count]; unexpectedBossTypes.CopyTo(unexpected); Array.Sort(unexpected);
         var result=new Dictionary<string,object>
@@ -909,7 +1153,19 @@ public static class ChaiteGameProbe
             { if(!first) builder.Append(','); first=false; builder.Append(Json(item)); }
             return builder.Append(']').ToString();
         }
-        if(value is double && (double.IsNaN((double)value)||double.IsInfinity((double)value))) return "null";
+        // General-format Single output keeps only seven significant digits and
+        // can lose subpixel coordinates (e.g. 7957.760742 -> 7957.761). The
+        // motion oracle needs the ORIGINAL native IEEE values, not rounded G7.
+        if(value is float)
+        {
+            float number=(float)value;
+            return float.IsNaN(number)||float.IsInfinity(number)?"null":number.ToString("R",CultureInfo.InvariantCulture);
+        }
+        if(value is double)
+        {
+            double number=(double)value;
+            return double.IsNaN(number)||double.IsInfinity(number)?"null":number.ToString("R",CultureInfo.InvariantCulture);
+        }
         return Convert.ToString(value,CultureInfo.InvariantCulture);
     }
 }

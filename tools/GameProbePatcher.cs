@@ -34,6 +34,18 @@ static class GameProbePatcher
             Prefix(main.Methods.Single(m=>m.Name=="DoUpdate"),method("BeforeUpdate"));
             Suffix(main.Methods.Single(m=>m.Name=="Draw" && m.Parameters.Count==1),method("AfterDraw"));
             var playerUpdate=module.GetType("Terraria.Player").Methods.Single(m=>m.Name=="Update" && m.Parameters.Count==1);
+            PrefixPlayer(playerUpdate,method("MotionBeforePlayerUpdate"));
+            // Replay only after native CopyInto AND the existing production hook.
+            // Branches skipping native input retain the pre-frame test controls.
+            var pendingInput=playerUpdate.Body.Instructions.Single(i=>i.Operand is MethodReference &&
+                ((MethodReference)i.Operand).DeclaringType.FullName=="Chaite.Plugin.Runtime" &&
+                ((MethodReference)i.Operand).Name=="ApplyPendingInput");
+            var mpi=playerUpdate.Body.GetILProcessor();
+            var motionPlayer=mpi.Create(OpCodes.Ldarg_0);mpi.InsertAfter(pendingInput,motionPlayer);
+            mpi.InsertAfter(motionPlayer,mpi.Create(OpCodes.Call,method("MotionAfterInput")));
+            var jumpMovement=module.GetType("Terraria.Player").Methods.Single(m=>m.Name=="JumpMovement" && m.Parameters.Count==0);
+            PrefixPlayer(jumpMovement,method("MotionBeforeJump"));
+            SuffixPlayer(jumpMovement,method("MotionAfterJump"));
             var shotUpdate=module.GetType("Terraria.Projectile").Methods.Single(m=>m.Name=="Update" && m.Parameters.Count==1);
             var shotKill=module.GetType("Terraria.Projectile").Methods.Single(m=>m.Name=="Kill" && m.Parameters.Count==0);
             var ski=shotKill.Body.GetILProcessor();var skfirst=shotKill.Body.Instructions[0];
@@ -114,6 +126,20 @@ static class GameProbePatcher
     static void Prefix(MethodDefinition m,MethodReference call)
     {
         var il=m.Body.GetILProcessor();il.InsertBefore(m.Body.Instructions[0],il.Create(OpCodes.Call,call));
+    }
+    static void PrefixPlayer(MethodDefinition m,MethodReference call)
+    {
+        var il=m.Body.GetILProcessor();var first=m.Body.Instructions[0];
+        il.InsertBefore(first,il.Create(OpCodes.Ldarg_0));il.InsertBefore(first,il.Create(OpCodes.Call,call));
+    }
+    static void SuffixPlayer(MethodDefinition m,MethodReference call)
+    {
+        var il=m.Body.GetILProcessor();
+        foreach(var ret in m.Body.Instructions.Where(i=>i.OpCode==OpCodes.Ret).ToArray())
+        {
+            ret.OpCode=OpCodes.Ldarg_0;ret.Operand=null;
+            var report=il.Create(OpCodes.Call,call);il.InsertAfter(ret,report);il.InsertAfter(report,il.Create(OpCodes.Ret));
+        }
     }
     static void WidenType(TypeDefinition type)
     {

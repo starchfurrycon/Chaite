@@ -88,6 +88,7 @@ namespace Chaite.Core
         // Zero is an intentional coast/no-jump command for source-specific
         // controllers, not an invitation to infer a generic orbit direction.
         public bool UseExplicitMovement;
+        public JumpAction JumpAction;
         public bool PreferDash;
         public bool AllowHook;
         public bool AllowGravityFlip;
@@ -718,18 +719,247 @@ namespace Chaite.Core
 
     internal sealed class EyeStrategy : BossStrategyBase
     {
-        public EyeStrategy() : base("eye-of-cthulhu", 900, 360, 4.5f) { }
+        private enum NativePhase
+        {
+            FirstTrack, FirstLaunch, FirstCharge, FirstBrake, TransformPending,
+            TransformAccelerate, TransformDecelerate, SecondTrack, SecondLaunch,
+            SecondCharge, SecondBrake, FastLaunch, FastCharge, FastBrake, FastReposition, Unknown
+        }
+
+        private int _eyeKey = -1;
+        private int _runDirection;
+        private bool _hasChargeVector;
+        private bool _holdingHop;
+        private Vec2 _chargeVector;
+        private float _previousAi0 = -1f;
+        private float _previousAi1 = -1f;
+        private float _previousAi2;
+        private float _previousAi3;
+
+        // Ground runway with boots-class running. Raised platform switching,
+        // slime-mount bouncing and secret-seed templates are separate policies.
+        public EyeStrategy() : base("eye-of-cthulhu", 1200, 240, 5.5f) { }
         public override bool Matches(IList<TargetSnapshot> b, DifficultySnapshot d) => HasType(b, 4);
         public override BossDecision Evaluate(CombatSnapshot s, BossMemory m)
         {
-            var t = Pick(s, 4);
-            var second = Life(t) < .5f || t.Ai0 >= 3f;
-            var chain = second && t.Velocity.Length > (s.Difficulty.Expert ? 9f : 7f);
-            var desperation = second && s.Difficulty.Expert && Life(t) < .12f;
-            return Decision(s, t, desperation ? "expert-chain-dash" : chain ? "dash" : second ? "phase-2-track" : "phase-1-servants",
-                chain ? BossPattern.PerpendicularDashDodge : BossPattern.EllipseOrbit,
-                second ? 430 : 360, -70, chain ? -Math.Sign(t.Velocity.X) : 0,
-                chain ? PerpendicularY(s.Player, t) : 0, chain, true, s.Mobility.CanFlipGravity, second ? 48 : 30);
+            var eye = Pick(s, 4);
+            if (_eyeKey != eye.Key || m.PreviousTargetKey < 0)
+            {
+                _eyeKey = eye.Key;
+                _runDirection = AwayX(s.Player, eye);
+                _hasChargeVector = false;
+                _holdingHop = false;
+                _previousAi0 = _previousAi1 = -1f;
+                _previousAi2 = _previousAi3 = 0f;
+            }
+            var expert = s.Difficulty.Expert || s.Difficulty.Master;
+            // Unlike the transform threshold, these exact native checks use r8.
+            var frantic = expert && (double)eye.Life < (double)eye.LifeMax * .12;
+            var desperate = expert && (double)eye.Life < (double)eye.LifeMax * .04;
+            var phase = ObservePhase(eye, expert, frantic, desperate);
+            var launch = phase == NativePhase.FirstLaunch || phase == NativePhase.SecondLaunch || phase == NativePhase.FastLaunch;
+            var charge = phase == NativePhase.FirstCharge || phase == NativePhase.SecondCharge || phase == NativePhase.FastCharge;
+            var brake = phase == NativePhase.FirstBrake || phase == NativePhase.SecondBrake || phase == NativePhase.FastBrake;
+            var transformation = phase == NativePhase.TransformPending || phase == NativePhase.TransformAccelerate || phase == NativePhase.TransformDecelerate;
+            var newCharge = charge && (!_hasChargeVector || eye.Ai0 != _previousAi0 || eye.Ai1 != _previousAi1 ||
+                eye.Ai2 < _previousAi2 || eye.Ai3 != _previousAi3);
+            if (newCharge)
+            {
+                // ai1==launch still contains the preceding motion. Capture only
+                // the actual post-launch vector, never a guessed random dash.
+                _chargeVector = eye.Velocity;
+                _hasChargeVector = true;
+            }
+            else if (!charge) _hasChargeVector = false;
+
+            var remainingLane = EyeLaneRemaining(s, _runDirection);
+            var speed = Math.Abs(s.Player.Velocity.X);
+            var brakingDistance = speed * speed / (2f * Math.Max(.000001f, s.Player.RunSlowdown));
+            var turnReserve = Math.Max(300f, brakingDistance + speed * 30f);
+            var mayRecover = !launch && !charge && phase != NativePhase.Unknown;
+            var turned = false;
+            if (mayRecover && remainingLane < turnReserve && EyeLaneRemaining(s, -_runDirection) > remainingLane + 160f &&
+                CanRecoverAcrossLane(s, eye, -_runDirection))
+            {
+                _runDirection = -_runDirection;
+                remainingLane = EyeLaneRemaining(s, _runDirection);
+                turned = true;
+            }
+
+            var ideal = 420f;
+            if (s.Weapon != null && s.Weapon.NativeProfileRequired && s.Weapon.Profile.IsSupported)
+                ideal = Math.Min(ideal, Math.Max(200f, s.Weapon.Profile.ConservativeRangePixels * .65f));
+            var horizontal = _runDirection;
+            var gap = Math.Abs(s.Player.Center.X - eye.Center.X);
+            // Preserve running speed through bait and committed charges. Coast
+            // only in a real recovery window when Boss is already far away, not
+            // whenever generic distance tracking happens to cross one threshold.
+            if (mayRecover && !turned && (gap > ideal * 1.7f || transformation && gap > ideal)) horizontal = 0;
+            if (phase == NativePhase.Unknown || remainingLane < Math.Max(20f, brakingDistance + 12f)) horizontal = 0;
+
+            var jump = JumpAction.Release;
+            if (_holdingHop)
+            {
+                if (s.Player.Jump.Known && !s.Player.OnGround && s.Player.Jump.RemainingTicks > 0)
+                    jump = JumpAction.Hold;
+                else _holdingHop = false;
+            }
+            if (!_holdingHop && charge && _hasChargeVector && horizontal != 0 && CanStartGroundHop(s, eye, phase, expert, desperate))
+            {
+                _holdingHop = true;
+                jump = JumpAction.Hold;
+            }
+            var visible = eye.LineOfSightKnown ? eye.HasLineOfSight : s.LineOfSightToPrimary;
+            var inRange = s.Weapon == null || !s.Weapon.NativeProfileRequired || !s.Weapon.Profile.IsSupported ||
+                Vec2.DistanceSquared(eye.Center, s.Player.Center) <= s.Weapon.Profile.ConservativeRangePixels * s.Weapon.Profile.ConservativeRangePixels;
+            var decision = Decision(s, eye, PhaseName(phase), BossPattern.Runway, ideal, 0f,
+                horizontal, jump == JumpAction.Hold ? 1 : 0, false, false, false, 30f,
+                eye.Life > 0 && eye.Chaseable && visible && inRange);
+            decision.Directive.UseExplicitMovement = true;
+            decision.Directive.JumpAction = jump;
+            decision.Directive.ForceContinuousMovement = horizontal != 0;
+            decision.Directive.IdealDistance = ideal;
+            _previousAi0 = eye.Ai0;
+            _previousAi1 = eye.Ai1;
+            _previousAi2 = eye.Ai2;
+            _previousAi3 = eye.Ai3;
+            return decision;
+        }
+
+        private static NativePhase ObservePhase(TargetSnapshot eye, bool expert, bool frantic, bool desperate)
+        {
+            if (eye.Ai0 == 1f) return NativePhase.TransformAccelerate;
+            if (eye.Ai0 == 2f) return NativePhase.TransformDecelerate;
+            if (eye.Ai0 == 0f)
+            {
+                // Native NPC.AI 11a4..11ca: r4 life < r4 lifeMax * r4 limit.
+                // Do not replace this with a normalized ratio or expert .5.
+                if (eye.Ai1 == 0f && (float)eye.Life < (float)eye.LifeMax * (expert ? .65f : .5f))
+                    return NativePhase.TransformPending;
+                if (eye.Ai1 == 0f) return NativePhase.FirstTrack;
+                if (eye.Ai1 == 1f) return NativePhase.FirstLaunch;
+                if (eye.Ai1 == 2f) return eye.Ai2 < 40f ? NativePhase.FirstCharge : NativePhase.FirstBrake;
+                return NativePhase.Unknown;
+            }
+            if (eye.Ai0 != 3f) return NativePhase.Unknown;
+            if (eye.Ai1 == 0f) return frantic ? NativePhase.FastReposition : NativePhase.SecondTrack;
+            if (eye.Ai1 == 1f) return NativePhase.SecondLaunch;
+            if (eye.Ai1 == 2f) return eye.Ai2 < (expert ? 50f : 40f) ? NativePhase.SecondCharge : NativePhase.SecondBrake;
+            if (eye.Ai1 == 3f) return NativePhase.FastLaunch;
+            if (eye.Ai1 == 4f)
+                // Native ai2 holds at threshold-1 while within 200px; trusting
+                // the observed timer automatically preserves that extra dash.
+                return eye.Ai2 < (desperate ? 10f : 20f) ? NativePhase.FastCharge : NativePhase.FastBrake;
+            if (eye.Ai1 == 5f) return NativePhase.FastReposition;
+            return NativePhase.Unknown;
+        }
+
+        private static string PhaseName(NativePhase phase)
+        {
+            switch (phase)
+            {
+                case NativePhase.FirstTrack: return "first-hover-bait";
+                case NativePhase.FirstLaunch: return "first-launch-prepare-exit";
+                case NativePhase.FirstCharge: return "first-charge-committed-exit";
+                case NativePhase.FirstBrake: return "first-brake-recover-runway";
+                case NativePhase.TransformPending: return "transform-pending-recover-runway";
+                case NativePhase.TransformAccelerate: return "transform-spin-up-recover";
+                case NativePhase.TransformDecelerate: return "transform-spin-down-recover";
+                case NativePhase.SecondTrack: return "second-track-bait";
+                case NativePhase.SecondLaunch: return "second-launch-prepare-exit";
+                case NativePhase.SecondCharge: return "second-charge-committed-exit";
+                case NativePhase.SecondBrake: return "second-brake-recover-runway";
+                case NativePhase.FastLaunch: return "fast-launch-observe-vector";
+                case NativePhase.FastCharge: return "fast-charge-committed-exit";
+                case NativePhase.FastBrake: return "fast-brake-recover-runway";
+                case NativePhase.FastReposition: return "fast-reposition-bait";
+                default: return "unrecognized-native-state";
+            }
+        }
+
+        private static float EyeLaneRemaining(CombatSnapshot s, int direction)
+        {
+            var clearance = direction > 0 ? s.Arena.ClearanceRight : s.Arena.ClearanceLeft;
+            var support = s.Arena.FloorSupport;
+            if (!s.Mobility.GravityInverted && support.ContainsBody(s.Player.Position.X, s.Player.Width))
+                clearance = Math.Min(clearance, direction > 0 ? support.Right - s.Player.Position.X - s.Player.Width : s.Player.Position.X - support.Left);
+            return Math.Max(0f, clearance);
+        }
+
+        private static bool CanRecoverAcrossLane(CombatSnapshot s, TargetSnapshot eye, int direction)
+        {
+            var p = s.Player;
+            var floor = s.Arena.FloorSupport;
+            if (!p.OnGround || s.Mobility.GravityInverted || s.Mobility.Grappling ||
+                !floor.Valid || floor.Inverted || !floor.ContainsBody(p.Position.X, p.Width) ||
+                Math.Abs(floor.SurfaceY - p.Position.Y - p.Height) > 6f) return false;
+            var x = p.Position.X;
+            var vx = p.Velocity.X;
+            for (var tick = 1; tick <= 24; tick++)
+            {
+                float travel;
+                vx = HorizontalMotion.Advance(p, vx, direction, true, 1, out travel,
+                    s.Mobility.MountActive ? s.Mobility.MountRunSpeed : 0f);
+                x += travel;
+                if (!floor.ContainsBody(x, p.Width)) return false;
+                var boss = eye.Position + eye.Velocity * tick;
+                if (x + p.Width + 40f > boss.X && x - 40f < boss.X + eye.Width &&
+                    p.Position.Y + p.Height + 40f > boss.Y && p.Position.Y - 40f < boss.Y + eye.Height) return false;
+            }
+            return true;
+        }
+
+        private bool CanStartGroundHop(CombatSnapshot s, TargetSnapshot eye, NativePhase phase, bool expert, bool desperate)
+        {
+            var p = s.Player;
+            var jump = p.Jump;
+            if (!jump.Known || !jump.ReleaseReady || jump.Speed <= 0f || jump.Height <= 0 || !p.OnGround ||
+                s.Mobility.GravityInverted || s.Mobility.Grappling || s.Mobility.MountActive ||
+                s.Difficulty.ForTheWorthy || s.Difficulty.Zenith || s.Difficulty.Remix ||
+                Math.Abs(_chargeVector.Y) > Math.Abs(_chargeVector.X) * .65f ||
+                eye.Center.Y < p.Center.Y - 48f) return false;
+            var floor = s.Arena.FloorSupport;
+            if (!floor.ContainsBody(p.Position.X, p.Width) || floor.Inverted ||
+                Math.Abs(floor.SurfaceY - p.Position.Y - p.Height) > 6f) return false;
+            var straightUntil = phase == NativePhase.FirstCharge ? 40f : phase == NativePhase.SecondCharge ?
+                (expert ? 50f : 40f) : (desperate ? 10f : 20f);
+            // Only rely on the still-observed straight segment. The native
+            // near-player fast-dash timer extension is not assumed in advance.
+            var horizon = Math.Min(24, (int)Math.Max(0f, straightUntil - eye.Ai2));
+            var x = p.Position.X;
+            var vx = p.Velocity.X;
+            var hopX = x;
+            var hopY = p.Position.Y;
+            var hopVx = vx;
+            var hopVy = p.Velocity.Y;
+            var hopState = jump;
+            var groundThreat = false;
+            for (var tick = 1; tick <= horizon; tick++)
+            {
+                float travel;
+                vx = HorizontalMotion.Advance(p, vx, _runDirection, true, 1, out travel);
+                x += travel;
+                // Native horizontal movement precedes JumpMovement, so the
+                // launch tick still earns grounded sprint acceleration.
+                hopVx = HorizontalMotion.Advance(p, hopVx, _runDirection, tick == 1, 1, out travel);
+                hopX += travel;
+                var hold = JumpMotion.ResolveControl(true, JumpAction.Hold, in hopState, tick == 1, false);
+                JumpMotion.ApplyJump(ref hopState, ref hopVy, hold, false);
+                hopVy = JumpMotion.ApplyGravity(hopVy, Math.Abs(p.Gravity), p.MaxFallSpeed, false);
+                hopY += hopVy;
+                if (!floor.ContainsBody(x, p.Width) || !floor.ContainsBody(hopX, p.Width) ||
+                    p.Position.Y - hopY + 48f > s.Arena.ClearanceUp) return false;
+                var boss = eye.Position + _chargeVector * tick;
+                if (hopX + p.Width + 24f > boss.X && hopX - 24f < boss.X + eye.Width &&
+                    hopY + p.Height + 24f > boss.Y && hopY - 24f < boss.Y + eye.Height) return false;
+                if (x + p.Width + 24f > boss.X && x - 24f < boss.X + eye.Width &&
+                    p.Position.Y + p.Height + 24f > boss.Y && p.Position.Y - 24f < boss.Y + eye.Height)
+                {
+                    if (tick < 4) return false;
+                    groundThreat = true;
+                }
+            }
+            return groundThreat;
         }
     }
 

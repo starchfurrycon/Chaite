@@ -417,16 +417,19 @@ namespace Chaite.Tests
 
         private static void ArenaReversalDoesNotImmediatelyOscillateBack()
         {
-            // Generic orbit policy; King's native runway policy now brakes and
-            // waits for a measured opening instead of blindly reversing into it.
+            // Exercise the generic survival kite directly. Native King/Eye
+            // runway controllers instead brake until a measured safe opening.
             var scenario = CombatScenario(4);
+            var target = scenario.Targets[0];
+            target.Position.X = 1815f; // 350px gap: request running, not far-target coast.
+            scenario.Targets[0] = target;
             scenario.Arena.ClearanceLeft = 60;
             var planner = new CombatPlanner(new PlannerSettings());
-            Equal(1, planner.Plan(scenario).Horizontal);
+            Equal(1, planner.PlanSurvival(scenario).Horizontal);
             scenario.Arena.ClearanceLeft = 140;
             scenario.Player.Position.X += 5;
             scenario.Player.Velocity.X = 5;
-            Equal(1, planner.Plan(scenario).Horizontal);
+            Equal(1, planner.PlanSurvival(scenario).Horizontal);
         }
 
         private static void RespawnDoesNotPlayHitCue()

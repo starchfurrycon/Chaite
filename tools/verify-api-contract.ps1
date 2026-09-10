@@ -12,15 +12,17 @@ Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $gamePath = [IO.Path]::GetFullPath($TerrariaExe)
 $facadePath = Join-Path $projectRoot 'src\Chaite.Plugin\TerrariaFacade.cs'
+$jumpReaderPath = Join-Path $projectRoot 'src\Chaite.Plugin\NativeJumpReader.cs'
 $pluginPath = Join-Path $projectRoot 'src\Chaite.Plugin\bin\Release\net48\Chaite.Plugin.dll'
 $patcherPath = Join-Path $projectRoot 'src\Chaite.Patcher\bin\Release\net48\Chaite.Patcher.exe'
 $cecilPath = Join-Path $projectRoot 'src\Chaite.Patcher\bin\Release\net48\Mono.Cecil.dll'
-foreach ($required in @($gamePath, $facadePath, $pluginPath, $patcherPath, $cecilPath)) {
+foreach ($required in @($gamePath, $facadePath, $jumpReaderPath, $pluginPath, $patcherPath, $cecilPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing required input: $required" }
 }
 
 $sourceHashBefore = (Get-FileHash -LiteralPath $gamePath -Algorithm SHA256).Hash
 $facadeSourceHash = (Get-FileHash -LiteralPath $facadePath -Algorithm SHA256).Hash
+$jumpReaderSourceHash = (Get-FileHash -LiteralPath $jumpReaderPath -Algorithm SHA256).Hash
 $expectedSourceHash = '960A03BFF6050CF7BE16DFC1A7B19E10FC2C4F8F835A6A3B135A50DD9E6BA2F3'
 if ($sourceHashBefore -ne $expectedSourceHash) { throw 'Live executable does not match the verified vanilla 1.4.5.8 SHA-256; refusing to guess an API contract.' }
 if ($PatchCopy -and [string]::IsNullOrWhiteSpace($OutputDirectory)) { throw '-PatchCopy requires a workspace artifacts OutputDirectory.' }
@@ -104,6 +106,7 @@ function Is-MetadataCall($Instruction, [string]$Owner, [string]$Name) {
 
 try {
     $source = Get-Content -LiteralPath $facadePath -Raw -Encoding UTF8
+    $source += [Environment]::NewLine + (Get-Content -LiteralPath $jumpReaderPath -Raw -Encoding UTF8)
     $owners = @{
         _mainType = 'Terraria.Main'; playerType = 'Terraria.Player'; npcType = 'Terraria.NPC'
         projectileType = 'Terraria.Projectile'; itemType = 'Terraria.Item'; entityType = 'Terraria.Entity'
@@ -143,6 +146,8 @@ try {
     Test-Field 'Terraria.Main' 'projectile' 'Terraria.Projectile[]' $true
     Test-Field 'Terraria.Main' 'tile' 'Terraria.Tile[0...,0...]' $true
     Test-Field 'Terraria.Player' 'inventory' 'Terraria.Item[]' $false
+    Test-Field 'Terraria.Player' 'portableStoolInfo' 'Terraria.DataStructures.PortableStoolUsage' $false
+    Test-Field 'Terraria.DataStructures.PortableStoolUsage' 'IsInUse' 'System.Boolean' $false
     Test-Field 'Terraria.Player' 'selectedItemState' 'Terraria.Player/SelectedItemState' $false $true
     Test-Field 'Terraria.Mount' 'mounts' 'Terraria.Mount/MountData[]' $true
     foreach ($entry in @(@('Terraria.Main','npc'), @('Terraria.Main','projectile'), @('Terraria.Player','inventory'), @('Terraria.Mount','mounts'))) {
@@ -239,6 +244,7 @@ try {
         VerifiedUtc = [DateTime]::UtcNow.ToString('o'); MetadataOnly = $true; GameExecuted = $false
         LiveGamePath = $gamePath; SourceSha256Before = $sourceHashBefore; SourceSha256After = $sourceHashAfter
         SourceUnchanged = $sourceHashBefore -eq $sourceHashAfter; FacadeSourceSha256 = $facadeSourceHash
+        NativeJumpReaderSourceSha256 = $jumpReaderSourceHash
         PluginSha256 = (Get-FileHash -LiteralPath $pluginPath -Algorithm SHA256).Hash
         ContractChecks = $results.Count; LiteralSourceBindings = $checkedBindings; Contracts = $results.ToArray()
         FourHookCopyVerified = [bool]$PatchCopy; Hooks = $hookResults.ToArray()

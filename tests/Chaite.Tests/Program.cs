@@ -10,8 +10,10 @@ namespace Chaite.Tests
         private static int _passed;
         private static int _failed;
 
-        private static int Main()
+        private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--native-motion-trace") return VerifyNativeMotionTrace(args[1]);
+            if (args.Length != 0) return 2;
             Run(nameof(PlannerRichWorkloadBenchmark), PlannerRichWorkloadBenchmark);
             Run(nameof(RejectsActivationWithoutBossStart), RejectsActivationWithoutBossStart);
             Run(nameof(EventsAreNotAccepted), EventsAreNotAccepted);
@@ -46,11 +48,14 @@ namespace Chaite.Tests
             RunSafetyRegressions();
             RunBeamRegressions();
             RunMobilityRegressions();
+            RunJumpMotionRegressions();
+            RunNativeJumpReaderRegressions();
             RunSupportRegressions();
             RunReflectionRegressions();
             RunWeaponProfileRegressions();
             RunWeaponActionGateRegressions();
             RunKingSlimeRegressions();
+            RunEyeRegressions();
             RunTransactionRegressions();
             RunPatcherRegressions();
 

@@ -105,6 +105,7 @@ namespace Chaite.Core
         public float RunSlowdown;
         public bool CanSprintInAir;
         public float JumpSpeedBoost;
+        public JumpSnapshot Jump;
         public float WingTime;
         public float RocketTime;
         public bool OnGround;
@@ -317,6 +318,7 @@ namespace Chaite.Core
     {
         public int Horizontal;
         public bool Jump;
+        public JumpAction JumpAction;
         public bool Drop;
         public bool Fire;
         public bool QuickHeal;

@@ -109,8 +109,14 @@ if ($Probe) {
             '-scenario' {
                 if ($fixtureArguments.Contains('-scenario') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -scenario.' }
                 $value = $TargetArguments[$index]
-                if ($value -cnotin @('eye-baseline', 'eye', 'king-slime', 'queen-slime', 'destroyer', 'twins', 'prime')) { throw 'Unreviewed boss scenario.' }
+                if ($value -cnotin @('eye-baseline', 'eye', 'king-slime', 'queen-slime', 'destroyer', 'twins', 'prime', 'motion-jump')) { throw 'Unreviewed fixture scenario.' }
                 $fixtureArguments['-scenario'] = $value
+            }
+            '-motioncase' {
+                if ($fixtureArguments.Contains('-motioncase') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -motioncase.' }
+                $value = $TargetArguments[$index]
+                if ($value -cnotin @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press')) { throw 'Unreviewed motion case.' }
+                $fixtureArguments['-motioncase'] = $value
             }
             '-seed' {
                 if ($fixtureArguments.Contains('-seed') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -seed.' }
@@ -142,6 +148,11 @@ if ($Probe) {
             default { throw "Unreviewed target argument: $($TargetArguments[$index])" }
         }
     }
+    $motion = $fixtureArguments.Contains('-scenario') -and $fixtureArguments['-scenario'] -ceq 'motion-jump'
+    if ($motion) {
+        if ($manifest.Mode -cne 'headless' -or -not $fixtureArguments.Contains('-motioncase')) { throw 'Motion microtests require a headless manifest and explicit reviewed -motioncase.' }
+        if ($fixtureArguments.Contains('-difficulty') -and $fixtureArguments['-difficulty'] -cne 'classic') { throw 'Motion microtests require classic difficulty.' }
+    } elseif ($fixtureArguments.Contains('-motioncase')) { throw '-motioncase requires -scenario motion-jump.' }
     $TargetArguments = @('-savedirectory', $save)
     if ($skipBeam) { $TargetArguments += '-skipbeam' }
     foreach ($key in $fixtureArguments.Keys) { $TargetArguments += @($key, $fixtureArguments[$key]) }

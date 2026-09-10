@@ -24,6 +24,7 @@
     <Compile Include="HotkeyPoller.cs" />
     <Compile Include="Log.cs" />
     <Compile Include="MovementActionGate.cs" />
+    <Compile Include="NativeJumpReader.cs" />
     <Compile Include="WeaponActionGate.cs" />
     <Compile Include="ReflectionAccess.cs" />
     <Compile Include="Runtime.cs" />

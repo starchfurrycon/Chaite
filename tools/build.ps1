@@ -3,7 +3,7 @@ param(
     [string]$Configuration = 'Release',
     [switch]$Package,
     [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$')]
-    [string]$PackageVersion = 'v0.5.0-alpha'
+    [string]$PackageVersion = 'v0.6.0-alpha'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +41,9 @@ if ($Package) {
     & (Join-Path $PSScriptRoot 'test-boss-readiness.ps1') |
         Tee-Object -FilePath (Join-Path $verification 'boss-readiness-tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Offline per-Boss readiness tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-native-motion-evidence.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'motion-evidence-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline motion evidence validation tests failed; no package was created.' }
     $uiOutput = Join-Path $verification 'ui'
     $uiCheck = Start-Process -FilePath (Join-Path $managerBin 'Chaite.Manager.exe') `
         -ArgumentList @('--ui-smoke', ('"' + $uiOutput + '"')) -WindowStyle Hidden -PassThru -Wait
@@ -60,7 +63,7 @@ if ($Package) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $release
     $packageDocs = Join-Path $release 'docs'
     New-Item -ItemType Directory -Path $packageDocs | Out-Null
-    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md')) {
+    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot ('docs\' + $document)) -Destination $packageDocs
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $release

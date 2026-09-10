@@ -56,6 +56,13 @@ jobs:
             Tee-Object -FilePath artifacts\ci\boss-readiness-tests.log
           if ($LASTEXITCODE -ne 0) { throw "Readiness regressions failed: $LASTEXITCODE" }
 
+      - name: Check native motion evidence gate without launching Terraria
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-native-motion-evidence.ps1 |
+            Tee-Object -FilePath artifacts\ci\motion-evidence-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Motion evidence regressions failed: $LASTEXITCODE" }
+
       - name: Retain offline test evidence
         if: always()
         uses: actions/upload-artifact@v4

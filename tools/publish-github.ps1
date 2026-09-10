@@ -44,10 +44,10 @@ function Get-PublicSourceManifest {
     # decompiled outputs and live-game test artifacts are intentionally excluded.
     foreach ($name in @('build.ps1', 'verify-api-contract.ps1', 'publish-github.ps1',
         'GameProbe.cs', 'GameProbePatcher.cs', 'prepare-game-probe.ps1', 'Chaite.DesktopHost.cs', 'start-isolated-test.ps1', 'run-boss-validation.ps1', 'test-boss-evidence.ps1',
-        'evaluate-boss-readiness.ps1', 'test-boss-readiness.ps1')) {
+        'evaluate-boss-readiness.ps1', 'test-boss-readiness.ps1', 'test-native-motion.ps1', 'test-native-motion-evidence.ps1')) {
         if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name) -PathType Leaf) { $paths.Add('tools/' + $name) }
     }
-    foreach ($name in @('boss-king-native-policy.md', 'weapon-profile-policy.md')) {
+    foreach ($name in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md')) {
         $relative = 'docs/' + $name
         if (Test-Path -LiteralPath (Join-Path $projectRoot $relative) -PathType Leaf) { $paths.Add($relative) }
     }

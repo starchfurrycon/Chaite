@@ -124,6 +124,20 @@ try {
     foreach ($hook in @('ActivateDown', 'CancelDown')) {
         if (@($poll[0].Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.Name -eq 'ChaiteGameProbe' -and $_.Operand.Name -eq $hook }).Count -ne 1) { throw "Missing synthetic hotkey: $hook" }
     }
+    $playerType = $prepared.GetType('Terraria.Player')
+    $playerUpdate = @($playerType.Methods | Where-Object { $_.Name -eq 'Update' -and $_.Parameters.Count -eq 1 })
+    $jumpMovement = @($playerType.Methods | Where-Object { $_.Name -eq 'JumpMovement' -and $_.Parameters.Count -eq 0 })
+    if ($playerUpdate.Count -ne 1 -or $jumpMovement.Count -ne 1) { throw 'Motion observation entry points are ambiguous.' }
+    foreach ($hook in @('MotionBeforePlayerUpdate', 'MotionAfterInput')) {
+        if (@($playerUpdate[0].Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.Name -eq 'ChaiteGameProbe' -and $_.Operand.Name -eq $hook }).Count -ne 1) { throw "Missing native motion observer: $hook" }
+    }
+    $inputReplay = @($playerUpdate[0].Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'Chaite.Plugin.Runtime' -and $_.Operand.Name -eq 'ApplyPendingInput' })
+    if ($inputReplay.Count -ne 1 -or $inputReplay[0].Next.OpCode.Name -ne 'ldarg.0' -or $inputReplay[0].Next.Next.Operand.Name -ne 'MotionAfterInput') { throw 'Motion control replay must immediately follow the production input replay.' }
+    $beforeJump = @($jumpMovement[0].Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.Name -eq 'ChaiteGameProbe' -and $_.Operand.Name -eq 'MotionBeforeJump' })
+    if ($beforeJump.Count -ne 1 -or $jumpMovement[0].Body.Instructions[0].OpCode.Name -ne 'ldarg.0' -or $jumpMovement[0].Body.Instructions[1] -ne $beforeJump[0]) { throw 'Motion preJump observer must precede the original JumpMovement body.' }
+    foreach ($ret in @($jumpMovement[0].Body.Instructions | Where-Object { $_.OpCode.Name -eq 'ret' })) {
+        if ($ret.Previous.Operand -isnot [Mono.Cecil.MethodReference] -or $ret.Previous.Operand.DeclaringType.Name -ne 'ChaiteGameProbe' -or $ret.Previous.Operand.Name -ne 'MotionAfterJump') { throw 'A native JumpMovement return lacks its paired postJump observer.' }
+    }
 } finally {
     $preparedPlugin.Dispose()
     $prepared.Dispose()
