@@ -41,6 +41,14 @@ namespace Chaite.Tests
             Run(nameof(RecoveryDoesNotFireHookAtUnreachableAnchor), RecoveryDoesNotFireHookAtUnreachableAnchor);
             Run(nameof(InstantExpectedBossKillStillRequiresGraceAndConfirmation), InstantExpectedBossKillStillRequiresGraceAndConfirmation);
             Run(nameof(OptimizedPlannerMatchesReferenceAcrossDeterministicScenes), OptimizedPlannerMatchesReferenceAcrossDeterministicScenes);
+            Run(nameof(ExplicitKiteIntentCoastsThenReturnsAtDistanceBoundaries), ExplicitKiteIntentCoastsThenReturnsAtDistanceBoundaries);
+            Run(nameof(DistanceRecoveryPreservesDashAndTowardIntent), DistanceRecoveryPreservesDashAndTowardIntent);
+            Run(nameof(DestroyerFloorClearanceRequiresObservedFloor), DestroyerFloorClearanceRequiresObservedFloor);
+            Run(nameof(DestroyerSelectsExposedTargetsBeforeDistanceOrStickiness), DestroyerSelectsExposedTargetsBeforeDistanceOrStickiness);
+            Run(nameof(DestroyerTargetStickinessHasBoundedDistanceBias), DestroyerTargetStickinessHasBoundedDistanceBias);
+            Run(nameof(DestroyerProbePressureRespectsDistanceAndVisibility), DestroyerProbePressureRespectsDistanceAndVisibility);
+            Run(nameof(DestroyerHeadThreatIsIndependentFromDamageTarget), DestroyerHeadThreatIsIndependentFromDamageTarget);
+            Run(nameof(DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns), DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns);
         }
 
         private static void ExistingBossAloneDoesNotAuthorizeActivation()
@@ -555,6 +563,253 @@ namespace Chaite.Tests
                 }
             }
             Equal(288, checkedPlans);
+        }
+
+        private static void ExplicitKiteIntentCoastsThenReturnsAtDistanceBoundaries()
+        {
+            var snapshot = DestroyerTestScene();
+            snapshot.Player.Position = new Vec2(-10f, -21f); // Center at zero prevents translated-coordinate rounding.
+            var patterns = new[] { BossPattern.Runway, BossPattern.HorizontalKite, BossPattern.ProjectileLanes };
+            // Multiplication by 512 is exact for the binary Single constants 1.15f / 1.8f,
+            // even under the x86 CLR's extended intermediate precision. At ideal=400,
+            // 1.15f * 400 can stay 459.99999046325684 rather than round to 460 before >.
+            // These are the exact thresholds and their immediately adjacent Single values.
+            var distances = new[] { 512f,
+                588.7999267578125f, 588.79998779296875f, 588.800048828125f,
+                921.59991455078125f, 921.5999755859375f, 921.60003662109375f };
+            var relativeIntents = new[] { 1, 1, 1, 0, 0, 0, -1 };
+            foreach (var pattern in patterns)
+            foreach (var away in new[] { -1, 1 })
+            for (var index = 0; index < distances.Length; index++)
+            {
+                var target = DestroyerTestTarget(1, 134, -away * distances[index], 0f);
+                var directive = new BossDirective { Pattern = pattern, IdealDistance = 512f, HorizontalIntent = away };
+                var expected = away * relativeIntents[index];
+                var actual = InvokePatternAxis("PatternHorizontal", snapshot, target, directive);
+                True(expected == actual, pattern + ": away=" + away + ", distance=" + distances[index].ToString("R") +
+                    ", expected=" + expected + ", actual=" + actual);
+            }
+        }
+
+        private static void DistanceRecoveryPreservesDashAndTowardIntent()
+        {
+            var snapshot = DestroyerTestScene();
+            foreach (var away in new[] { -1, 1 })
+            {
+                var target = DestroyerTestTarget(1, 134, 1000f - away * 1000f, 1000f);
+                var directive = new BossDirective
+                {
+                    Pattern = BossPattern.PerpendicularDashDodge, IdealDistance = 400f, HorizontalIntent = away
+                };
+                Equal(away, InvokePatternAxis("PatternHorizontal", snapshot, target, directive));
+                directive.Pattern = BossPattern.Runway;
+                directive.HorizontalIntent = -away;
+                Equal(-away, InvokePatternAxis("PatternHorizontal", snapshot, target, directive));
+                directive.Pattern = BossPattern.CircleOrbit;
+                directive.HorizontalIntent = away;
+                Equal(away, InvokePatternAxis("PatternHorizontal", snapshot, target, directive));
+            }
+        }
+
+        private static void DestroyerFloorClearanceRequiresObservedFloor()
+        {
+            var snapshot = DestroyerTestScene();
+            snapshot.Player.Position.Y = 879f;
+            var target = DestroyerTestTarget(1, 134, 1000f, 1300f);
+            var directive = new BossDirective
+            {
+                Pattern = BossPattern.ProjectileLanes, VerticalOffset = -260f, FloorClearance = 320f
+            };
+            snapshot.Arena.LocalOpenBounds = new RectF(0f, 0f, 2000f, 1000f);
+            snapshot.Arena.HasFloor = true;
+            Equal(1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            snapshot.Mobility.GravityInverted = true;
+            Equal(-1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            snapshot.Mobility.GravityInverted = false;
+            snapshot.Arena.HasFloor = false;
+            Equal(-1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            snapshot.Arena.HasFloor = true;
+            snapshot.Arena.LocalOpenBounds = new RectF(0f, 1000f, 2000f, 0f);
+            Equal(-1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            snapshot.Arena.LocalOpenBounds = new RectF(0f, 0f, 2000f, 1000f);
+            directive.FloorClearance = 0f;
+            Equal(-1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            directive.FloorClearance = 320f;
+            directive.VerticalIntent = -1;
+            Equal(-1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+            directive.VerticalIntent = 0;
+            target.Position.Y = 520f; // A target already above the clearance is not pushed downward.
+            snapshot.Player.Position.Y = 600f;
+            Equal(1, InvokePatternAxis("PatternVertical", snapshot, target, directive));
+        }
+
+        private static void DestroyerSelectsExposedTargetsBeforeDistanceOrStickiness()
+        {
+            var snapshot = DestroyerTestScene();
+            var head = DestroyerTestTarget(1, 134, 1050f, 1000f);
+            head.HasLineOfSight = false;
+            var unknown = DestroyerTestTarget(2, 136, 1100f, 1000f);
+            unknown.LineOfSightKnown = false;
+            var exposed = DestroyerTestTarget(3, 135, 1700f, 1000f);
+            var dead = DestroyerTestTarget(4, 135, 1001f, 1000f);
+            dead.Life = 0;
+            var invulnerable = DestroyerTestTarget(5, 135, 1002f, 1000f);
+            invulnerable.Invulnerable = true;
+            var nonChaseable = DestroyerTestTarget(6, 135, 1003f, 1000f);
+            nonChaseable.Chaseable = false;
+            snapshot.Targets.AddRange(new[] { head, unknown, exposed, dead, invulnerable, nonChaseable });
+            var engine = new BossStrategyEngine();
+            Equal(3, engine.Evaluate(snapshot).Target.Key);
+            exposed.HasLineOfSight = false;
+            snapshot.Targets[2] = exposed;
+            Equal(2, engine.Evaluate(snapshot).Target.Key);
+            unknown.LineOfSightKnown = true;
+            unknown.HasLineOfSight = false;
+            snapshot.Targets[1] = unknown;
+            Equal(2, engine.Evaluate(snapshot).Target.Key); // The 100 px sticky bias remains within the same rank.
+            engine.Reset();
+            Equal(1, engine.Evaluate(snapshot).Target.Key);
+        }
+
+        private static void DestroyerTargetStickinessHasBoundedDistanceBias()
+        {
+            var snapshot = DestroyerTestScene();
+            var head = DestroyerTestTarget(1, 134, 1050f, 1000f);
+            head.HasLineOfSight = false;
+            var first = DestroyerTestTarget(2, 135, 1300f, 1000f);
+            var second = DestroyerTestTarget(3, 136, 1310f, 1000f);
+            snapshot.Targets.AddRange(new[] { head, first, second });
+            var engine = new BossStrategyEngine();
+            Equal(2, engine.Evaluate(snapshot).Target.Key);
+            second.Position.X = 1270f; // Center distance 290: not enough to dislodge the previous target.
+            snapshot.Targets[2] = second;
+            Equal(2, engine.Evaluate(snapshot).Target.Key);
+            second.Position.X = 1260f; // Center distance 280: exceeds the bounded sticky score advantage.
+            snapshot.Targets[2] = second;
+            Equal(3, engine.Evaluate(snapshot).Target.Key);
+            second.HasLineOfSight = false;
+            snapshot.Targets[2] = second;
+            Equal(2, engine.Evaluate(snapshot).Target.Key);
+        }
+
+        private static void DestroyerProbePressureRespectsDistanceAndVisibility()
+        {
+            var snapshot = DestroyerTestScene();
+            var head = DestroyerTestTarget(1, 134, 1050f, 1000f);
+            var probe = DestroyerTestTarget(2, 139, 1320f, 1000f);
+            snapshot.Targets.AddRange(new[] { head, probe });
+            Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
+            probe.Position.X -= 1f;
+            snapshot.Targets[1] = probe;
+            var decision = new BossStrategyEngine().Evaluate(snapshot);
+            Equal(2, decision.Target.Key);
+            True(decision.Directive.PhaseId.Contains("probe-clear"));
+            probe.LineOfSightKnown = false;
+            snapshot.Targets[1] = probe;
+            Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
+
+            snapshot.Targets.Clear();
+            snapshot.Targets.Add(head);
+            for (var i = 0; i < 3; i++)
+                snapshot.Targets.Add(DestroyerTestTarget(2 + i, 139, 1500f + i, 1000f));
+            Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
+            snapshot.Targets.Add(DestroyerTestTarget(5, 139, 1900f, 1000f));
+            Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key); // Exactly 900 does not add pressure.
+            snapshot.Targets[4] = DestroyerTestTarget(5, 139, 1899f, 1000f);
+            Equal(2, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
+
+            snapshot.Targets.Clear();
+            head.HasLineOfSight = false;
+            snapshot.Targets.Add(head);
+            snapshot.Targets.Add(DestroyerTestTarget(2, 139, 1900f, 1000f));
+            Equal(2, new BossStrategyEngine().Evaluate(snapshot).Target.Key); // But it is still a valid target.
+            snapshot.Targets[1] = DestroyerTestTarget(2, 139, 1901f, 1000f);
+            Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
+        }
+
+        private static void DestroyerHeadThreatIsIndependentFromDamageTarget()
+        {
+            var snapshot = DestroyerTestScene();
+            var head = DestroyerTestTarget(1, 134, 1300f, 1100f);
+            head.HasLineOfSight = false;
+            head.Velocity = new Vec2(-10f, -10f);
+            snapshot.Targets.Add(head);
+            snapshot.Targets.Add(DestroyerTestTarget(2, 135, 1400f, 1000f));
+            var decision = new BossStrategyEngine().Evaluate(snapshot);
+            Equal(2, decision.Target.Key);
+            Equal(1, decision.PatternTarget.Key);
+            True(decision.Directive.PhaseId.Contains("head-emerge"));
+            True(decision.Directive.PreferDash);
+            Equal(320f, decision.Directive.FloorClearance);
+            head.Velocity = new Vec2(10f, 10f);
+            snapshot.Targets[0] = head;
+            decision = new BossStrategyEngine().Evaluate(snapshot);
+            Equal(2, decision.Target.Key);
+            Equal(1, decision.PatternTarget.Key);
+            False(decision.Directive.PhaseId.Contains("head-emerge"));
+            False(decision.Directive.PreferDash);
+            Equal(0f, new BossStrategyEngine().Evaluate(CombatScenario(4)).Directive.FloorClearance);
+        }
+
+        private static void DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns()
+        {
+            var snapshot = DestroyerTestScene();
+            var head = DestroyerTestTarget(1, 134, 1300f, 1100f);
+            head.HasLineOfSight = false;
+            var body = DestroyerTestTarget(2, 135, 1400f, 1000f);
+            snapshot.Targets.AddRange(new[] { head, body });
+            var engine = new BossStrategyEngine();
+            for (var tick = 0; tick < 8; tick++)
+            {
+                body.Velocity = new Vec2(tick % 2 == 0 ? -20f : 20f, 0f);
+                snapshot.Targets[1] = body;
+                var cruising = engine.Evaluate(snapshot);
+                Equal(2, cruising.Target.Key);
+                Equal(1, cruising.Directive.HorizontalIntent);
+                False(cruising.Directive.PreferDash);
+            }
+            head.Velocity = new Vec2(-10f, -10f);
+            snapshot.Targets[0] = head;
+            Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
+            head.Position.X = 680f;
+            head.Velocity = new Vec2(10f, -10f);
+            snapshot.Targets[0] = head;
+            for (var tick = 1; tick < 40; tick++)
+                Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
+            Equal(1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
+            engine.Reset();
+            head.Position.X = 1280f;
+            head.Velocity = new Vec2(-10f, -10f);
+            snapshot.Targets[0] = head;
+            Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent); // Reset removed the previous turn hold.
+        }
+
+        private static CombatSnapshot DestroyerTestScene()
+        {
+            var snapshot = CombatScenario(134);
+            snapshot.Player.Position = new Vec2(990f, 979f);
+            snapshot.Player.Velocity = new Vec2(0f, 0f);
+            snapshot.Targets.Clear();
+            return snapshot;
+        }
+
+        private static TargetSnapshot DestroyerTestTarget(int key, int type, float centerX, float centerY)
+        {
+            return new TargetSnapshot
+            {
+                Key = key, Type = type, Position = new Vec2(centerX - 20f, centerY - 20f), Width = 40, Height = 40,
+                Life = 1000, LifeMax = 1000, Boss = type == 134, Chaseable = true,
+                LineOfSightKnown = true, HasLineOfSight = true
+            };
+        }
+
+        private static int InvokePatternAxis(string methodName, CombatSnapshot snapshot, TargetSnapshot target, BossDirective directive)
+        {
+            // Invoke the real pattern controller directly so unrelated collision scoring cannot mask a regression.
+            var method = typeof(CombatPlanner).GetMethod(methodName,
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            True(method != null, "missing production pattern controller " + methodName);
+            return (int)method.Invoke(new CombatPlanner(new PlannerSettings()), new object[] { snapshot, target, directive });
         }
 
         private static void AssertPlansIdentical(ControlPlan expected, ControlPlan actual, int scene, int frame)

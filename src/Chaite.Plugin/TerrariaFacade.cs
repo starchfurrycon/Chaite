@@ -67,6 +67,9 @@ namespace Chaite.Plugin
         private readonly Func<object, bool> _projectileHostile;
         private readonly Func<object, int> _projectileDamage;
         private readonly Func<object, int> _projectileTimeLeft;
+        private readonly Func<object, int> _projectileExtraUpdates;
+        private readonly Func<object, object, object> _pickAmmoItem;
+        private readonly Func<int, object> _projectileSample;
         private readonly Func<object, int> _projectileTypeId;
         private readonly Func<object, int> _projectileOwner;
         private readonly Func<object, bool> _projectileBobber;
@@ -78,6 +81,7 @@ namespace Chaite.Plugin
         private readonly Func<object, bool> _playerDead;
         private readonly Func<object, bool> _playerActive;
         private readonly Func<object, bool> _releaseUseItem;
+        private readonly Func<object, bool> _releaseJump;
         private readonly Func<object, int> _playerItemAnimation;
         private readonly Func<object, int> _playerItemTime;
         private readonly Func<object, bool[]> _inventoryChestStack;
@@ -187,8 +191,9 @@ namespace Chaite.Plugin
         private readonly CombatSnapshot _combatSnapshot = new CombatSnapshot();
         private readonly EncounterObservation _observation = new EncounterObservation();
         private readonly List<int> _activeBossKeys = new List<int>(32);
-        private int _lastSightKey = -1;
-        private bool _lastSightClear;
+        private readonly TargetSightCache _sightCache = new TargetSightCache();
+        private int _sightFrame;
+        private int _sightQueryBudget;
 
         private ArenaSnapshot _cachedArena;
         private Vec2 _cachedArenaAt;
@@ -265,6 +270,9 @@ namespace Chaite.Plugin
             _projectileHostile = ReflectionAccess.Getter<bool>(projectileType, "hostile");
             _projectileDamage = ReflectionAccess.Getter<int>(projectileType, "damage");
             _projectileTimeLeft = ReflectionAccess.Getter<int>(projectileType, "timeLeft");
+            _projectileExtraUpdates = ReflectionAccess.Getter<int>(projectileType, "extraUpdates");
+            _pickAmmoItem = ReflectionAccess.MethodGetterWithArgument<object>(playerType, "PickAmmo_PickAmmoItem", itemType);
+            _projectileSample = ReflectionAccess.StaticIntDictionaryValueGetter(game.GetType("Terraria.ID.ContentSamples", true), "ProjectilesByType");
             _projectileTypeId = ReflectionAccess.Getter<int>(projectileType, "type");
             _projectileOwner = ReflectionAccess.Getter<int>(projectileType, "owner");
             _projectileBobber = ReflectionAccess.Getter<bool>(projectileType, "bobber");
@@ -276,6 +284,7 @@ namespace Chaite.Plugin
             _playerDead = ReflectionAccess.Getter<bool>(playerType, "dead");
             _playerActive = ReflectionAccess.Getter<bool>(playerType, "active");
             _releaseUseItem = ReflectionAccess.Getter<bool>(playerType, "releaseUseItem");
+            _releaseJump = ReflectionAccess.Getter<bool>(playerType, "releaseJump");
             _playerItemAnimation = ReflectionAccess.Getter<int>(playerType, "itemAnimation");
             _playerItemTime = ReflectionAccess.Getter<int>(playerType, "itemTime");
             _inventoryChestStack = ReflectionAccess.Getter<bool[]>(playerType, "inventoryChestStack");
@@ -406,7 +415,13 @@ namespace Chaite.Plugin
         public bool IsInputBlocked => _blockInput();
         public int GetNpcType(object npc) => _npcTypeId(npc);
         public int GetSelectedItem(object player) => _selectedItem(player);
-        public void BeginInputFrame() => _requestedSelection = -1;
+        public void BeginInputFrame()
+        {
+            _requestedSelection = -1;
+            // Activation preflight and same-frame waiting survival can both read
+            // a snapshot. Share one budget, rather than giving each three rays.
+            _sightQueryBudget = 3;
+        }
         public void SetSelectedItem(object player, int slot)
         {
             _requestedSelection = slot;
@@ -511,6 +526,7 @@ namespace Chaite.Plugin
             // tick. Reuse the large target/threat buffers instead of allocating
             // roughly 15 KB of list backing arrays on every game update.
             var snapshot = _combatSnapshot;
+            if (++_sightFrame == int.MaxValue) { _sightCache.Clear(); _sightFrame = 1; }
             snapshot.Targets.Clear();
             snapshot.Threats.Clear();
             var px = _positionX(player);
@@ -579,14 +595,14 @@ namespace Chaite.Plugin
 
             var slot = useBestHotbarWeapon ? FindBestWeaponSlot(player) :
                 Math.Max(0, Math.Min(items.Length - 1, GetSelectedItem(player)));
-            ReadWeaponInto(items, slot, snapshot.Weapon);
+            ReadWeaponInto(player, items, slot, snapshot.Weapon);
             snapshot.Arena = ReadArena(snapshot.Player);
-            ReadTargetsAndThreats(snapshot);
+            ReadTargetsAndThreats(player, snapshot);
             snapshot.LineOfSightToPrimary = true;
             return snapshot;
         }
 
-        private void ReadTargetsAndThreats(CombatSnapshot snapshot)
+        private void ReadTargetsAndThreats(object player, CombatSnapshot snapshot)
         {
             var playerCenter = snapshot.Player.Center;
             var maxTargetDistanceSquared = _config.MaximumTargetDistancePixels * (float)_config.MaximumTargetDistancePixels;
@@ -605,6 +621,8 @@ namespace Chaite.Plugin
                 if (distanceSquared <= maxTargetDistanceSquared)
                 {
                     var ai = _npcAi(npc);
+                    bool visible;
+                    var known = _sightCache.TryGet(_whoAmI(npc), _npcTypeId(npc), playerCenter, center, _sightFrame, out visible);
                     snapshot.Targets.Add(new TargetSnapshot
                     {
                         Key = _whoAmI(npc),
@@ -619,8 +637,8 @@ namespace Chaite.Plugin
                         Boss = boss,
                         Chaseable = _npcChaseable(npc),
                         Invulnerable = _npcInvulnerable(npc),
-                        LineOfSightKnown = _lastSightKey == _whoAmI(npc),
-                        HasLineOfSight = _lastSightClear,
+                        LineOfSightKnown = known,
+                        HasLineOfSight = visible,
                         Ai0 = Ai(ai, 0), Ai1 = Ai(ai, 1), Ai2 = Ai(ai, 2), Ai3 = Ai(ai, 3)
                     });
                 }
@@ -641,6 +659,30 @@ namespace Chaite.Plugin
                 }
             }
 
+            // Probe at most three nearby unknown targets. Remember blocked worm
+            // segments long enough to try another one, instead of alternating
+            // forever between two underground segments with a one-entry cache.
+            // ApplyPlan still performs an exact final ray before every shot.
+            for (var query = 0; query < 3 && _sightQueryBudget > 0; query++)
+            {
+                int best = -1;
+                float distance = float.MaxValue;
+                for (int i = 0; i < snapshot.Targets.Count; i++)
+                {
+                    var candidate = snapshot.Targets[i];
+                    if (candidate.LineOfSightKnown || candidate.Invulnerable || !candidate.Chaseable) continue;
+                    float next = Vec2.DistanceSquared(candidate.Center, playerCenter);
+                    if (next < distance) { best = i; distance = next; }
+                }
+                if (best < 0) break;
+                var target = snapshot.Targets[best];
+                target.LineOfSightKnown = true;
+                _sightQueryBudget--;
+                target.HasLineOfSight = _canHitLine(player, npcs[target.Key]);
+                _sightCache.Record(target.Key, target.Type, playerCenter, target.Center, _sightFrame, target.HasLineOfSight);
+                snapshot.Targets[best] = target;
+            }
+
             var projectiles = _projectiles();
             for (var i = 0; i < projectiles.Length; i++)
             {
@@ -652,9 +694,11 @@ namespace Chaite.Plugin
                 var velocity = new Vec2(_velocityX(projectile), _velocityY(projectile));
                 int projectileType = _projectileTypeId(projectile);
                 bool isBeam = projectileType == 455 || projectileType == 923;
+                int updates = isBeam ? 1 : Math.Max(1, _projectileExtraUpdates(projectile) + 1);
+                var tickVelocity = velocity * updates;
                 // The beam's origin may be far away while its damaging segment
                 // crosses the player. Let Core's beam broadphase test its full reach.
-                if (!isBeam && !WithinThreatHorizon(center, velocity, _width(projectile), _height(projectile), playerCenter))
+                if (!isBeam && !WithinThreatHorizon(center, tickVelocity, _width(projectile), _height(projectile), playerCenter))
                     continue;
                 var threat = new ThreatSnapshot
                 {
@@ -687,6 +731,13 @@ namespace Chaite.Plugin
                         threat.BeamSourceVelocity = new Vec2(_velocityX(npcs[owner]),_velocityY(npcs[owner]));
                         if (projectileType == 455 && _npcTypeId(npcs[owner]) == 400) threat.BeamScaleLimit = .4f;
                     }
+                }
+                else
+                {
+                    // Projectile velocity/timeLeft are per sub-update; the planner
+                    // horizon is in full game ticks. Beam velocity is a direction.
+                    threat.Velocity = tickVelocity;
+                    threat.TimeLeft = Math.Max(1, (int)Math.Ceiling(threat.TimeLeft / (double)updates));
                 }
                 snapshot.Threats.Add(threat);
             }
@@ -988,7 +1039,7 @@ namespace Chaite.Plugin
             var weaponSlot = FindBestWeaponSlot(player);
             SetSelectedItem(player, weaponSlot);
             var items = _inventory(player);
-            var weapon = ReadWeapon(items, weaponSlot);
+            var weapon = ReadWeapon(player, items, weaponSlot);
             var target = new TargetSnapshot
             {
                 Position = new Vec2(_positionX(lacewing), _positionY(lacewing)),
@@ -1067,7 +1118,8 @@ namespace Chaite.Plugin
 
         public void ResetBossStart()
         {
-            _lastSightKey = -1;
+            _sightCache.Clear();
+            _sightFrame = 0;
             if (_voodooTransaction != null && !_voodooTransaction.Completed)
                 throw new InvalidOperationException("Pending item restoration must not be discarded");
             _voodooTransaction = null;
@@ -1143,7 +1195,8 @@ namespace Chaite.Plugin
             ClearCombatControls(player);
             SetControl(player, "controlLeft", plan.Horizontal < 0);
             SetControl(player, "controlRight", plan.Horizontal > 0);
-            SetControl(player, "controlJump", plan.Jump);
+            SetControl(player, "controlJump", MovementActionGate.ShouldHoldJump(plan.Jump,
+                _combatSnapshot.Player.OnGround, _releaseJump(player), _combatSnapshot.Mobility.Grappling));
             SetControl(player, "controlDown", plan.Drop || plan.GravityControl < 0);
             SetControl(player, "controlUp", plan.GravityControl > 0);
             SetControl(player, "controlDash", plan.Dash);
@@ -1164,8 +1217,12 @@ namespace Chaite.Plugin
                 bool visible = plan.TargetKey >= 0 && plan.TargetKey < npcs.Length &&
                     npcs[plan.TargetKey] != null && _npcActive(npcs[plan.TargetKey]) &&
                     _canHitLine(player, npcs[plan.TargetKey]);
-                _lastSightKey = plan.TargetKey;
-                _lastSightClear = visible;
+                if (plan.TargetKey >= 0 && plan.TargetKey < npcs.Length && npcs[plan.TargetKey] != null)
+                {
+                    var target = npcs[plan.TargetKey];
+                    _sightCache.Record(plan.TargetKey, _npcTypeId(target), _combatSnapshot.Player.Center,
+                        new Vec2(_positionX(target) + _width(target) * .5f, _positionY(target) + _height(target) * .5f), _sightFrame, visible);
+                }
                 var inventory = _inventory(player);
                 int slot = GetSelectedItem(player);
                 var weapon = slot >= 0 && slot < inventory.Length ? inventory[slot] : null;
@@ -1310,17 +1367,21 @@ namespace Chaite.Plugin
             if (slot < 0 || slot >= items.Length || items[slot] == null)
                 return 0f;
             var item = items[slot];
-            if (!IsCombatWeapon(item))
+            // Kiting strategies must not choose a high paper-DPS sword over an
+            // available ranged weapon, then consume a summon and swing at air.
+            // Projectile presence is only a necessary condition, not proof that
+            // every spear/yoyo/minion or other short-range projectile is supported.
+            if (!IsCombatWeapon(item) || _itemShoot(item) <= 0)
                 return 0f;
             int ammo = _itemUseAmmo(item);
             if (ammo != 0 && !HasAmmo(items, ammo)) return 0f;
             return _itemDamage(item) * 60f / _itemUseTime(item) * (_itemShoot(item) > 0 ? 1.18f : 1f);
         }
 
-        private WeaponSnapshot ReadWeapon(object[] items, int slot)
+        private WeaponSnapshot ReadWeapon(object player, object[] items, int slot)
         {
             var result = new WeaponSnapshot();
-            ReadWeaponInto(items, slot, result);
+            ReadWeaponInto(player, items, slot, result);
             return result;
         }
 
@@ -1328,7 +1389,7 @@ namespace Chaite.Plugin
             _itemDamage(item) > 0 && _itemUseTime(item) > 0 && _itemUseStyle(item) > 0 &&
             _itemPick(item) == 0 && _itemAxe(item) == 0 && _itemHammer(item) == 0 && _itemCreateTile(item) < 0 && _itemFishingPole(item) == 0;
 
-        private void ReadWeaponInto(object[] items, int slot, WeaponSnapshot weapon)
+        private void ReadWeaponInto(object player, object[] items, int slot, WeaponSnapshot weapon)
         {
             weapon.Slot = slot;
             weapon.Damage = 0;
@@ -1347,6 +1408,22 @@ namespace Chaite.Plugin
             weapon.IsMelee = shoot <= 0;
             weapon.HasAmmo = useAmmo == 0 || HasAmmo(items, useAmmo);
             weapon.IsUsable = IsCombatWeapon(item);
+            // Verified standard-bullet paths. Other weapons keep their previous
+            // approximation until their ammo conversions/ballistics are verified.
+            int itemType = _itemTypeId(item);
+            if ((itemType == 98 || itemType == 434) && useAmmo == 97)
+            {
+                var ammo = _pickAmmoItem(player, item);
+                weapon.HasAmmo = ammo != null && _itemStack(ammo) > 0;
+                if (weapon.HasAmmo)
+                {
+                    int shotType = _itemShoot(ammo);
+                    var sample = _projectileSample(shotType);
+                    int extra = sample != null ? _projectileExtraUpdates(sample) :
+                        shotType == 14 || shotType == 89 ? 1 : shotType == 104 || shotType == 279 ? 2 : shotType == 242 ? 7 : 0;
+                    weapon.ShootSpeed = Math.Max(0f, _itemShootSpeed(item) + _itemShootSpeed(ammo)) * Math.Max(1, extra + 1);
+                }
+            }
         }
 
         private bool HasAmmo(object[] items, int ammoType)
@@ -1378,8 +1455,10 @@ namespace Chaite.Plugin
             if (tile == null || !_tileActive(tile) || _tileInactive(tile))
                 return false;
             var type = _tileType(tile);
-            return type < _tileSolid.Length && (_tileSolid[type] ||
-                   includePlatforms && type < _tileSolidTop.Length && _tileSolidTop[type]);
+            // Native platforms have BOTH tileSolid and tileSolidTop set. They
+            // provide footing below, but are passable while rising (or inverted).
+            return type < _tileSolidTop.Length && _tileSolidTop[type] ? includePlatforms :
+                type < _tileSolid.Length && _tileSolid[type];
         }
 
         private void SetControl(object player, string name, bool value) => _controls[name](player, value);

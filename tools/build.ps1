@@ -3,7 +3,7 @@ param(
     [string]$Configuration = 'Release',
     [switch]$Package,
     [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$')]
-    [string]$PackageVersion = 'v0.3.0-alpha'
+    [string]$PackageVersion = 'v0.4.0-alpha'
 )
 
 $ErrorActionPreference = 'Stop'

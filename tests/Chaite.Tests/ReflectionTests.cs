@@ -13,6 +13,8 @@ namespace Chaite.Tests
             Run(nameof(CompiledStaticAndPropertyWritesHaveCorrectTargets), CompiledStaticAndPropertyWritesHaveCorrectTargets);
             Run(nameof(CompiledVectorAccessReadsLiveComponents), CompiledVectorAccessReadsLiveComponents);
             Run(nameof(CompiledTileArrayReaderHonorsBothCoordinates), CompiledTileArrayReaderHonorsBothCoordinates);
+            Run(nameof(CompiledPrivateMethodGetterPassesArgumentWithoutMutation), CompiledPrivateMethodGetterPassesArgumentWithoutMutation);
+            Run(nameof(CompiledStaticDictionaryReaderHandlesHitsMissingAndNull), CompiledStaticDictionaryReaderHandlesHitsMissingAndNull);
             Run(nameof(MissingReflectionMembersFailExplicitly), MissingReflectionMembersFailExplicitly);
             Run(nameof(HotkeyEdgesOnlyFireOncePerPress), HotkeyEdgesOnlyFireOncePerPress);
             Run(nameof(HotkeysOutsideForegroundDoNotActivate), HotkeysOutsideForegroundDoNotActivate);
@@ -24,6 +26,18 @@ namespace Chaite.Tests
             Run(nameof(FacadeWithoutRequestFollowsActualSelectedSlot), FacadeWithoutRequestFollowsActualSelectedSlot);
             Run(nameof(FacadeAimPreservesWorldTargetWithNormalGravity), FacadeAimPreservesWorldTargetWithNormalGravity);
             Run(nameof(FacadeAimPreservesWorldTargetWithInvertedGravity), FacadeAimPreservesWorldTargetWithInvertedGravity);
+            Run(nameof(FacadeMinisharkUsesAmmoSpeedAndProjectileSubupdates), FacadeMinisharkUsesAmmoSpeedAndProjectileSubupdates);
+            Run(nameof(FacadeClockworkUsesNativeSelectedAmmoWithoutConsumption), FacadeClockworkUsesNativeSelectedAmmoWithoutConsumption);
+            Run(nameof(FacadeWeaponReadUsesLiveProjectileSample), FacadeWeaponReadUsesLiveProjectileSample);
+            Run(nameof(FacadeWeaponReadRejectsMissingNativeAmmo), FacadeWeaponReadRejectsMissingNativeAmmo);
+            Run(nameof(FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee), FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee);
+            Run(nameof(JumpGateReleasesGroundedHoldBeforeFreshPress), JumpGateReleasesGroundedHoldBeforeFreshPress);
+            Run(nameof(JumpGatePreservesAirborneAndGrappleHolds), JumpGatePreservesAirborneAndGrappleHolds);
+            Run(nameof(FacadePlatformsRemainOneWayWithBothSolidFlags), FacadePlatformsRemainOneWayWithBothSolidFlags);
+            Run(nameof(TargetSightCacheExpiresAfterTwelveFrames), TargetSightCacheExpiresAfterTwelveFrames);
+            Run(nameof(TargetSightCacheInvalidatesWhenEitherEndpointMoves), TargetSightCacheInvalidatesWhenEitherEndpointMoves);
+            Run(nameof(TargetSightCacheSeparatesKeysTypesAndClears), TargetSightCacheSeparatesKeysTypesAndClears);
+            Run(nameof(FacadeInputFrameRenewsSightBudgetWithoutClearingCache), FacadeInputFrameRenewsSightBudgetWithoutClearingCache);
         }
 
         private static Type ReflectionApi => typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.ReflectionAccess", true);
@@ -115,6 +129,44 @@ namespace Chaite.Tests
         {
             Throws<MissingFieldException>(() => GenericAccessor<Func<object, int>>("Getter", typeof(int), typeof(TestFields), "DefinitelyMissing"));
             Throws<MissingMemberException>(() => GenericAccessor<Func<object, int>>("PropertyGetter", typeof(int), typeof(TestFields), "DefinitelyMissing"));
+        }
+
+        private static void CompiledPrivateMethodGetterPassesArgumentWithoutMutation()
+        {
+            var weapon = TestAmmoItem.Minishark();
+            var ammo = TestAmmoItem.MusketBall();
+            var player = new TestAmmoPlayer { ExpectedWeapon = weapon, SelectedAmmo = ammo, AmmoCyclingOffset = 7 };
+            var pick = GenericAccessor<Func<object, object, object>>("MethodGetterWithArgument", typeof(object),
+                typeof(TestAmmoPlayer), "PickAmmo_PickAmmoItem", typeof(TestAmmoItem));
+            for (var i = 0; i < 5; i++) True(ReferenceEquals(ammo, pick(player, weapon)));
+            True(pick(player, TestAmmoItem.Clockwork()) == null, "the exact method argument must be passed");
+            True(pick(player, null) == null);
+            Equal(999, ammo.stack);
+            Equal(7, player.AmmoCyclingOffset);
+            Equal(0, player.ConsumptionCalls);
+            Throws<MissingMethodException>(() => GenericAccessor<Func<object, object, object>>(
+                "MethodGetterWithArgument", typeof(object), typeof(TestAmmoPlayer), "MissingAmmoMethod", typeof(TestAmmoItem)));
+        }
+
+        private static void CompiledStaticDictionaryReaderHandlesHitsMissingAndNull()
+        {
+            var previous = TestContentSamples.ProjectilesByType;
+            try
+            {
+                var sample = new TestProjectileSample { extraUpdates = 1 };
+                TestContentSamples.ProjectilesByType = new Dictionary<int, TestProjectileSample> { { 14, sample } };
+                var get = Accessor<Func<int, object>>("StaticIntDictionaryValueGetter", typeof(TestContentSamples), "ProjectilesByType");
+                True(ReferenceEquals(sample, get(14)));
+                True(get(89) == null);
+                Equal(1, TestContentSamples.ProjectilesByType.Count);
+                var replacement = new TestProjectileSample { extraUpdates = 7 };
+                TestContentSamples.ProjectilesByType = new Dictionary<int, TestProjectileSample> { { 242, replacement } };
+                True(ReferenceEquals(replacement, get(242)), "read the live static dictionary, not a captured instance");
+                True(get(14) == null);
+                TestContentSamples.ProjectilesByType = null;
+                True(get(242) == null);
+            }
+            finally { TestContentSamples.ProjectilesByType = previous; }
         }
 
         private static void HotkeyEdgesOnlyFireOncePerPress()
@@ -306,6 +358,370 @@ namespace Chaite.Tests
             Equal(8510.5f, fixture.ScreenY + fixture.ScreenHeight - fixture.MouseY);
         }
 
+        private static void FacadeMinisharkUsesAmmoSpeedAndProjectileSubupdates()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
+            var result = fixture.Read();
+            Equal(22f, result.ShootSpeed);
+            Equal(6, result.Damage);
+            Equal(8, result.UseTime);
+            True(result.IsProjectile && !result.IsMelee && result.IsUsable && result.HasAmmo);
+            Equal(10, fixture.Player.ExpectedWeapon.shoot);
+            Equal(1, fixture.SelectionCalls);
+            Equal(999, fixture.Player.SelectedAmmo.stack);
+            Equal(0, fixture.Player.ConsumptionCalls);
+        }
+
+        private static void FacadeClockworkUsesNativeSelectedAmmoWithoutConsumption()
+        {
+            var crystal = TestAmmoItem.CrystalBullet();
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Clockwork(), crystal);
+            // Put a different matching ammo stack FIRST. The native selector's
+            // result, not a hand-written inventory search, owns ammo priority.
+            var musket = TestAmmoItem.MusketBall();
+            fixture.Items = new object[] { fixture.Player.ExpectedWeapon, musket, crystal };
+            for (var i = 0; i < 7; i++)
+            {
+                var result = fixture.Read();
+                Equal(25.5f, result.ShootSpeed);
+                True(result.HasAmmo);
+            }
+            Equal(7, fixture.SelectionCalls);
+            Equal(999, crystal.stack);
+            Equal(999, musket.stack);
+            Equal(1, fixture.Player.ExpectedWeapon.stack);
+            Equal(11, fixture.Player.AmmoCyclingOffset);
+            Equal(0, fixture.Player.ConsumptionCalls);
+            True(ReferenceEquals(crystal, fixture.Player.SelectedAmmo));
+        }
+
+        private static void FacadeWeaponReadUsesLiveProjectileSample()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
+            // This fixture verifies the sample getter wins over fallback values;
+            // it is not claiming this artificial extraUpdates is vanilla's value.
+            fixture.Samples[14] = new TestProjectileSample { extraUpdates = 2 };
+            Equal(33f, fixture.Read().ShootSpeed);
+            fixture.Samples[14].extraUpdates = 3;
+            Equal(44f, fixture.Read().ShootSpeed);
+            fixture.Samples.Clear();
+            Equal(22f, fixture.Read().ShootSpeed);
+            fixture.Player.ExpectedWeapon.shootSpeed = 8f;
+            Equal(24f, fixture.Read().ShootSpeed);
+        }
+
+        private static void FacadeWeaponReadRejectsMissingNativeAmmo()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
+            // A matching inventory entry must not override native selection failure.
+            fixture.Player.SelectedAmmo = null;
+            False(fixture.Read().HasAmmo);
+            fixture.Player.SelectedAmmo = TestAmmoItem.MusketBall();
+            fixture.Player.SelectedAmmo.stack = 0;
+            False(fixture.Read().HasAmmo);
+            fixture.Player.SelectedAmmo = null;
+            fixture.Items = new object[] { fixture.Player.ExpectedWeapon };
+            False(fixture.Read().HasAmmo);
+            Equal(0, fixture.Player.ConsumptionCalls);
+        }
+
+        private static void FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee()
+        {
+            var gun = TestAmmoItem.Minishark();
+            var ammo = TestAmmoItem.MusketBall();
+            var fixture = new FacadeWeaponFixture(gun, ammo);
+            var sword = new TestAmmoItem { type = 4, damage = 999, useTime = 1, useStyle = 1, shoot = 0 };
+            fixture.Items = new object[] { sword, gun, ammo };
+            Equal(0f, fixture.Score(0));
+            True(fixture.Score(1) > 0f);
+            Equal(1, fixture.FindBestSlot());
+            fixture.Items = new object[] { gun, sword, ammo };
+            Equal(0, fixture.FindBestSlot());
+            Equal(0, fixture.Player.ConsumptionCalls);
+            Equal(999, ammo.stack);
+        }
+
+        private static void JumpGateReleasesGroundedHoldBeforeFreshPress()
+        {
+            False(HoldNativeJump(true, true, false, false));
+            True(HoldNativeJump(true, true, true, false));
+            False(HoldNativeJump(false, true, true, false));
+        }
+
+        private static void JumpGatePreservesAirborneAndGrappleHolds()
+        {
+            True(HoldNativeJump(true, false, false, false));
+            True(HoldNativeJump(true, true, false, true));
+            True(HoldNativeJump(true, false, false, true));
+            foreach (var grounded in new[] { false, true })
+            foreach (var released in new[] { false, true })
+            foreach (var grappling in new[] { false, true })
+                False(HoldNativeJump(false, grounded, released, grappling));
+        }
+
+        private static bool HoldNativeJump(bool requested, bool grounded, bool releaseReady, bool grappling)
+        {
+            var type = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.MovementActionGate", true);
+            var method = type.GetMethod("ShouldHoldJump", BindingFlags.Public | BindingFlags.Static);
+            True(method != null);
+            return (bool)method.Invoke(null, new object[] { requested, grounded, releaseReady, grappling });
+        }
+
+        private static void FacadePlatformsRemainOneWayWithBothSolidFlags()
+        {
+            var facadeType = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.TerrariaFacade", true);
+            var facade = FormatterServices.GetUninitializedObject(facadeType);
+            Action<string, object> bind = (name, value) =>
+            {
+                var field = facadeType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+                True(field != null, "missing tile fixture dependency: " + name);
+                field.SetValue(facade, value);
+            };
+            var tiles = new TestCombatTile[2, 2];
+            tiles[0, 0] = new TestCombatTile { type = 19, Active = true };
+            tiles[1, 0] = new TestCombatTile { type = 38, Active = true };
+            var solidFlags = new bool[40];
+            var topFlags = new bool[40];
+            // Native platforms may have BOTH flags. SolidTop must take priority
+            // over Solid when scanning upward or excluding one-way platforms.
+            solidFlags[19] = topFlags[19] = true;
+            solidFlags[38] = true;
+            bind("_tileAt", Accessor<Func<Array, int, int, object>>("ArrayElementGetter2D", tiles.GetType()));
+            bind("_tileType", GenericAccessor<Func<object, ushort>>("Getter", typeof(ushort), typeof(TestCombatTile), "type"));
+            bind("_tileActive", GenericAccessor<Func<object, bool>>("MethodGetter", typeof(bool), typeof(TestCombatTile), "active"));
+            bind("_tileInactive", GenericAccessor<Func<object, bool>>("MethodGetter", typeof(bool), typeof(TestCombatTile), "inActive"));
+            bind("_tileSolid", solidFlags);
+            bind("_tileSolidTop", topFlags);
+            var method = facadeType.GetMethod("IsSolid", BindingFlags.Instance | BindingFlags.NonPublic);
+            True(method != null);
+            Func<int, int, bool, bool> solid = (x, y, includePlatforms) =>
+                (bool)method.Invoke(facade, new object[] { tiles, x, y, includePlatforms });
+            False(solid(0, 0, false));
+            True(solid(0, 0, true));
+            True(solid(1, 0, false));
+            True(solid(1, 0, true));
+            False(solid(0, 1, false));
+            False(solid(0, 1, true));
+            foreach (var x in new[] { 0, 1 })
+            {
+                tiles[x, 0].Inactive = true;
+                False(solid(x, 0, false));
+                False(solid(x, 0, true));
+                tiles[x, 0].Inactive = false;
+                tiles[x, 0].Active = false;
+                False(solid(x, 0, false));
+                False(solid(x, 0, true));
+            }
+        }
+
+        private static void TargetSightCacheExpiresAfterTwelveFrames()
+        {
+            var cache = new SightCacheFixture();
+            var player = new Chaite.Core.Vec2(100, 200);
+            var target = new Chaite.Core.Vec2(500, 600);
+            bool visible;
+            False(cache.TryGet(3, 134, player, target, 100, out visible));
+            False(visible);
+            cache.Record(3, 134, player, target, 100, true);
+            True(cache.TryGet(3, 134, player, target, 100, out visible));
+            True(visible);
+            True(cache.TryGet(3, 134, player, target, 112, out visible));
+            True(visible);
+            False(cache.TryGet(3, 134, player, target, 113, out visible));
+            False(visible);
+            False(cache.TryGet(3, 134, player, target, 99, out visible));
+            False(cache.TryGet(3, 134, player, target, -1, out visible));
+            foreach (var frame in new[] { 0, -1 })
+            {
+                cache.Record(3, 134, player, target, frame, true);
+                False(cache.TryGet(3, 134, player, target, 1, out visible));
+            }
+        }
+
+        private static void TargetSightCacheInvalidatesWhenEitherEndpointMoves()
+        {
+            var cache = new SightCacheFixture();
+            var player = new Chaite.Core.Vec2(100, 200);
+            var target = new Chaite.Core.Vec2(500, 600);
+            cache.Record(3, 134, player, target, 100, true);
+            bool visible;
+            True(cache.TryGet(3, 134, new Chaite.Core.Vec2(164, 200), target, 101, out visible));
+            True(visible);
+            False(cache.TryGet(3, 134, new Chaite.Core.Vec2(165, 200), target, 101, out visible));
+            False(visible);
+            True(cache.TryGet(3, 134, player, new Chaite.Core.Vec2(500, 664), 101, out visible));
+            False(cache.TryGet(3, 134, player, new Chaite.Core.Vec2(500, 665), 101, out visible));
+            // Distance is measured from the recorded endpoints, not each prior query.
+            True(cache.TryGet(3, 134, new Chaite.Core.Vec2(132, 200), target, 102, out visible));
+            False(cache.TryGet(3, 134, new Chaite.Core.Vec2(165, 200), target, 103, out visible));
+        }
+
+        private static void TargetSightCacheSeparatesKeysTypesAndClears()
+        {
+            var cache = new SightCacheFixture();
+            var player = new Chaite.Core.Vec2(100, 200);
+            var target = new Chaite.Core.Vec2(500, 600);
+            bool visible;
+            cache.Record(0, 134, player, target, 100, false);
+            True(cache.TryGet(0, 134, player, target, 100, out visible), "cached blocked sight is a hit, not an unknown result");
+            False(visible);
+            False(cache.TryGet(1, 134, player, target, 100, out visible));
+            False(cache.TryGet(0, 135, player, target, 100, out visible));
+            False(cache.TryGet(0, -1, player, target, 100, out visible));
+            foreach (var key in new[] { -1, 200, int.MinValue, int.MaxValue })
+            {
+                cache.Record(key, 134, player, target, 100, true);
+                False(cache.TryGet(key, 134, player, target, 100, out visible));
+            }
+            cache.Record(0, 135, player, target, 101, true);
+            False(cache.TryGet(0, 134, player, target, 101, out visible));
+            True(cache.TryGet(0, 135, player, target, 101, out visible));
+            True(visible);
+            cache.Record(199, 136, player, target, 101, true);
+            True(cache.TryGet(199, 136, player, target, 101, out visible));
+            cache.Clear();
+            False(cache.TryGet(0, 135, player, target, 101, out visible));
+            False(cache.TryGet(199, 136, player, target, 101, out visible));
+        }
+
+        private static void FacadeInputFrameRenewsSightBudgetWithoutClearingCache()
+        {
+            var type = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.TerrariaFacade", true);
+            var facade = FormatterServices.GetUninitializedObject(type);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var budget = type.GetField("_sightQueryBudget", flags);
+            var cacheField = type.GetField("_sightCache", flags);
+            var frame = type.GetField("_sightFrame", flags);
+            var begin = type.GetMethod("BeginInputFrame");
+            True(budget != null && cacheField != null && frame != null && begin != null);
+            var cache = new SightCacheFixture();
+            var player = new Chaite.Core.Vec2(100f, 200f);
+            var target = new Chaite.Core.Vec2(500f, 600f);
+            cache.Record(3, 134, player, target, 100, true);
+            cacheField.SetValue(facade, cache.Instance);
+            frame.SetValue(facade, 100);
+            budget.SetValue(facade, 1);
+            begin.Invoke(facade, null);
+            Equal(3, (int)budget.GetValue(facade));
+            // Simulate the first snapshot exhausting this input frame's shared budget.
+            budget.SetValue(facade, 0);
+            Equal(0, (int)budget.GetValue(facade));
+            begin.Invoke(facade, null);
+            Equal(3, (int)budget.GetValue(facade));
+            Equal(100, (int)frame.GetValue(facade));
+            True(ReferenceEquals(cache.Instance, cacheField.GetValue(facade)));
+            bool visible;
+            True(cache.TryGet(3, 134, player, target, 100, out visible));
+            True(visible, "a new per-frame ray budget must not clear valid target visibility");
+        }
+
+        private sealed class SightCacheFixture
+        {
+            private readonly object _cache;
+            private readonly Type _type;
+            public object Instance => _cache;
+
+            public SightCacheFixture()
+            {
+                _type = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.TargetSightCache", true);
+                _cache = Activator.CreateInstance(_type, true);
+            }
+
+            public void Record(int key, int type, Chaite.Core.Vec2 player, Chaite.Core.Vec2 target, int frame, bool visible) =>
+                _type.GetMethod("Record").Invoke(_cache, new object[] { key, type, player, target, frame, visible });
+
+            public bool TryGet(int key, int type, Chaite.Core.Vec2 player, Chaite.Core.Vec2 target, int frame, out bool visible)
+            {
+                var arguments = new object[] { key, type, player, target, frame, false };
+                var found = (bool)_type.GetMethod("TryGet").Invoke(_cache, arguments);
+                visible = (bool)arguments[5];
+                return found;
+            }
+
+            public void Clear() => _type.GetMethod("Clear").Invoke(_cache, null);
+        }
+
+        private sealed class FacadeWeaponFixture
+        {
+            private readonly object _facade;
+            private readonly Type _facadeType;
+            public readonly TestAmmoPlayer Player;
+            public readonly Dictionary<int, TestProjectileSample> Samples = new Dictionary<int, TestProjectileSample>();
+            public object[] Items;
+            public int SelectionCalls;
+
+            public FacadeWeaponFixture(TestAmmoItem weapon, TestAmmoItem ammo)
+            {
+                Player = new TestAmmoPlayer { ExpectedWeapon = weapon, SelectedAmmo = ammo, AmmoCyclingOffset = 11 };
+                Items = new object[] { weapon, ammo };
+                _facadeType = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.TerrariaFacade", true);
+                _facade = FormatterServices.GetUninitializedObject(_facadeType);
+                Set("_inventory", new Func<object, object[]>(player => Items));
+                Set("_selectedItem", new Func<object, int>(player => 0));
+                BindItem<int>("_itemTypeId", "type");
+                BindItem<int>("_itemStack", "stack");
+                BindItem<int>("_itemDamage", "damage");
+                BindItem<int>("_itemUseTime", "useTime");
+                BindItem<int>("_itemUseStyle", "useStyle");
+                BindItem<int>("_itemPick", "pick");
+                BindItem<int>("_itemAxe", "axe");
+                BindItem<int>("_itemHammer", "hammer");
+                BindItem<int>("_itemCreateTile", "createTile");
+                BindItem<int>("_itemFishingPole", "fishingPole");
+                BindItem<int>("_itemShoot", "shoot");
+                BindItem<float>("_itemShootSpeed", "shootSpeed");
+                BindItem<int>("_itemAmmo", "ammo");
+                BindItem<int>("_itemUseAmmo", "useAmmo");
+                var readAmmo = GenericAccessor<Func<object, object, object>>("MethodGetterWithArgument", typeof(object),
+                    typeof(TestAmmoPlayer), "PickAmmo_PickAmmoItem", typeof(TestAmmoItem));
+                Set("_pickAmmoItem", new Func<object, object, object>((player, item) =>
+                {
+                    SelectionCalls++;
+                    return readAmmo(player, item);
+                }));
+                Set("_projectileSample", new Func<int, object>(type =>
+                {
+                    TestProjectileSample sample;
+                    return Samples.TryGetValue(type, out sample) ? sample : null;
+                }));
+                Set("_projectileExtraUpdates", GenericAccessor<Func<object, int>>("Getter", typeof(int),
+                    typeof(TestProjectileSample), "extraUpdates"));
+            }
+
+            private void BindItem<T>(string dependency, string fieldName) =>
+                Set(dependency, GenericAccessor<Func<object, T>>("Getter", typeof(T), typeof(TestAmmoItem), fieldName));
+
+            private void Set(string name, object value)
+            {
+                var field = _facadeType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+                True(field != null, "missing weapon fixture dependency: " + name);
+                field.SetValue(_facade, value);
+            }
+
+            public Chaite.Core.WeaponSnapshot Read()
+            {
+                var result = new Chaite.Core.WeaponSnapshot();
+                var method = _facadeType.GetMethod("ReadWeaponInto", BindingFlags.Instance | BindingFlags.NonPublic);
+                True(method != null);
+                method.Invoke(_facade, new object[] { Player, Items, 0, result });
+                return result;
+            }
+
+            public int FindBestSlot()
+            {
+                var method = _facadeType.GetMethod("FindBestWeaponSlot", BindingFlags.Instance | BindingFlags.Public);
+                True(method != null);
+                return (int)method.Invoke(_facade, new object[] { Player });
+            }
+
+            public float Score(int slot)
+            {
+                var method = _facadeType.GetMethod("WeaponScore", BindingFlags.Instance | BindingFlags.NonPublic);
+                True(method != null);
+                return (float)method.Invoke(_facade, new object[] { Items, slot });
+            }
+        }
+
         private sealed class FacadeInputFixture
         {
             private readonly object _facade;
@@ -444,5 +860,71 @@ namespace Chaite.Tests
             _hotbar = item;
             Calls++;
         }
+    }
+
+    public sealed class TestProjectileSample
+    {
+        public int extraUpdates;
+    }
+
+    public sealed class TestCombatTile
+    {
+        public ushort type;
+        public bool Active;
+        public bool Inactive;
+        private bool active() => Active;
+        private bool inActive() => Inactive;
+    }
+
+    public static class TestContentSamples
+    {
+        public static Dictionary<int, TestProjectileSample> ProjectilesByType;
+    }
+
+    public sealed class TestAmmoPlayer
+    {
+        public TestAmmoItem ExpectedWeapon;
+        public TestAmmoItem SelectedAmmo;
+        public int AmmoCyclingOffset;
+        public int ConsumptionCalls;
+
+        private TestAmmoItem PickAmmo_PickAmmoItem(TestAmmoItem weapon) =>
+            ReferenceEquals(weapon, ExpectedWeapon) ? SelectedAmmo : null;
+
+        // Poison pill: consuming PickAmmo is deliberately not a fixture binding.
+        // Only the read-only selector can satisfy the production adapter tests.
+        private void PickAmmo(TestAmmoItem weapon)
+        {
+            ConsumptionCalls++;
+            throw new InvalidOperationException("Ammo inspection must not call consuming PickAmmo.");
+        }
+    }
+
+    public sealed class TestAmmoItem
+    {
+        public int type;
+        public int stack = 1;
+        public int damage;
+        public int useTime;
+        public int useStyle;
+        public int pick;
+        public int axe;
+        public int hammer;
+        public int createTile = -1;
+        public int fishingPole;
+        public int shoot;
+        public float shootSpeed;
+        public int ammo;
+        public int useAmmo;
+
+        // Exact unprefixed 1.4.5.8 fields audited from Item.SetDefaults1.
+        public static TestAmmoItem Minishark() => new TestAmmoItem
+        { type = 98, damage = 6, useTime = 8, useStyle = 5, shoot = 10, shootSpeed = 7f, useAmmo = 97 };
+        public static TestAmmoItem Clockwork() => new TestAmmoItem
+        { type = 434, damage = 17, useTime = 4, useStyle = 5, shoot = 10, shootSpeed = 7.75f, useAmmo = 97 };
+        public static TestAmmoItem MusketBall() => new TestAmmoItem
+        { type = 97, stack = 999, damage = 7, shoot = 14, shootSpeed = 4f, ammo = 97 };
+        public static TestAmmoItem CrystalBullet() => new TestAmmoItem
+        { type = 515, stack = 999, damage = 9, shoot = 89, shootSpeed = 5f, ammo = 97 };
     }
 }

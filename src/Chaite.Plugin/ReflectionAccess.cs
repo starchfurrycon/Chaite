@@ -144,5 +144,31 @@ namespace Chaite.Plugin
             var body = Expression.Call(Expression.Convert(source, method.DeclaringType), method);
             return Expression.Lambda<Func<object, T>>(Expression.Convert(body, typeof(T)), source).Compile();
         }
+
+        public static Func<object, object, T> MethodGetterWithArgument<T>(Type type, string name, Type argumentType)
+        {
+            var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, new[] { argumentType }, null);
+            if (method == null) throw new MissingMethodException(type.FullName, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var argument = Expression.Parameter(typeof(object), "argument");
+            var call = Expression.Call(Expression.Convert(source, method.DeclaringType), method, Expression.Convert(argument, argumentType));
+            return Expression.Lambda<Func<object, object, T>>(Expression.Convert(call, typeof(T)), source, argument).Compile();
+        }
+
+        public static Func<int, object> StaticIntDictionaryValueGetter(Type type, string name)
+        {
+            var field = Field(type, name);
+            var args = field.FieldType.GetGenericArguments();
+            if (!field.IsStatic || args.Length != 2 || args[0] != typeof(int)) throw new ArgumentException("Expected a static int-key dictionary.");
+            var key = Expression.Parameter(typeof(int), "key");
+            var value = Expression.Variable(args[1], "value");
+            var dictionary = Expression.Field(null, field);
+            var lookup = field.FieldType.GetMethod("TryGetValue", new[] { typeof(int), args[1].MakeByRefType() });
+            var found = Expression.AndAlso(Expression.NotEqual(dictionary, Expression.Constant(null, field.FieldType)),
+                Expression.Call(dictionary, lookup, key, value));
+            return Expression.Lambda<Func<int, object>>(Expression.Block(new[] { value },
+                Expression.Condition(found, Expression.Convert(value, typeof(object)), Expression.Constant(null, typeof(object)))), key).Compile();
+        }
     }
 }

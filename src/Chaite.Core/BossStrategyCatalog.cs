@@ -48,9 +48,14 @@ namespace Chaite.Core
                 reason = "奔跑/坐骑速度不足";
                 return false;
             }
-            if (snapshot.Weapon == null || !snapshot.Weapon.IsUsable || snapshot.Weapon.ApproximateDps < MinimumWeaponDps)
+            if (snapshot.Weapon == null || !snapshot.Weapon.IsUsable || !snapshot.Weapon.HasAmmo || snapshot.Weapon.ApproximateDps < MinimumWeaponDps)
             {
                 reason = "快捷栏可用武器的基础输出不足 " + (int)MinimumWeaponDps + " DPS";
+                return false;
+            }
+            if (!snapshot.Weapon.IsProjectile)
+            {
+                reason = "当前风筝策略不支持纯挥砍武器，请在快捷栏准备远程武器";
                 return false;
             }
             if (RequiresAirMobility && snapshot.Mobility.FlightResourceFraction <= 0f && !snapshot.Mobility.MountCanFly && !snapshot.Mobility.CanFlipGravity)
@@ -75,6 +80,9 @@ namespace Chaite.Core
         public string PhaseId;
         public float IdealDistance;
         public float VerticalOffset;
+        // Optional minimum distance above a real, locally observed floor. The
+        // planner's flight-recovery budget still takes precedence over ascent.
+        public float FloorClearance;
         public int HorizontalIntent;
         public int VerticalIntent;
         public bool PreferDash;
@@ -93,6 +101,7 @@ namespace Chaite.Core
         public int OrbitDirection = 1;
         public int DashCounter;
         public bool DashActive;
+        public int DirectionHoldTicks;
         public float PreviousSpeed;
         public int PreviousTargetKey = -1;
 
@@ -102,6 +111,7 @@ namespace Chaite.Core
             {
                 DashCounter = 0;
                 DashActive = false;
+                DirectionHoldTicks = 0;
                 PreviousSpeed = 0f;
                 PreviousTargetKey = -1;
             }
@@ -243,6 +253,7 @@ namespace Chaite.Core
                 memory.OrbitDirection = 1;
                 memory.DashCounter = 0;
                 memory.DashActive = false;
+                memory.DirectionHoldTicks = 0;
                 memory.PreviousSpeed = 0f;
                 memory.PreviousTargetKey = -1;
             }
@@ -662,13 +673,99 @@ namespace Chaite.Core
         public override bool Matches(IList<TargetSnapshot> b, DifficultySnapshot d) => HasType(b, 134, 136) && MechanicalFamilies.Count(b) == 1;
         public override BossDecision Evaluate(CombatSnapshot s, BossMemory m)
         {
-            var t = Pick(s, 134, 135, 136);
-            var head = t.Type == 134 && t.Velocity.Length > 8f;
+            var head = default(TargetSnapshot);
+            var foundHead = false;
             var probeCount = 0;
-            for (var i = 0; i < s.Targets.Count; i++) if (s.Targets[i].Type == 139 && s.Targets[i].Life > 0) probeCount++;
-            var probePressure = probeCount > 3;
-            return Decision(s, t, head ? "head-emerge" : probePressure ? "probe-clear" : "laser-lanes",
-                BossPattern.ProjectileLanes, 380, -260, -Math.Sign(t.Velocity.X), 0, head, true, false, 68);
+            var closeProbe = false;
+            var player = s.Player.Center;
+            for (var i = 0; i < s.Targets.Count; i++)
+            {
+                var candidate = s.Targets[i];
+                if (candidate.Life <= 0) continue;
+                if (candidate.Type == 134 && (!foundHead ||
+                    Vec2.DistanceSquared(candidate.Center, player) < Vec2.DistanceSquared(head.Center, player)))
+                {
+                    head = candidate;
+                    foundHead = true;
+                }
+                else if (candidate.Type == 139 && !candidate.Invulnerable)
+                {
+                    var distance = Vec2.DistanceSquared(candidate.Center, player);
+                    if (distance < 900f * 900f) probeCount++;
+                    if (distance < 320f * 320f) closeProbe = true;
+                }
+            }
+
+            var probePressure = closeProbe || probeCount > 3;
+            var target = SelectExposedTarget(s, m.PreviousTargetKey, probePressure);
+            // Body and tail share realLife with the head, but choosing an exposed
+            // segment for damage must not hide the independently approaching head.
+            var headPressure = false;
+            var crossing = head.Center;
+            if (foundHead && head.Velocity.LengthSquared > 8f * 8f)
+            {
+                var separation = head.Center - player;
+                var relativeVelocity = head.Velocity - s.Player.Velocity;
+                var closing = Vec2.Dot(separation, relativeVelocity);
+                if (closing < 0f)
+                {
+                    var ticks = Math.Min(30f, -closing / Math.Max(.01f, relativeVelocity.LengthSquared));
+                    headPressure = (separation + relativeVelocity * ticks).LengthSquared < 320f * 320f;
+                    crossing = head.Center + head.Velocity * ticks;
+                }
+            }
+            if (m.DirectionHoldTicks > 0) m.DirectionHoldTicks--;
+            if (headPressure && m.DirectionHoldTicks == 0)
+            {
+                var direction = Math.Sign(player.X - crossing.X);
+                if (direction != 0 && direction != m.OrbitDirection)
+                {
+                    m.OrbitDirection = direction;
+                    m.DirectionHoldTicks = 40;
+                }
+            }
+
+            var decision = Decision(s, target, headPressure ? "head-emerge" : target.Type == 139 ? "probe-clear" : "laser-lanes",
+                BossPattern.ProjectileLanes, 380, -260, m.OrbitDirection, 0, headPressure, true, false, 68,
+                patternTarget: foundHead ? head : target);
+            // Native AI counts platforms/liquid as burrowing material too: this is
+            // breathing room for evasion, never an assertion of a safe-box exploit.
+            decision.Directive.FloorClearance = 320f;
+            return decision;
+        }
+
+        private static TargetSnapshot SelectExposedTarget(CombatSnapshot snapshot, int previousTarget, bool probePressure)
+        {
+            var selected = default(TargetSnapshot);
+            var bestRank = int.MaxValue;
+            var bestScore = float.MaxValue;
+            for (var i = 0; i < snapshot.Targets.Count; i++)
+            {
+                var candidate = snapshot.Targets[i];
+                if (candidate.Life <= 0 || (candidate.Type != 134 && candidate.Type != 135 &&
+                    candidate.Type != 136 && candidate.Type != 139)) continue;
+                var distance = Vec2.DistanceSquared(candidate.Center, snapshot.Player.Center);
+                if (candidate.Type == 139 && distance > 900f * 900f) continue;
+
+                // Unknown is not blocked. The adapter supplies a bounded LOS cache,
+                // and still performs its native final ray before actually firing.
+                var rank = candidate.LineOfSightKnown ? candidate.HasLineOfSight ? 0 : 2 : 1;
+                if (candidate.Invulnerable) rank += 6;
+                if (!candidate.Chaseable) rank += 3;
+                var score = distance;
+                if (candidate.Type == 139)
+                    score += probePressure ? -600f * 600f : 300f * 300f;
+                // Keep a viable target while neighboring worm segments exchange
+                // nearest-distance order; never retain a blocked target over clear.
+                if (candidate.Key == previousTarget) score -= 100f * 100f;
+                if (rank < bestRank || rank == bestRank && score < bestScore)
+                {
+                    selected = candidate;
+                    bestRank = rank;
+                    bestScore = score;
+                }
+            }
+            return bestRank == int.MaxValue ? Pick(snapshot, 134, 135, 136) : selected;
         }
     }
 

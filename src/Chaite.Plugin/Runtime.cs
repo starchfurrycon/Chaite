@@ -90,7 +90,7 @@ namespace Chaite.Plugin
                         if (!ready)
                         {
                             HandleCue(AudioCue.NoSlimeAng);
-                            _game.Chat("场地或机动性未达到该 Boss 的最低闭环要求：" + reason, 255, 155, 110);
+                            _game.Chat("未通过该 Boss 的基础开战检查：" + reason, 255, 155, 110);
                             ResetSessionAutomation();
                             return;
                         }

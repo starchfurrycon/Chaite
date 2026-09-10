@@ -196,10 +196,10 @@ namespace Chaite.Manager
             var strategy = UiTheme.Card();
             strategy.Margin = new Padding(7, 0, 0, 0);
             var right = UiTheme.Table(1);
-            right.Controls.Add(UiTheme.Section("03", "战斗准备", "最低机动性 + 足够场地，比盲目开战重要。"));
+            right.Controls.Add(UiTheme.Section("03", "战斗准备", "仅限 Boss 与多 Boss 战，不处理入侵等事件。"));
             right.Controls.Add(GuideLine("快捷栏", "武器与可用召唤物放在快捷栏；优先最左侧可用召唤物。"));
-            right.Controls.Add(GuideLine("特殊召唤", "猪鲨需海洋水体、松露虫和钓竿；其他召唤条件仍按原版检查。"));
-            right.Controls.Add(GuideLine("策略范围", "专注 Boss 与多 Boss 战，不处理入侵等事件。无伤不作保证。"));
+            right.Controls.Add(GuideLine("特殊召唤", "猪鲨需海洋水体、松露虫和钓竿；召唤需通过原版条件与安全检查。"));
+            right.Controls.Add(GuideLine("验证范围", "策略已编写≠实战通过；验证组合见测试报告。通关与无伤均不保证。"));
             strategy.Controls.Add(right);
             grid.Controls.Add(strategy, 1, 0);
             return grid;

@@ -23,9 +23,11 @@
     <Compile Include="ChaiteConfig.cs" />
     <Compile Include="HotkeyPoller.cs" />
     <Compile Include="Log.cs" />
+    <Compile Include="MovementActionGate.cs" />
     <Compile Include="ReflectionAccess.cs" />
     <Compile Include="Runtime.cs" />
     <Compile Include="SingleItemDropTransaction.cs" />
+    <Compile Include="TargetSightCache.cs" />
     <Compile Include="TerrariaFacade.cs" />
   </ItemGroup>
   <ItemGroup>

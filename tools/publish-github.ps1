@@ -43,7 +43,7 @@ function Get-PublicSourceManifest {
     # Only directly reviewed maintenance scripts are included. Research scripts,
     # decompiled outputs and live-game test artifacts are intentionally excluded.
     foreach ($name in @('build.ps1', 'verify-api-contract.ps1', 'publish-github.ps1',
-        'GameProbe.cs', 'GameProbePatcher.cs', 'prepare-game-probe.ps1', 'Chaite.DesktopHost.cs', 'start-isolated-test.ps1')) {
+        'GameProbe.cs', 'GameProbePatcher.cs', 'prepare-game-probe.ps1', 'Chaite.DesktopHost.cs', 'start-isolated-test.ps1', 'run-boss-validation.ps1')) {
         if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name) -PathType Leaf) { $paths.Add('tools/' + $name) }
     }
     $workflows = Join-Path $projectRoot '.github\workflows'

@@ -93,6 +93,7 @@ if ($Probe) {
     # require an explicit review here AND in ChaiteGameProbe.ValidateLaunch.
     $savedirSeen = $false
     $skipBeam = $false
+    $fixtureArguments = [ordered]@{}
     for ($index = 0; $index -lt $TargetArguments.Count; $index++) {
         switch -CaseSensitive ($TargetArguments[$index]) {
             '-savedirectory' {
@@ -105,11 +106,45 @@ if ($Probe) {
                 if ($skipBeam) { throw 'Duplicate -skipbeam.' }
                 $skipBeam = $true
             }
+            '-scenario' {
+                if ($fixtureArguments.Contains('-scenario') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -scenario.' }
+                $value = $TargetArguments[$index]
+                if ($value -cnotin @('eye-baseline', 'eye', 'king-slime', 'queen-slime', 'destroyer', 'twins', 'prime')) { throw 'Unreviewed boss scenario.' }
+                $fixtureArguments['-scenario'] = $value
+            }
+            '-seed' {
+                if ($fixtureArguments.Contains('-seed') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -seed.' }
+                $value = $TargetArguments[$index]
+                $seed = 0
+                if ($value -cnotmatch '^(0|[1-9][0-9]{0,9})$' -or -not [int]::TryParse($value, [ref]$seed) -or $seed -lt 0) { throw '-seed must be an integer in 0..2147483647.' }
+                $fixtureArguments['-seed'] = $seed.ToString([Globalization.CultureInfo]::InvariantCulture)
+            }
+            '-difficulty' {
+                if ($fixtureArguments.Contains('-difficulty') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -difficulty.' }
+                $value = $TargetArguments[$index]
+                if ($value -cnotin @('classic', 'expert', 'master')) { throw 'Unreviewed difficulty.' }
+                $fixtureArguments['-difficulty'] = $value
+            }
+            '-maxticks' {
+                if ($fixtureArguments.Contains('-maxticks') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -maxticks.' }
+                $value = $TargetArguments[$index]
+                $limit = 0
+                if ($value -cnotmatch '^[1-9][0-9]{2,4}$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 600 -or $limit -gt 24000) { throw '-maxticks must be an integer in 600..24000.' }
+                $fixtureArguments['-maxticks'] = $limit.ToString([Globalization.CultureInfo]::InvariantCulture)
+            }
+            '-wallseconds' {
+                if ($fixtureArguments.Contains('-wallseconds') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -wallseconds.' }
+                $value = $TargetArguments[$index]
+                $limit = 0
+                if ($value -cnotmatch '^[1-9][0-9]$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 15 -or $limit -gt 90) { throw '-wallseconds must be an integer in 15..90.' }
+                $fixtureArguments['-wallseconds'] = $limit.ToString([Globalization.CultureInfo]::InvariantCulture)
+            }
             default { throw "Unreviewed target argument: $($TargetArguments[$index])" }
         }
     }
     $TargetArguments = @('-savedirectory', $save)
     if ($skipBeam) { $TargetArguments += '-skipbeam' }
+    foreach ($key in $fixtureArguments.Keys) { $TargetArguments += @($key, $fixtureArguments[$key]) }
 }
 
 # All path, manifest and argument checks happen before creating output or
@@ -147,6 +182,10 @@ if (-not $Probe) {
 }
 $hostProcess = Start-Process -FilePath $hostExe -ArgumentList $hostCommand -WindowStyle Hidden -PassThru -Wait
 $exitCode = $hostProcess.ExitCode
+@{
+    Schema = 'chaite-desktop-exit/v1'; CompletedUtc = [DateTime]::UtcNow.ToString('o')
+    HostExitCode = $exitCode; ProbeOnly = [bool]$Probe; TargetExe = $TargetExe
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDirectory 'desktop-exit.json') -Encoding UTF8
 Write-Output "Isolated test output: $OutputDirectory"
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory 'desktop-host.log')) { Get-Content -LiteralPath (Join-Path $OutputDirectory 'desktop-host.log') -Encoding UTF8 }
 if ($exitCode -ne 0) { throw "Isolated test returned $exitCode. Only its own job was terminated; see logs." }

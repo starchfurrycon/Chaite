@@ -266,13 +266,26 @@ namespace Chaite.Core
         {
             if (_directionHoldTicks > 0 && directive.Pattern != BossPattern.PerpendicularDashDodge)
                 return _patternDirection;
-            if (directive.HorizontalIntent != 0)
-                return ClampIntent(directive.HorizontalIntent);
 
             var player = snapshot.Player.Center;
             var delta = player - target.Center;
             var absX = Math.Abs(delta.X);
             var ideal = Math.Max(80f, directive.IdealDistance);
+            if (directive.HorizontalIntent != 0)
+            {
+                var intent = ClampIntent(directive.HorizontalIntent);
+                if ((directive.Pattern == BossPattern.Runway || directive.Pattern == BossPattern.HorizontalKite ||
+                     directive.Pattern == BossPattern.ProjectileLanes) && intent == AwayX(player, target.Center))
+                {
+                    // Running away forever eventually despawns a slower Boss.
+                    // Coast once a safe firing gap is established; recover toward
+                    // a distant Boss only outside a wider hysteresis band. The
+                    // collision predictor can still override this in an emergency.
+                    if (absX > ideal * 1.8f) return -intent;
+                    if (absX > ideal * 1.15f) return 0;
+                }
+                return intent;
+            }
             int wanted;
             switch (directive.Pattern)
             {
@@ -305,6 +318,8 @@ namespace Chaite.Core
                 return ClampIntent(directive.VerticalIntent) * gravitySign;
 
             var wantedY = target.Center.Y + directive.VerticalOffset;
+            if (directive.FloorClearance > 0f && snapshot.Arena.HasFloor && snapshot.Arena.LocalOpenBounds.Height > 0f)
+                wantedY = Math.Min(wantedY, snapshot.Arena.LocalOpenBounds.Bottom - directive.FloorClearance);
             var error = wantedY - snapshot.Player.Center.Y;
             if (error < -42f)
                 return gravitySign;

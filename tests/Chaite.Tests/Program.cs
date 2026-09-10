@@ -25,6 +25,12 @@ namespace Chaite.Tests
             Run(nameof(LeftmostCurrentlyUsableSummonWins), LeftmostCurrentlyUsableSummonWins);
             Run(nameof(FishronRequiresOceanRodAndTruffleWorm), FishronRequiresOceanRodAndTruffleWorm);
             Run(nameof(NaturalBossScheduleIsAccepted), NaturalBossScheduleIsAccepted);
+            Run(nameof(NightSummonsRequireConservativeWorldTimeReserve), NightSummonsRequireConservativeWorldTimeReserve);
+            Run(nameof(LateNightKeepsOtherSummonsAndLeftmostUsablePriority), LateNightKeepsOtherSummonsAndLeftmostUsablePriority);
+            Run(nameof(NaturalSchedulesHonorNightWindowBoundary), NaturalSchedulesHonorNightWindowBoundary);
+            Run(nameof(NaturalMechanicalScheduleMapsOnlyKnownCodes), NaturalMechanicalScheduleMapsOnlyKnownCodes);
+            Run(nameof(NaturalMechanicalScheduleWaitsForEveryOtherBoss), NaturalMechanicalScheduleWaitsForEveryOtherBoss);
+            Run(nameof(ZenithLacewingIsConservativelyRejectedByDayAndNight), ZenithLacewingIsConservativelyRejectedByDayAndNight);
             Run(nameof(OcramsRazorWorksByDayButSigilHonorsBlockers), OcramsRazorWorksByDayButSigilHonorsBlockers);
             Run(nameof(InterceptLeadsMovingTarget), InterceptLeadsMovingTarget);
             Run(nameof(EveryVanillaBossHasDedicatedStrategy), EveryVanillaBossHasDedicatedStrategy);
@@ -32,6 +38,8 @@ namespace Chaite.Tests
             Run(nameof(UnrelatedMultiBossUsesComposite), UnrelatedMultiBossUsesComposite);
             Run(nameof(RequirementsRejectUndersizedArena), RequirementsRejectUndersizedArena);
             Run(nameof(RequirementsRejectWeakWeapon), RequirementsRejectWeakWeapon);
+            Run(nameof(RequirementsRejectWeaponWithoutAmmoBeforeSummoning), RequirementsRejectWeaponWithoutAmmoBeforeSummoning);
+            Run(nameof(RequirementsRejectPureMeleeDespiteHighDps), RequirementsRejectPureMeleeDespiteHighDps);
             Run(nameof(VariantPhaseIsTagged), VariantPhaseIsTagged);
             Run(nameof(StuckPlannerUsesRecoveryTools), StuckPlannerUsesRecoveryTools);
             Run(nameof(PlannerProducesBoundedPlan), PlannerProducesBoundedPlan);
@@ -179,6 +187,127 @@ namespace Chaite.Tests
             Equal(125, plan.ExpectedBossType);
         }
 
+        private static void NightSummonsRequireConservativeWorldTimeReserve()
+        {
+            // These are Chaite's conservative world-time admission limits, not
+            // vanilla's item usability rules or a guaranteed wall-clock budget.
+            foreach (var item in new[] { 43, 544, 556, 557, 4961 })
+            {
+                var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true };
+                context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = item, Stack = 1 });
+                foreach (var time in new[] { 0d, 25199d, 32400d - 7200d })
+                {
+                    context.Time = time;
+                    True(BossStartPlanner.Select(context) != null, "night boundary rejected item " + item + " at " + time);
+                }
+                foreach (var time in new[] { 25200.01d, 25201d, 32400d, -1d, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+                {
+                    context.Time = time;
+                    True(BossStartPlanner.Select(context) == null, "unsafe night window accepted item " + item + " at " + time);
+                }
+                context.Time = 0d;
+                context.DayTime = true;
+                True(BossStartPlanner.Select(context) == null);
+            }
+        }
+
+        private static void LateNightKeepsOtherSummonsAndLeftmostUsablePriority()
+        {
+            var context = new BossStartContext { Time = 32400d, ZoneHallow = true };
+            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 43, Stack = 1 });
+            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 2, Type = 560, Stack = 1 });
+            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 4, Type = 4988, Stack = 1 });
+            Equal("slime-crown", BossStartPlanner.Select(context).Id);
+            Equal(2, BossStartPlanner.Select(context).SummonSlot);
+            context.Hotbar.RemoveAt(1);
+            context.DayTime = true;
+            Equal("queen-slime-crystal", BossStartPlanner.Select(context).Id);
+            Equal(4, BossStartPlanner.Select(context).SummonSlot);
+        }
+
+        private static void NaturalSchedulesHonorNightWindowBoundary()
+        {
+            foreach (var eye in new[] { false, true })
+            {
+                var context = new BossStartContext
+                {
+                    SpawnEyeScheduled = eye, SpawnHardBoss = eye ? 0 : 1, Time = 25200d
+                };
+                True(BossStartPlanner.Select(context) != null);
+                foreach (var time in new[] { 25200.01d, 32400d, -1d, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+                {
+                    context.Time = time;
+                    True(BossStartPlanner.Select(context) == null);
+                }
+                context.Time = 0d;
+                context.DayTime = true;
+                True(BossStartPlanner.Select(context) == null);
+            }
+        }
+
+        private static void NaturalMechanicalScheduleMapsOnlyKnownCodes()
+        {
+            var expected = new[] { 134, 125, 127 };
+            foreach (var zenith in new[] { false, true })
+            {
+                var context = new BossStartContext { ZenithWorld = zenith, Time = 1000d };
+                for (var code = 1; code <= 3; code++)
+                {
+                    context.SpawnHardBoss = code;
+                    var plan = BossStartPlanner.Select(context);
+                    True(plan != null);
+                    Equal(BossSummonKind.NaturalMechanicalBoss, plan.Kind);
+                    Equal(zenith ? 127 : expected[code - 1], plan.ExpectedBossType);
+                    Equal(zenith ? "natural-mechdusa" : "natural-mechanical", plan.Id);
+                }
+                foreach (var code in new[] { -1, 0, 4, int.MaxValue })
+                {
+                    context.SpawnHardBoss = code;
+                    True(BossStartPlanner.Select(context) == null);
+                }
+            }
+        }
+
+        private static void NaturalMechanicalScheduleWaitsForEveryOtherBoss()
+        {
+            foreach (var zenith in new[] { false, true })
+            foreach (var schedule in new[] { 1, 2, 3 })
+            {
+                var context = new BossStartContext { SpawnHardBoss = schedule, ZenithWorld = zenith };
+                foreach (var boss in new[] { 4, 50, 125, 126, 127, 134, 657 })
+                {
+                    context.ActiveBossTypes.Add(boss);
+                    True(BossStartPlanner.Select(context) == null, "natural mechanical spawn must wait while Boss " + boss + " is alive");
+                    context.ActiveBossTypes.Clear();
+                    True(BossStartPlanner.Select(context) != null);
+                }
+                // This native scheduling restriction is not a blanket ban on
+                // direct item summons or on an independently scheduled Eye.
+                context.ActiveBossTypes.Add(4);
+                context.Hotbar.Add(new HotbarItemSnapshot { Slot = 3, Type = 560, Stack = 1 });
+                Equal("slime-crown", BossStartPlanner.Select(context).Id);
+            }
+            var eye = new BossStartContext { SpawnEyeScheduled = true };
+            eye.ActiveBossTypes.Add(50);
+            Equal(BossSummonKind.NaturalEye, BossStartPlanner.Select(eye).Kind);
+            eye.ActiveBossTypes.Add(4);
+            True(BossStartPlanner.Select(eye) == null);
+        }
+
+        private static void ZenithLacewingIsConservativelyRejectedByDayAndNight()
+        {
+            var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true, Time = 1000d };
+            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 4961, Stack = 1 });
+            Equal(BossSummonKind.PrismaticLacewing, BossStartPlanner.Select(context).Kind);
+            context.ZenithWorld = true;
+            True(BossStartPlanner.Select(context) == null);
+            context.DayTime = true;
+            True(BossStartPlanner.Select(context) == null);
+            // Keep the separate, valid Zenith daytime Mechdusa workflow intact.
+            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 4, Type = 5334, Stack = 1 });
+            Equal("mechdusa-summon", BossStartPlanner.Select(context).Id);
+        }
+
         private static void OcramsRazorWorksByDayButSigilHonorsBlockers()
         {
             var context = new BossStartContext { ZenithWorld = true, DayTime = true };
@@ -249,6 +378,42 @@ namespace Chaite.Tests
             string reason;
             False(new CombatPlanner(new PlannerSettings()).RequirementsMet(scenario, out reason));
             True(reason.Contains("输出"));
+        }
+
+        private static void RequirementsRejectWeaponWithoutAmmoBeforeSummoning()
+        {
+            var scenario = CombatScenario(4);
+            var planner = new CombatPlanner(new PlannerSettings());
+            string reason;
+            True(planner.RequirementsMetForExpected(scenario, "suspicious-eye", 4, out reason));
+            scenario.Weapon.HasAmmo = false;
+            False(planner.RequirementsMetForExpected(scenario, "suspicious-eye", 4, out reason));
+            True(!string.IsNullOrEmpty(reason));
+            False(planner.RequirementsMet(scenario, out reason));
+            scenario.Weapon.HasAmmo = true;
+            True(planner.RequirementsMetForExpected(scenario, "suspicious-eye", 4, out reason));
+        }
+
+        private static void RequirementsRejectPureMeleeDespiteHighDps()
+        {
+            foreach (var boss in new[] { 4, 50, 657, 134, 125, 127 })
+            {
+                var scenario = CombatScenario(boss);
+                var planner = new CombatPlanner(new PlannerSettings());
+                string reason;
+                True(planner.RequirementsMetForExpected(scenario, "test-direct-summon", boss, out reason));
+                scenario.Weapon.Damage = 999;
+                scenario.Weapon.UseTime = 1;
+                scenario.Weapon.IsProjectile = false;
+                scenario.Weapon.IsMelee = true;
+                scenario.Weapon.ShootSpeed = 0f;
+                False(planner.RequirementsMetForExpected(scenario, "test-direct-summon", boss, out reason));
+                True(reason.Contains("挥砍"));
+                False(planner.RequirementsMet(scenario, out reason));
+                scenario.Weapon.IsProjectile = true;
+                scenario.Weapon.IsMelee = false;
+                True(planner.RequirementsMetForExpected(scenario, "test-direct-summon", boss, out reason));
+            }
         }
 
         private static void VariantPhaseIsTagged()

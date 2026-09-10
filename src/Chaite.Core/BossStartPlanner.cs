@@ -5,6 +5,14 @@ namespace Chaite.Core
     /// <summary>Pure, allocation-bounded selection of the leftmost currently usable summon.</summary>
     public static class BossStartPlanner
     {
+        // Verified vanilla Main.UpdateTime IL_0af6-0b08 ends the night after 32400.
+        // The 7200 reserve is CHAITE'S conservative admission policy, not a native
+        // summon restriction or a proof that the fight can be won in two minutes.
+        // These are world-time units: accelerated time/remix require richer context
+        // before they can be treated as a verified wall-clock combat budget.
+        private const double NightLength = 32400d;
+        private const double NightStartReserve = 7200d;
+
         public static BossStartPlan Select(BossStartContext context)
         {
             if (context == null)
@@ -20,10 +28,13 @@ namespace Chaite.Core
                     return plan;
             }
 
-            if (context.SpawnEyeScheduled && !context.DayTime && !AlreadyActive(context, 4, null))
+            if (context.SpawnEyeScheduled && HasNightStartWindow(context) && !AlreadyActive(context, 4, null))
                 return Natural(BossSummonKind.NaturalEye, 4, "natural-eye", 7200);
 
-            if (context.SpawnHardBoss > 0 && !context.DayTime)
+            // Main.UpdateTime IL_086b-08a3 blocks a scheduled mechanical spawn while
+            // ANY Boss is alive; IL_0930-09c3 only maps values 1, 2 and 3.
+            if (context.SpawnHardBoss >= 1 && context.SpawnHardBoss <= 3 &&
+                HasNightStartWindow(context) && context.ActiveBossTypes.Count == 0)
             {
                 if (context.ZenithWorld && !AlreadyActive(context, 127, "natural-mechdusa"))
                     return Natural(BossSummonKind.NaturalMechanicalBoss, 127, "natural-mechdusa", 7200);
@@ -43,15 +54,15 @@ namespace Chaite.Core
             switch (item.Type)
             {
                 case 43:
-                    return !c.DayTime ? Direct(item, 4, "suspicious-eye") : null;
+                    return HasNightStartWindow(c) ? Direct(item, 4, "suspicious-eye") : null;
                 case 70:
                     return c.ZoneCorrupt ? Direct(item, 13, "worm-food") : null;
                 case 544:
-                    return !c.DayTime ? Direct(item, 125, "mechanical-eye") : null;
+                    return HasNightStartWindow(c) ? Direct(item, 125, "mechanical-eye") : null;
                 case 556:
-                    return !c.DayTime ? Direct(item, 134, "mechanical-worm") : null;
+                    return HasNightStartWindow(c) ? Direct(item, 134, "mechanical-worm") : null;
                 case 557:
-                    return !c.DayTime ? Direct(item, 127, "mechanical-skull") : null;
+                    return HasNightStartWindow(c) ? Direct(item, 127, "mechanical-skull") : null;
                 case 560:
                     return Direct(item, 50, "slime-crown");
                 case 1133:
@@ -70,7 +81,11 @@ namespace Chaite.Core
                            && c.ActiveBossTypes.Count == 0
                         ? Direct(item, 398, "celestial-sigil", 1200) : null;
                 case 4961:
-                    return c.ZoneHallow && c.ZoneOverworld && (!c.DayTime || c.ZenithWorld) && !c.CritterProtection
+                    // ShouldEmpressBeEnraged IL_0000-0066: remix/Zenith surface
+                    // summons latch rage by HEIGHT, even at night. This surface-only
+                    // workflow has no validated enraged/underground start profile;
+                    // decline it rather than treating Zenith as a safe day bypass.
+                    return !c.ZenithWorld && c.ZoneHallow && c.ZoneOverworld && HasNightStartWindow(c) && !c.CritterProtection
                         ? Special(BossSummonKind.PrismaticLacewing, item, 636, "prismatic-lacewing", item.Slot, 480, new Vec2()) : null;
                 case 1293:
                     return c.NearLihzahrdAltar
@@ -84,6 +99,12 @@ namespace Chaite.Core
                 default:
                     return null;
             }
+        }
+
+        private static bool HasNightStartWindow(BossStartContext context)
+        {
+            return !context.DayTime && !double.IsNaN(context.Time) && !double.IsInfinity(context.Time) &&
+                context.Time >= 0d && context.Time <= NightLength - NightStartReserve;
         }
 
         private static HotbarItemSnapshot FindAt(BossStartContext context, int slot)

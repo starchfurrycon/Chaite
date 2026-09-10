@@ -1,4 +1,45 @@
-# v0.3.0-alpha 验证记录
+# 验证记录
+
+## v0.4.0-alpha：多 Boss 实测，不隐去败绩
+
+目标仍为 Windows Steam Terraria 1.4.5.8 x86。开发对照固定使用 Main.rand 种子 20260910，并未冻结所有随机源。以下每格仅是一场夹具测试，**不是一般游玩胜率**。
+
+最终候选 Release 构建与 137 项离线回归通过；原版只读 API 契约 185 项通过（138 个直接提取的 Facade 绑定），四个生产钩子在工作区副本中的数量、位置和顺序通过。正式游戏 SHA-256 未改变。视线缓存、落地输入、平台方向、弹药只读查询、开战安全门槛和毁灭者选靶均有生产实现回归。
+
+| Boss | v0.3 二进制基线 | 第一轮修复 | 第二轮修复 |
+|---|---|---|---|
+| 克苏鲁之眼 | 胜，5572 tick | 胜，4003 tick | 胜，4003 tick |
+| 史莱姆王 | 胜，4169 tick | 胜，2683 tick | 胜，2691 tick |
+| 史莱姆皇后 | 环境初始化错误 | 未确认击杀便脱战 | 死亡，5630 tick |
+| 毁灭者 | 死亡，2367 tick | 死亡，8354 tick | 死亡，21351 tick |
+| 双子魔眼 | 死亡，3693 tick | 死亡，4188 tick | 死亡，5169 tick |
+| 机械骷髅王 | 死亡，3874 tick | 死亡，7635 tick | 死亡，7635 tick |
+
+基线总尝试 2/6 胜，有效开战 2/5；第一、第二轮均为有效开战 2/6 胜。另有一次修正 Queen 初始化后的 v0.3 单独补测：正常开战、2757 伤害后脱战，不是胜利，未覆盖或删除原来的环境错误。毁灭者第二轮实际根部伤害由基线 688 提高至 25517；延长战斗与增加伤害没有变成胜利。两种肉前 Boss 虽更快结束，生命下降次数也增加，不宣称生存性全面提高。Boss 死亡脱战后的剩余血量记录为 0 不代表击杀，以原生掉落钩子和状态机结论为准。
+
+装备在各轮保持一致，只有基线头盔标签纠错：肉前是 400 HP、铂金套、赫尔墨斯靴/云瓶/再生饰带/镣铐/疾风脚镯、迷你鲨/火枪子弹；肉后是**精金近战头盔**、精金胸腿、闪电靴/恶魔之翼/再生饰带/黑曜石护盾/游侠徽章、发条枪/水晶子弹。均有钩爪、20 瓶对应阶段治疗药、9999 发初始弹药，不补物品或生命。专家及大师肉后额外开启恶魔之心槽并装备克盾。并非最低装备或最合适武器的证明。
+
+场地是 2600 格灰砖长地面；肉后额外两层各 500 格木平台（地面 y=500、平台 y=460/420）。Queen 使用真实珍珠石地面，不强写环境标记。初始化先原生 Scan→UpdateBiomes；第二轮进一步补齐无渲染环境遗漏的每 tick 原生 SceneMetrics 扫描，扫描次数与原生帧数一致。因此迭代并非只有单个策略变量变化，也包含明确记录的夹具正确性修正。
+
+第二轮 snapshot+plan+capture 的逐例 p95 为 0.152–0.458 ms，峰值 19.079–29.044 ms；不含渲染、系统输入、最初 Facade 初始化，不能宣称始终亚毫秒或无卡顿。场景扫描计入独立 nativeUpdate 计时，不混入该热路径数字。
+
+开发证据：`artifacts/boss-validation-baseline01`、`boss-validation-iteration01`、`boss-validation-iteration02`，以及 `game-probe-batch-compilecheck03` 的 Queen 单独补测。保留每例独立 result、manifest、输入二进制/夹具哈希、原生日志与桌面宿主日志。所有测试均在工作区测试副本/独立桌面运行；正式游戏文件、用户世界与角色没有载入或写入，隔离目录会产生本地成就和日志文件。
+
+### 复现多 Boss 测试
+
+```powershell
+# 默认只打印计划，不启动游戏；-Run 才串行执行六例。
+.\tools\run-boss-validation.ps1 -Suite smoke6
+.\tools\run-boss-validation.ps1 -Suite smoke6 -Run
+# 六类 Boss × 三个经典难度 seed；不是三种难度。
+.\tools\run-boss-validation.ps1 -Suite standard18
+# 自定义 JSON 可分别指定 classic/expert/master；必须是项目内绝对路径。
+.\tools\run-boss-validation.ps1 -Cases "$PWD\artifacts\my-cases.json"
+```
+
+自定义 schema 为 `chaite-boss-cases/v1`，`cases` 中每项包含 `scenario`、`seed`、`difficulty`，可选 `maxTicks` 和 `wallSeconds`。每例最多 24000 原生 tick/90 秒墙钟，超时不会当成胜利。批内不要构建或更改 GameProbe/GameProbePatcher；检测到版本改变会拒绝后续启动，保留错误。
+
+## v0.3.0-alpha 历史验证（以下不代表 v0.4 全部场景）
 
 日期：2026-09-10。目标 Windows Steam Terraria 1.4.5.8 x86。
 
