@@ -84,7 +84,7 @@ v0.4 补齐落地后的松跳/重按、平台单向通行，以及迷你鲨/发�
 
     ./tools/build.ps1 -Configuration Release -Package
 
-输出位于 artifacts/Chaite-v0.4.0-alpha。打包先执行 x86 回归测试及后台 UI 布局检查；不删除已有包，同名目录存在时需指定新的 `-PackageVersion`。旧 v0.1.0/v0.2.0/v0.3.0-alpha 留作回退。
+输出位于 artifacts/Chaite-v0.5.0-alpha。打包先执行 x86 回归、原生证据与逐 Boss 统计检查，以及后台 UI 布局检查；不删除已有包，同名目录存在时需指定新的 `-PackageVersion`。旧 v0.1/v0.2/v0.3/v0.4-alpha 留作回退。
 
 运行 Chaite.Manager.exe 可查看白名单状态、安装或恢复。新版界面采用深蓝/琥珀色分区、固定底部操作区和醒目的 F9 提示；状态哈希检查在后台防抖执行，避免输入路径时卡住界面。安装、恢复均有默认取消的确认。安装器：
 
