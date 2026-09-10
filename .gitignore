@@ -1,0 +1,17 @@
+bin/
+obj/
+packages/
+.vs/
+.research/
+.validation/
+artifacts/
+tools/research/
+DEVELOPMENT_NOTES.md
+*.user
+*.suo
+*.bak
+*.patched
+
+# Original meme audio is user-supplied and must not be committed.
+src/Chaite.Plugin/Audio/*.wav
+release/Audio/*.wav

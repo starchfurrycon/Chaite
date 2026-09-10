@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{62E28758-C521-4D17-A4B3-379D45431A81}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Chaite.Manager</RootNamespace>
+    <AssemblyName>Chaite.Manager</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <OutputPath>bin\$(Configuration)\net48\</OutputPath>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="MainForm.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="UiTheme.cs" />
+    <Compile Include="UiSmokeTest.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="App.config" />
+    <None Include="app.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Chaite.Patcher\Chaite.Patcher.csproj">
+      <Project>{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}</Project>
+      <Name>Chaite.Patcher</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

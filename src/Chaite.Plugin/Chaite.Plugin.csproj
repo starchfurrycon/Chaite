@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{4C64004B-E29E-4592-87EE-952327C38C25}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Chaite.Plugin</RootNamespace>
+    <AssemblyName>Chaite.Plugin</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <OutputPath>bin\$(Configuration)\net48\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="AudioCuePlayer.cs" />
+    <Compile Include="ChaiteConfig.cs" />
+    <Compile Include="HotkeyPoller.cs" />
+    <Compile Include="Log.cs" />
+    <Compile Include="ReflectionAccess.cs" />
+    <Compile Include="Runtime.cs" />
+    <Compile Include="SingleItemDropTransaction.cs" />
+    <Compile Include="TerrariaFacade.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Chaite.Core\Chaite.Core.csproj">
+      <Project>{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}</Project>
+      <Name>Chaite.Core</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

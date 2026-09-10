@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{5061250C-DF84-46D0-895C-D2F824CE4488}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Chaite.Tests</RootNamespace>
+    <AssemblyName>Chaite.Tests</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <Optimize Condition=" '$(Configuration)' == 'Release' ">true</Optimize>
+    <PlatformTarget>x86</PlatformTarget>
+    <OutputPath>bin\$(Configuration)\net48\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="SafetyTests.cs" />
+    <Compile Include="BeamTests.cs" />
+    <Compile Include="MobilityTests.cs" />
+    <Compile Include="PlannerBenchmarks.cs" />
+    <Compile Include="ReflectionTests.cs" />
+    <Compile Include="TransactionTests.cs" />
+    <Compile Include="PatcherTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Chaite.Core\Chaite.Core.csproj">
+      <Project>{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}</Project>
+      <Name>Chaite.Core</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Chaite.Plugin\Chaite.Plugin.csproj">
+      <Project>{4C64004B-E29E-4592-87EE-952327C38C25}</Project>
+      <Name>Chaite.Plugin</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Chaite.Patcher\Chaite.Patcher.csproj">
+      <Project>{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}</Project>
+      <Name>Chaite.Patcher</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

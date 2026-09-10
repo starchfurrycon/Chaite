@@ -1,0 +1,13 @@
+{
+  "ActivateKey": "F8",
+  "EmergencyStopKey": "F9",
+  "ClearGraceTicks": 300,
+  "HitSoundCooldownTicks": 45,
+  "AutoSwitchWeapon": true,
+  "RestoreOriginalWeapon": true,
+  "AutoQuickHeal": true,
+  "AutoQuickMana": true,
+  "ShowChatStatus": true,
+  "MaximumTargetDistancePixels": 2800,
+  "MaximumThreatDistancePixels": 2200
+}

@@ -1,0 +1,43 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chaite.Core", "src\Chaite.Core\Chaite.Core.csproj", "{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chaite.Plugin", "src\Chaite.Plugin\Chaite.Plugin.csproj", "{4C64004B-E29E-4592-87EE-952327C38C25}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chaite.Patcher", "src\Chaite.Patcher\Chaite.Patcher.csproj", "{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chaite.Manager", "src\Chaite.Manager\Chaite.Manager.csproj", "{62E28758-C521-4D17-A4B3-379D45431A81}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chaite.Tests", "tests\Chaite.Tests\Chaite.Tests.csproj", "{5061250C-DF84-46D0-895C-D2F824CE4488}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70CE4E14-30F7-429F-9DB5-EBD6670CA9EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4C64004B-E29E-4592-87EE-952327C38C25}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4C64004B-E29E-4592-87EE-952327C38C25}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4C64004B-E29E-4592-87EE-952327C38C25}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4C64004B-E29E-4592-87EE-952327C38C25}.Release|Any CPU.Build.0 = Release|Any CPU
+		{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{798A47D4-61C8-47B1-AD56-FDD9C632DE8F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{62E28758-C521-4D17-A4B3-379D45431A81}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{62E28758-C521-4D17-A4B3-379D45431A81}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{62E28758-C521-4D17-A4B3-379D45431A81}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{62E28758-C521-4D17-A4B3-379D45431A81}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5061250C-DF84-46D0-895C-D2F824CE4488}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5061250C-DF84-46D0-895C-D2F824CE4488}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5061250C-DF84-46D0-895C-D2F824CE4488}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5061250C-DF84-46D0-895C-D2F824CE4488}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
+

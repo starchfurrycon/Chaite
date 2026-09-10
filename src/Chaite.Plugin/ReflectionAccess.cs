@@ -1,0 +1,148 @@
+using System;
+using System.Linq.Expressions;
+using System.Reflection;
+
+namespace Chaite.Plugin
+{
+    internal static class ReflectionAccess
+    {
+        public static FieldInfo Field(Type type, string name)
+        {
+            for (var current = type; current != null; current = current.BaseType)
+            {
+                var field = current.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                if (field != null)
+                    return field;
+            }
+            throw new MissingFieldException(type.FullName, name);
+        }
+
+        public static Func<object, T> Getter<T>(Type type, string name)
+        {
+            var field = Field(type, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var body = Expression.Field(Expression.Convert(source, field.DeclaringType), field);
+            return Expression.Lambda<Func<object, T>>(Expression.Convert(body, typeof(T)), source).Compile();
+        }
+
+        public static Action<object, T> Setter<T>(Type type, string name)
+        {
+            var field = Field(type, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var value = Expression.Parameter(typeof(T), "value");
+            var target = Expression.Field(Expression.Convert(source, field.DeclaringType), field);
+            return Expression.Lambda<Action<object, T>>(Expression.Assign(target,
+                Expression.Convert(value, field.FieldType)), source, value).Compile();
+        }
+
+        public static Action<T> StaticSetter<T>(Type type, string name)
+        {
+            var field = Field(type, name);
+            var value = Expression.Parameter(typeof(T), "value");
+            return Expression.Lambda<Action<T>>(Expression.Assign(Expression.Field(null, field),
+                Expression.Convert(value, field.FieldType)), value).Compile();
+        }
+
+        public static Action<object, T> PropertySetter<T>(Type type, string name)
+        {
+            var property = Property(type, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var value = Expression.Parameter(typeof(T), "value");
+            return Expression.Lambda<Action<object, T>>(Expression.Assign(
+                Expression.Property(Expression.Convert(source, property.DeclaringType), property),
+                Expression.Convert(value, property.PropertyType)), source, value).Compile();
+        }
+
+        // Call on the actual value-type field by address. Boxing with GetValue
+        // would silently mutate a copy and leave vanilla's selection unchanged.
+        public static Action<object, T> StructMethodSetter<T>(Type type, string fieldName, string methodName)
+        {
+            var field = Field(type, fieldName);
+            if (!field.FieldType.IsValueType || field.IsStatic || field.IsInitOnly)
+                throw new ArgumentException("Expected a writable instance value-type field.", nameof(fieldName));
+            var method = field.FieldType.GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null, new[] { typeof(T) }, null);
+            if (method == null || method.ReturnType != typeof(void))
+                throw new MissingMethodException(field.FieldType.FullName, methodName);
+            var source = Expression.Parameter(typeof(object), "source");
+            var value = Expression.Parameter(typeof(T), "value");
+            var target = Expression.Field(Expression.Convert(source, field.DeclaringType), field);
+            return Expression.Lambda<Action<object, T>>(Expression.Call(target, method, value), source, value).Compile();
+        }
+
+        public static Func<float> StaticVectorComponentGetter(Type type, string vectorFieldName, string component)
+        {
+            var vector = Field(type, vectorFieldName);
+            var member = Field(vector.FieldType, component);
+            return Expression.Lambda<Func<float>>(Expression.Field(Expression.Field(null, vector), member)).Compile();
+        }
+
+        public static Func<Array, int, int, object> ArrayElementGetter2D(Type arrayType)
+        {
+            if (!arrayType.IsArray || arrayType.GetArrayRank() != 2)
+                throw new ArgumentException("Expected a rectangular two-dimensional tile array.", nameof(arrayType));
+            var source = Expression.Parameter(typeof(Array), "source");
+            var x = Expression.Parameter(typeof(int), "x");
+            var y = Expression.Parameter(typeof(int), "y");
+            return Expression.Lambda<Func<Array, int, int, object>>(Expression.Convert(
+                Expression.ArrayAccess(Expression.Convert(source, arrayType), x, y), typeof(object)), source, x, y).Compile();
+        }
+
+        public static Func<object, float> VectorComponentGetter(Type type, string vectorFieldName, string component)
+        {
+            var vectorField = Field(type, vectorFieldName);
+            var componentField = vectorField.FieldType.GetField(component, BindingFlags.Public | BindingFlags.Instance);
+            if (componentField == null)
+                throw new MissingFieldException(vectorField.FieldType.FullName, component);
+            var source = Expression.Parameter(typeof(object), "source");
+            var vector = Expression.Field(Expression.Convert(source, vectorField.DeclaringType), vectorField);
+            var body = Expression.Field(vector, componentField);
+            return Expression.Lambda<Func<object, float>>(body, source).Compile();
+        }
+
+        public static Func<T> StaticGetter<T>(Type type, string name)
+        {
+            var field = Field(type, name);
+            var body = Expression.Field(null, field);
+            return Expression.Lambda<Func<T>>(Expression.Convert(body, typeof(T))).Compile();
+        }
+
+        public static PropertyInfo Property(Type type, string name)
+        {
+            for (var current = type; current != null; current = current.BaseType)
+            {
+                var property = current.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+                if (property != null)
+                    return property;
+            }
+            throw new MissingMemberException(type.FullName, name);
+        }
+
+        public static Func<object, T> PropertyGetter<T>(Type type, string name)
+        {
+            var property = Property(type, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var body = Expression.Property(Expression.Convert(source, property.DeclaringType), property);
+            return Expression.Lambda<Func<object, T>>(Expression.Convert(body, typeof(T)), source).Compile();
+        }
+
+        public static Func<T> StaticPropertyGetter<T>(Type type, string name)
+        {
+            var property = Property(type, name);
+            var body = Expression.Property(null, property);
+            return Expression.Lambda<Func<T>>(Expression.Convert(body, typeof(T))).Compile();
+        }
+
+        public static Func<object, T> MethodGetter<T>(Type type, string name)
+        {
+            var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+            if (method == null)
+                throw new MissingMethodException(type.FullName, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var body = Expression.Call(Expression.Convert(source, method.DeclaringType), method);
+            return Expression.Lambda<Func<object, T>>(Expression.Convert(body, typeof(T)), source).Compile();
+        }
+    }
+}
