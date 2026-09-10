@@ -58,6 +58,11 @@ if ($Package) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $release
+    $packageDocs = Join-Path $release 'docs'
+    New-Item -ItemType Directory -Path $packageDocs | Out-Null
+    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md')) {
+        Copy-Item -LiteralPath (Join-Path $projectRoot ('docs\' + $document)) -Destination $packageDocs
+    }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $release
     Write-Host "Release: $release"
     Write-Host "Verification: $verification"
