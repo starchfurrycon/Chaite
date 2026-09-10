@@ -96,6 +96,8 @@ public static class ChaiteGameProbe
         {
             bulletReports++;
             Log("NATIVE_SHOT type="+projectile.type+" pos="+projectile.position+" vel="+projectile.velocity+
+                " damage="+projectile.damage+" extraUpdates="+projectile.extraUpdates+" timeLeft="+projectile.timeLeft+
+                " itemAnimation="+Game.player[0].itemAnimation+
                 " mouse="+Game.mouseX+","+Game.mouseY+" screen="+Game.screenPosition+
                 " bounds="+Game.leftWorld+","+Game.rightWorld+","+Game.topWorld+","+Game.bottomWorld);
         }
@@ -501,6 +503,18 @@ public static class ChaiteGameProbe
             {"label",scenario.Equipment},{"life",400},{"mana",200},{"armorAndAccessories",armor},
             {"weaponType",player.inventory[0].type},{"summonType",scenario.Summon},{"summonCount",1},
             {"ammoType",player.inventory[54].type},{"ammoCount",9999},
+            {"weaponBallisticFields",new Dictionary<string,object>
+                {
+                    {"damage",player.inventory[0].damage},{"shootSpeed",player.inventory[0].shootSpeed},
+                    {"useTime",player.inventory[0].useTime},{"useAnimation",player.inventory[0].useAnimation},
+                    {"reuseDelay",player.inventory[0].reuseDelay},{"projectile",player.inventory[0].shoot},
+                    {"prefix",player.inventory[0].prefix}
+                }},
+            {"ammoBallisticFields",new Dictionary<string,object>
+                {
+                    {"damage",player.inventory[54].damage},{"shootSpeed",player.inventory[54].shootSpeed},
+                    {"projectile",player.inventory[54].shoot}
+                }},
             {"healingType",player.inventory[10].type},{"healingCount",player.inventory[10].stack},
             {"grappleType",player.miscEquips[4].type},{"consumablesReplenished",false},
             {"legacyBaseline",scenario.Legacy}

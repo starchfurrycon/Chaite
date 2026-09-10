@@ -175,6 +175,8 @@ try {
     Test-Method -Owner 'Terraria.Player' -Name 'HandleHotbarControls' -ParameterTypes @() -ReturnType 'System.Void' -Static $false
     Test-Method -Owner 'Terraria.Player/SelectedItemState' -Name 'Select' -ParameterTypes @('System.Int32') -ReturnType 'System.Void' -Static $false
     Test-Method -Owner 'Terraria.Player' -Name 'PickAmmo_PickAmmoItem' -ParameterTypes @('Terraria.Item') -ReturnType 'Terraria.Item' -Static $false
+    Test-Method -Owner 'Terraria.Player' -Name 'GetWeaponDamage' -ParameterTypes @('Terraria.Item') -ReturnType 'System.Int32' -Static $false
+    Test-Method -Owner 'Terraria.Player' -Name 'GetWeaponDamageMultiplier' -ParameterTypes @('Terraria.Item') -ReturnType 'System.Single' -Static $false
     Test-Field 'Terraria.ID.ContentSamples' 'ProjectilesByType' 'System.Collections.Generic.Dictionary`2<System.Int32,Terraria.Projectile>' $true $false
     Test-Method -Owner 'Terraria.GameInput.TriggersSet' -Name 'CopyInto' -ParameterTypes @('Terraria.Player') -ReturnType 'System.Void' -Static $false
     Test-Method -Owner 'Terraria.NPC' -Name 'NPCLoot' -ParameterTypes @() -ReturnType 'System.Void' -Static $false

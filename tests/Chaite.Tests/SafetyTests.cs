@@ -417,7 +417,9 @@ namespace Chaite.Tests
 
         private static void ArenaReversalDoesNotImmediatelyOscillateBack()
         {
-            var scenario = CombatScenario(50);
+            // Generic orbit policy; King's native runway policy now brakes and
+            // waits for a measured opening instead of blindly reversing into it.
+            var scenario = CombatScenario(4);
             scenario.Arena.ClearanceLeft = 60;
             var planner = new CombatPlanner(new PlannerSettings());
             Equal(1, planner.Plan(scenario).Horizontal);

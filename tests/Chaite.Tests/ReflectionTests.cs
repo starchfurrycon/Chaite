@@ -31,6 +31,10 @@ namespace Chaite.Tests
             Run(nameof(FacadeWeaponReadUsesLiveProjectileSample), FacadeWeaponReadUsesLiveProjectileSample);
             Run(nameof(FacadeWeaponReadRejectsMissingNativeAmmo), FacadeWeaponReadRejectsMissingNativeAmmo);
             Run(nameof(FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee), FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee);
+            Run(nameof(FacadeWeaponProfilesUseDamageModifiersAndBurstPhase), FacadeWeaponProfilesUseDamageModifiersAndBurstPhase);
+            Run(nameof(FacadeWeaponProfilesResetOnAmmoAndWeaponChanges), FacadeWeaponProfilesResetOnAmmoAndWeaponChanges);
+            Run(nameof(PlannerRefusesUnsupportedNativeCombinationBeforeSummoning), PlannerRefusesUnsupportedNativeCombinationBeforeSummoning);
+            Run(nameof(PlannerWeaponAimUsesExactProfileAndRejectsImpossibleIntercept), PlannerWeaponAimUsesExactProfileAndRejectsImpossibleIntercept);
             Run(nameof(JumpGateReleasesGroundedHoldBeforeFreshPress), JumpGateReleasesGroundedHoldBeforeFreshPress);
             Run(nameof(JumpGatePreservesAirborneAndGrappleHolds), JumpGatePreservesAirborneAndGrappleHolds);
             Run(nameof(FacadePlatformsRemainOneWayWithBothSolidFlags), FacadePlatformsRemainOneWayWithBothSolidFlags);
@@ -363,7 +367,10 @@ namespace Chaite.Tests
             var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
             var result = fixture.Read();
             Equal(22f, result.ShootSpeed);
-            Equal(6, result.Damage);
+            Equal(13, result.Damage); // Native modified weapon plus ammo, not the weapon's tooltip alone.
+            True(result.NativeProfileRequired && result.Profile.IsSupported);
+            Equal(98, result.WeaponId);
+            Equal(97, result.AmmoId);
             Equal(8, result.UseTime);
             True(result.IsProjectile && !result.IsMelee && result.IsUsable && result.HasAmmo);
             Equal(10, fixture.Player.ExpectedWeapon.shoot);
@@ -439,6 +446,79 @@ namespace Chaite.Tests
             Equal(0, fixture.FindBestSlot());
             Equal(0, fixture.Player.ConsumptionCalls);
             Equal(999, ammo.stack);
+        }
+
+        private static void FacadeWeaponProfilesUseDamageModifiersAndBurstPhase()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Clockwork(), TestAmmoItem.CrystalBullet());
+            fixture.Player.DamageMultiplier = 1.5f;
+            fixture.Player.ItemAnimation = 10; // Native decrements to 9 before gun shooting.
+            var result = fixture.Read();
+            Equal(38, result.Damage); // floor(17*1.5+epsilon) + floor(9*1.5).
+            Equal(1, result.Profile.BurstShotIndex);
+            True(Math.Abs(result.ShootSpeed - 26.775f) < .0001f);
+            True(Math.Abs(result.ApproximateDps - 38f * 180f / 26f) < .001f);
+            fixture.Player.ItemAnimation = 5;
+            result = fixture.Read();
+            Equal(2, result.Profile.BurstShotIndex);
+            True(Math.Abs(result.ShootSpeed - 28.05f) < .0001f);
+            fixture.Player.ItemAnimation = 0;
+            Equal(0, fixture.Read().Profile.BurstShotIndex);
+            Equal(0, fixture.Player.ConsumptionCalls);
+        }
+
+        private static void FacadeWeaponProfilesResetOnAmmoAndWeaponChanges()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
+            True(fixture.Read().Profile.IsSupported);
+            fixture.Player.SelectedAmmo = new TestAmmoItem { type = 9999, stack = 50, damage = 900, shoot = 14, shootSpeed = 4, ammo = 97 };
+            var unsupported = fixture.Read();
+            Equal(9999, unsupported.AmmoId);
+            False(unsupported.Profile.IsSupported);
+            Equal(0f, fixture.Score(0));
+            fixture.Player.SelectedAmmo = TestAmmoItem.CrystalBullet();
+            True(fixture.Read().Profile.IsSupported);
+            fixture.Items = new object[0];
+            var empty = fixture.Read();
+            True(empty.NativeProfileRequired);
+            False(empty.Profile.IsSupported);
+            Equal(0, empty.WeaponId);
+            Equal(0, empty.AmmoId);
+        }
+
+        private static void PlannerRefusesUnsupportedNativeCombinationBeforeSummoning()
+        {
+            var snapshot = CombatScenario(4);
+            snapshot.Weapon.NativeProfileRequired = true;
+            string reason;
+            var planner = new Chaite.Core.CombatPlanner(new Chaite.Core.PlannerSettings());
+            False(planner.RequirementsMetForExpected(snapshot, "eye", 4, out reason));
+            True(!string.IsNullOrEmpty(reason));
+            var plan = planner.Plan(snapshot);
+            False(plan.Fire);
+            True(!string.IsNullOrEmpty(plan.WeaponIssue));
+            False(planner.PlanSurvival(snapshot).Fire);
+        }
+
+        private static void PlannerWeaponAimUsesExactProfileAndRejectsImpossibleIntercept()
+        {
+            var snapshot = CombatScenario(4);
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.Clockwork(), TestAmmoItem.CrystalBullet());
+            fixture.Player.ItemAnimation = 5;
+            snapshot.Weapon = fixture.Read();
+            snapshot.Weapon.ShootSpeed = 1f; // Poison obsolete generic input.
+            var planner = new Chaite.Core.CombatPlanner(new Chaite.Core.PlannerSettings());
+            var target = snapshot.Targets[0];
+            var exact = Chaite.Core.WeaponAimSolver.Solve(snapshot.Weapon.Profile,
+                snapshot.Player.Center, target.Center, target.Velocity);
+            var plan = planner.Plan(snapshot);
+            True(plan.Fire);
+            Equal(exact.AimWorld.X, plan.AimWorld.X);
+            Equal(exact.AimWorld.Y, plan.AimWorld.Y);
+            target.Velocity = new Chaite.Core.Vec2(1000f, 0f);
+            snapshot.Targets[0] = target;
+            False(planner.Plan(snapshot).Fire);
+            False(planner.PlanSurvival(snapshot).Fire);
         }
 
         private static void JumpGateReleasesGroundedHoldBeforeFreshPress()
@@ -658,10 +738,17 @@ namespace Chaite.Tests
                 _facade = FormatterServices.GetUninitializedObject(_facadeType);
                 Set("_inventory", new Func<object, object[]>(player => Items));
                 Set("_selectedItem", new Func<object, int>(player => 0));
+                Set("_weaponSelectionSnapshot", new Chaite.Core.WeaponSnapshot());
+                Set("_playerItemAnimation", new Func<object, int>(player => ((TestAmmoPlayer)player).ItemAnimation));
+                Set("_weaponDamage", new Func<object, object, int>((player, item) =>
+                    (int)(((TestAmmoItem)item).damage * ((TestAmmoPlayer)player).DamageMultiplier + .000005f)));
+                Set("_weaponDamageMultiplier", new Func<object, object, float>((player, item) => ((TestAmmoPlayer)player).DamageMultiplier));
                 BindItem<int>("_itemTypeId", "type");
                 BindItem<int>("_itemStack", "stack");
                 BindItem<int>("_itemDamage", "damage");
                 BindItem<int>("_itemUseTime", "useTime");
+                BindItem<int>("_itemUseAnimation", "useAnimation");
+                BindItem<int>("_itemReuseDelay", "reuseDelay");
                 BindItem<int>("_itemUseStyle", "useStyle");
                 BindItem<int>("_itemPick", "pick");
                 BindItem<int>("_itemAxe", "axe");
@@ -686,6 +773,8 @@ namespace Chaite.Tests
                 }));
                 Set("_projectileExtraUpdates", GenericAccessor<Func<object, int>>("Getter", typeof(int),
                     typeof(TestProjectileSample), "extraUpdates"));
+                Set("_projectileTimeLeft", GenericAccessor<Func<object, int>>("Getter", typeof(int),
+                    typeof(TestProjectileSample), "timeLeft"));
             }
 
             private void BindItem<T>(string dependency, string fieldName) =>
@@ -718,7 +807,7 @@ namespace Chaite.Tests
             {
                 var method = _facadeType.GetMethod("WeaponScore", BindingFlags.Instance | BindingFlags.NonPublic);
                 True(method != null);
-                return (float)method.Invoke(_facade, new object[] { Items, slot });
+                return (float)method.Invoke(_facade, new object[] { Player, Items, slot });
             }
         }
 
@@ -865,6 +954,7 @@ namespace Chaite.Tests
     public sealed class TestProjectileSample
     {
         public int extraUpdates;
+        public int timeLeft = 600;
     }
 
     public sealed class TestCombatTile
@@ -887,6 +977,8 @@ namespace Chaite.Tests
         public TestAmmoItem SelectedAmmo;
         public int AmmoCyclingOffset;
         public int ConsumptionCalls;
+        public int ItemAnimation;
+        public float DamageMultiplier = 1f;
 
         private TestAmmoItem PickAmmo_PickAmmoItem(TestAmmoItem weapon) =>
             ReferenceEquals(weapon, ExpectedWeapon) ? SelectedAmmo : null;
@@ -906,6 +998,8 @@ namespace Chaite.Tests
         public int stack = 1;
         public int damage;
         public int useTime;
+        public int useAnimation;
+        public int reuseDelay;
         public int useStyle;
         public int pick;
         public int axe;
@@ -919,9 +1013,9 @@ namespace Chaite.Tests
 
         // Exact unprefixed 1.4.5.8 fields audited from Item.SetDefaults1.
         public static TestAmmoItem Minishark() => new TestAmmoItem
-        { type = 98, damage = 6, useTime = 8, useStyle = 5, shoot = 10, shootSpeed = 7f, useAmmo = 97 };
+        { type = 98, damage = 6, useTime = 8, useAnimation = 8, useStyle = 5, shoot = 10, shootSpeed = 7f, useAmmo = 97 };
         public static TestAmmoItem Clockwork() => new TestAmmoItem
-        { type = 434, damage = 17, useTime = 4, useStyle = 5, shoot = 10, shootSpeed = 7.75f, useAmmo = 97 };
+        { type = 434, damage = 17, useTime = 4, useAnimation = 12, reuseDelay = 14, useStyle = 5, shoot = 10, shootSpeed = 7.75f, useAmmo = 97 };
         public static TestAmmoItem MusketBall() => new TestAmmoItem
         { type = 97, stack = 999, damage = 7, shoot = 14, shootSpeed = 4f, ammo = 97 };
         public static TestAmmoItem CrystalBullet() => new TestAmmoItem

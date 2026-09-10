@@ -49,6 +49,13 @@ jobs:
             Tee-Object -FilePath artifacts\ci\native-evidence-tests.log
           if ($LASTEXITCODE -ne 0) { throw "Native evidence regressions failed: $LASTEXITCODE" }
 
+      - name: Check per-Boss readiness aggregation with synthetic evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-boss-readiness.ps1 |
+            Tee-Object -FilePath artifacts\ci\boss-readiness-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Readiness regressions failed: $LASTEXITCODE" }
+
       - name: Retain offline test evidence
         if: always()
         uses: actions/upload-artifact@v4

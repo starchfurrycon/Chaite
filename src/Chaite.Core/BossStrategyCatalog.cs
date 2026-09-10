@@ -85,6 +85,9 @@ namespace Chaite.Core
         public float FloorClearance;
         public int HorizontalIntent;
         public int VerticalIntent;
+        // Zero is an intentional coast/no-jump command for source-specific
+        // controllers, not an invitation to infer a generic orbit direction.
+        public bool UseExplicitMovement;
         public bool PreferDash;
         public bool AllowHook;
         public bool AllowGravityFlip;
@@ -489,15 +492,227 @@ namespace Chaite.Core
 
     internal sealed class KingSlimeStrategy : BossStrategyBase
     {
-        public KingSlimeStrategy() : base("king-slime", 700, 220, 4f) { }
+        private int _kingKey = -1;
+        private int _runDirection;
+        private int _crossDirection;
+        private int _teleportDirection;
+        private int _lastStage = -1;
+        private bool _crossing;
+        private bool _crossedThisJump;
+
+        // Ground-runway policy, not the separate raised-platform/rope strategy.
+        // These entry margins are conservative policy thresholds, not a victory proof.
+        public KingSlimeStrategy() : base("king-slime", 1000, 280, 5.5f) { }
         public override bool Matches(IList<TargetSnapshot> b, DifficultySnapshot d) => HasType(b, 50);
         public override BossDecision Evaluate(CombatSnapshot s, BossMemory m)
         {
-            var t = Pick(s, 50);
-            var close = Math.Abs(t.Center.X - s.Player.Center.X) < 180f;
-            var teleport = t.Invulnerable || (Math.Abs(t.Velocity.X) < .1f && Math.Abs(t.Velocity.Y) < .1f && m.PhaseTicks > 20);
-            return Decision(s, t, teleport ? "teleport" : close ? "jump-over" : Life(t) < .5f ? "fast-hops" : "hops",
-                BossPattern.HorizontalKite, 330, -35, AwayX(s.Player, t), close ? 1 : 0, close, true, false, 38);
+            var king = Pick(s, 50);
+            var player = s.Player;
+            if (m.PreviousTargetKey < 0 || _kingKey != king.Key)
+            {
+                _kingKey = king.Key;
+                _runDirection = AwayX(player, king);
+                _crossing = false;
+                _crossedThisJump = false;
+                _crossDirection = 0;
+                _teleportDirection = 0;
+                _lastStage = -1;
+            }
+            var stage = (int)king.Ai1;
+            var dx = player.Center.X - king.Center.X;
+            var contact = (player.Width + king.Width) * .5f + 32f;
+            var gap = Math.Abs(dx);
+            var ideal = 340f;
+            if (s.Weapon != null && s.Weapon.NativeProfileRequired && s.Weapon.Profile.IsSupported)
+                ideal = Math.Min(ideal, Math.Max(180f, s.Weapon.Profile.ConservativeRangePixels * .65f));
+            var target = SelectPressureTarget(s, king);
+            string phase;
+            int horizontal;
+
+            // Native ai[1], NOT stationary velocity or dontTakeDamage, identifies
+            // the 60-tick shrink / 30-tick reform stages in singleplayer.
+            if (stage == 5)
+            {
+                _crossing = false;
+                if (_lastStage != 5)
+                {
+                    _teleportDirection = _runDirection;
+                    if (king.LocalAiKnown)
+                    {
+                        var destinationDelta = player.Center.X - king.LocalAi1;
+                        if (Math.Abs(destinationDelta) > 8f)
+                            _teleportDirection = Math.Sign(destinationDelta);
+                    }
+                }
+                phase = king.LocalAiKnown ? "teleport-leave-known-destination" : "teleport-destination-unobserved";
+                horizontal = KeepInsideObservedLane(s, _teleportDirection);
+                _runDirection = _teleportDirection;
+            }
+            else if (stage == 6)
+            {
+                _crossing = false;
+                if (_lastStage != 6 || gap > contact)
+                    _runDirection = AwayX(player, king);
+                phase = "teleport-reform-regain-gap";
+                horizontal = gap < ideal ? KeepInsideObservedLane(s, _runDirection) : 0;
+            }
+            else
+            {
+                var airborne = Math.Abs(king.Velocity.Y) > .1f;
+                // ai[1] resets to zero at the HIGH launch, ai[0] to -200. A
+                // newly spawned falling King with ai[1]==0 is not a high jump.
+                var highJump = airborne && stage == 0 && king.Ai0 <= -150f;
+                if (!highJump) _crossedThisJump = false;
+                if (_crossing)
+                {
+                    if (dx * _crossDirection >= contact)
+                    {
+                        _runDirection = _crossDirection;
+                        _crossing = false;
+                    }
+                    else if (Math.Abs(dx) > contact && !CanRunUnder(s, king, _crossDirection, false))
+                    {
+                        // Before entering the hitbox corridor, a lost opening is
+                        // cancellable. Once underneath, keep the committed exit;
+                        // the immediate collision layer can still override it.
+                        _crossing = false;
+                    }
+                }
+                if (!_crossing && gap > contact)
+                    _runDirection = AwayX(player, king);
+                var remainingLane = LaneRemaining(s, _runDirection);
+                if (!_crossing && !_crossedThisJump && highJump && (remainingLane < 650f || gap < contact + 80f) &&
+                    CanRunUnder(s, king, -_runDirection, true))
+                {
+                    _crossDirection = -_runDirection;
+                    _crossing = true;
+                    _crossedThisJump = true;
+                }
+                if (_crossing)
+                {
+                    phase = "high-jump-committed-run-under";
+                    horizontal = _crossDirection;
+                }
+                else
+                {
+                    phase = NativeHopPhase(king, airborne, highJump);
+                    var predictedGap = gap - Math.Max(0f, king.Velocity.X * _runDirection) * 18f;
+                    var pressure = target.Type == 535;
+                    // Coast/fire at a useful range, saving the finite runway for
+                    // later cycles. Do not jump merely to match Boss center Y.
+                    horizontal = predictedGap < ideal || pressure ? _runDirection : 0;
+                    if (remainingLane < 48f && gap > contact + 48f) horizontal = 0;
+                    horizontal = KeepInsideObservedLane(s, horizontal);
+                }
+            }
+            _lastStage = stage;
+            var visible = target.LineOfSightKnown ? target.HasLineOfSight : target.Key == king.Key && s.LineOfSightToPrimary;
+            var inRange = s.Weapon == null || !s.Weapon.NativeProfileRequired || !s.Weapon.Profile.IsSupported ||
+                Vec2.DistanceSquared(target.Center, player.Center) <=
+                    s.Weapon.Profile.ConservativeRangePixels * s.Weapon.Profile.ConservativeRangePixels;
+            var decision = Decision(s, target, phase, BossPattern.Runway, ideal, 0f,
+                horizontal, 0, false, false, false, 32f,
+                visible && inRange && target.Life > 0 && target.Chaseable, king);
+            decision.Directive.UseExplicitMovement = true;
+            decision.Directive.ForceContinuousMovement = horizontal != 0;
+            // Ordinary classic/expert/master have the same native hop program.
+            // Actual body dimensions and actual spawned 535s carry the differences;
+            // don't inflate the useful weapon distance merely from a mode suffix.
+            decision.Directive.IdealDistance = ideal;
+            return decision;
+        }
+
+        private static string NativeHopPhase(TargetSnapshot king, bool airborne, bool highJump)
+        {
+            var stage = (int)king.Ai1;
+            if (airborne)
+                return highJump ? "high-jump-wait-for-clearance" : stage == 3 ? "short-hop-retreat" : "normal-hop-retreat";
+            // Match native AI_015_KingSlime: conv.r4 life, conv.r4 lifeMax,
+            // ldc.r4 threshold, mul, bge.un. Dividing life by lifeMax changes
+            // exact boundary behavior on the supported x86/x87 runtime.
+            var life = (float)king.Life;
+            var maximum = (float)king.LifeMax;
+            var countdown = 2f + (life < maximum * .8f ? 1f : 0f) + (life < maximum * .6f ? 1f : 0f) +
+                (life < maximum * .4f ? 2f : 0f) + (life < maximum * .2f ? 3f : 0f) + (life < maximum * .1f ? 4f : 0f);
+            var imminent = king.Ai0 >= -30f || -king.Ai0 <= countdown * 12f;
+            if (stage == 3) return imminent ? "ground-high-windup" : "ground-high-wait";
+            if (stage == 2) return imminent ? "ground-short-windup" : "ground-short-wait";
+            return imminent ? "ground-normal-windup" : "ground-normal-wait";
+        }
+
+        private static TargetSnapshot SelectPressureTarget(CombatSnapshot s, TargetSnapshot king)
+        {
+            if (!s.Difficulty.Expert && !s.Difficulty.Master) return king;
+            var result = king;
+            var nearest = 240f * 240f;
+            for (var i = 0; i < s.Targets.Count; i++)
+            {
+                var target = s.Targets[i];
+                if (target.Type != 535 || target.Life <= 0 || target.Invulnerable || !target.Chaseable ||
+                    !target.LineOfSightKnown || !target.HasLineOfSight) continue;
+                var distance = Vec2.DistanceSquared(s.Player.Center, target.Center);
+                if (distance >= nearest) continue;
+                nearest = distance;
+                result = target;
+            }
+            return result;
+        }
+
+        private static float LaneRemaining(CombatSnapshot s, int direction)
+        {
+            var player = s.Player;
+            var clearance = direction > 0 ? s.Arena.ClearanceRight : s.Arena.ClearanceLeft;
+            var support = s.Arena.FloorSupport;
+            if (!s.Mobility.GravityInverted && support.ContainsBody(player.Position.X, player.Width))
+                clearance = Math.Min(clearance, direction > 0 ? support.Right - player.Position.X - player.Width : player.Position.X - support.Left);
+            return Math.Max(0f, clearance);
+        }
+
+        private static int KeepInsideObservedLane(CombatSnapshot s, int direction)
+        {
+            if (direction == 0) return 0;
+            // A zero command brakes instead of reversing blindly through King.
+            var speed = Math.Max(0f, s.Player.Velocity.X * direction);
+            // Ice/slowing effects can make native slowdown far below .08. A
+            // convenience floor would dangerously invent extra braking power.
+            var braking = speed * speed / (2f * Math.Max(.000001f, s.Player.RunSlowdown));
+            return LaneRemaining(s, direction) < Math.Max(20f, braking + 12f) ? 0 : direction;
+        }
+
+        private static bool CanRunUnder(CombatSnapshot s, TargetSnapshot king, int direction, bool starting)
+        {
+            var player = s.Player;
+            var floor = s.Arena.FloorSupport;
+            if (!player.OnGround || s.Mobility.GravityInverted || s.Mobility.Grappling ||
+                !floor.Valid || floor.Inverted || !floor.ContainsBody(player.Position.X, player.Width) ||
+                Math.Abs(floor.SurfaceY - player.Position.Y - player.Height) > 6f ||
+                s.Arena.HasCeiling && s.Arena.ClearanceUp < 320f ||
+                s.Difficulty.ForTheWorthy || s.Difficulty.Zenith || s.Difficulty.Remix) return false;
+            var bottom = king.Position.Y + king.Height;
+            if (starting && (king.Velocity.Y >= -1f || bottom > player.Position.Y - 48f)) return false;
+            var x = player.Position.X;
+            var vx = player.Velocity.X;
+            var kingX = king.Center.X;
+            var vy = king.Velocity.Y;
+            var halfContact = (player.Width + king.Width) * .5f + 32f;
+            var mountedSpeed = s.Mobility.MountActive ? s.Mobility.MountRunSpeed : 0f;
+            // Bounded scalar rollout only: no search tree, allocations, tiles or
+            // RNG. Ordinary dry King gravity is <= .3, fall speed <= 10. Ceiling
+            // collisions remain an explicit unverified-world limitation.
+            for (var tick = 0; tick < 72; tick++)
+            {
+                float travel;
+                vx = HorizontalMotion.Advance(player, vx, direction, true, 1, out travel, mountedSpeed);
+                x += travel;
+                if (!floor.ContainsBody(x, player.Width)) return false;
+                kingX += king.Velocity.X;
+                vy = Math.Min(10f, vy + .3f);
+                bottom += vy;
+                var separation = x + player.Width * .5f - kingX;
+                if (Math.Abs(separation) < halfContact && bottom > player.Position.Y - 32f) return false;
+                if (separation * direction >= halfContact) return true;
+            }
+            return false;
         }
     }
 

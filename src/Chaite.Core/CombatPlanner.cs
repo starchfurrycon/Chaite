@@ -46,6 +46,7 @@ namespace Chaite.Core
 
         public bool RequirementsMet(CombatSnapshot snapshot, out string reason)
         {
+            if (!WeaponProfileReady(snapshot, out reason)) return false;
             var requirements = _strategies.RequirementsFor(snapshot);
             if (requirements == null)
             {
@@ -57,6 +58,7 @@ namespace Chaite.Core
 
         public bool RequirementsMetForExpected(CombatSnapshot snapshot, string planId, int expectedBossType, out string reason)
         {
+            if (!WeaponProfileReady(snapshot, out reason)) return false;
             BossRequirements requirements;
             if (!string.IsNullOrEmpty(planId) && planId.IndexOf("mechdusa", StringComparison.OrdinalIgnoreCase) >= 0)
                 requirements = _strategies.RequirementsForExpected(snapshot.Difficulty, 125, 127, 134);
@@ -87,7 +89,7 @@ namespace Chaite.Core
             PrepareThreats(snapshot, directive);
             var patternHorizontal = PatternHorizontal(snapshot, patternTarget, directive);
             var patternVertical = PatternVertical(snapshot, patternTarget, directive);
-            RespectArenaEdges(snapshot, ref patternHorizontal, ref patternVertical);
+            RespectArenaEdges(snapshot, ref patternHorizontal, ref patternVertical, directive.UseExplicitMovement);
             BudgetFlight(snapshot, ref patternHorizontal, ref patternVertical);
 
             var best = FindBestCandidate(snapshot, patternTarget, directive, patternHorizontal, patternVertical);
@@ -133,7 +135,10 @@ namespace Chaite.Core
             plan.StrategyId = directive.StrategyId;
             plan.PhaseId = directive.PhaseId;
 
-            if (mode == TacticalMode.RecoverToPattern && stuck)
+            // Source-specific controllers (e.g. a committed King run-under)
+            // must keep the scored escape, not receive an unscored reversal/jump
+            // afterwards. FindBestCandidate already expands for stuck states.
+            if (mode == TacticalMode.RecoverToPattern && stuck && !directive.UseExplicitMovement)
             {
                 plan.Horizontal = _lastHorizontal == 0 ? _patternDirection : -_lastHorizontal;
                 plan.Jump = true;
@@ -143,9 +148,7 @@ namespace Chaite.Core
                         (directive.PreferDash || mode == TacticalMode.EmergencyEvade || mode == TacticalMode.RecoverToPattern);
             ApplyMobilityTools(snapshot, directive, mode, ref plan);
 
-            plan.Fire = directive.Fire && CanFireAt(snapshot, target);
-            plan.AimWorld = InterceptSolver.PredictAim(snapshot.Player.Center, target.Center, target.Velocity,
-                snapshot.Weapon.IsProjectile ? snapshot.Weapon.ShootSpeed : 0f);
+            ApplyWeaponAim(snapshot, target, directive.Fire, ref plan);
             ApplyConsumables(snapshot, ref plan);
             RememberPlan(plan);
             return plan;
@@ -204,9 +207,7 @@ namespace Chaite.Core
             plan.TacticalMode = TacticalMode.AwaitingBoss;
             plan.StrategyId = directive.StrategyId;
             plan.PhaseId = directive.PhaseId;
-            plan.Fire = hasTarget && CanFireAt(snapshot, target);
-            plan.AimWorld = InterceptSolver.PredictAim(snapshot.Player.Center, target.Center, target.Velocity,
-                snapshot.Weapon.IsProjectile ? snapshot.Weapon.ShootSpeed : 0f);
+            ApplyWeaponAim(snapshot, target, hasTarget, ref plan);
             plan.Dash = snapshot.Mobility.CanDash && snapshot.Mobility.DashReady && plan.Horizontal != 0 &&
                         best.Score >= _settings.EmergencyRiskThreshold;
             ApplyMobilityTools(snapshot, directive, TacticalMode.AwaitingBoss, ref plan);
@@ -266,6 +267,8 @@ namespace Chaite.Core
 
         private int PatternHorizontal(CombatSnapshot snapshot, TargetSnapshot target, BossDirective directive)
         {
+            if (directive.UseExplicitMovement)
+                return ClampIntent(directive.HorizontalIntent);
             if (_directionHoldTicks > 0 && directive.Pattern != BossPattern.PerpendicularDashDodge)
                 return _patternDirection;
 
@@ -316,6 +319,8 @@ namespace Chaite.Core
         private int PatternVertical(CombatSnapshot snapshot, TargetSnapshot target, BossDirective directive)
         {
             var gravitySign = snapshot.Mobility.GravityInverted ? -1 : 1;
+            if (directive.UseExplicitMovement)
+                return ClampIntent(directive.VerticalIntent) * gravitySign;
             if (directive.VerticalIntent != 0)
                 return ClampIntent(directive.VerticalIntent) * gravitySign;
 
@@ -332,19 +337,28 @@ namespace Chaite.Core
             return 0;
         }
 
-        private void RespectArenaEdges(CombatSnapshot snapshot, ref int horizontal, ref int vertical)
+        private void RespectArenaEdges(CombatSnapshot snapshot, ref int horizontal, ref int vertical, bool explicitMovement = false)
         {
             var arena = snapshot.Arena;
             // Start a turn early enough to brake, instead of steering into a dead end
             // and hoping the immediate evasion layer can undo accumulated momentum.
             var speed = Math.Abs(snapshot.Player.Velocity.X);
+            var braking = explicitMovement ? Math.Max(.000001f, snapshot.Player.RunSlowdown) :
+                Math.Max(.08f, snapshot.Player.RunAcceleration);
             var turnMargin = _settings.ArenaEdgeMarginPixels + speed * speed /
-                (2f * Math.Max(.08f, snapshot.Player.RunAcceleration)) + speed * _settings.DirectionHysteresisTicks;
-            turnMargin = Math.Min(turnMargin, Math.Max(_settings.ArenaEdgeMarginPixels, arena.HorizontalClearance * .42f));
+                (2f * braking) + speed * _settings.DirectionHysteresisTicks;
+            if (!explicitMovement)
+                turnMargin = Math.Min(turnMargin, Math.Max(_settings.ArenaEdgeMarginPixels, arena.HorizontalClearance * .42f));
             if (arena.ClearanceLeft < turnMargin && horizontal < 0)
-                ReversePattern(1, ref horizontal);
+            {
+                if (explicitMovement) horizontal = 0;
+                else ReversePattern(1, ref horizontal);
+            }
             else if (arena.ClearanceRight < turnMargin && horizontal > 0)
-                ReversePattern(-1, ref horizontal);
+            {
+                if (explicitMovement) horizontal = 0;
+                else ReversePattern(-1, ref horizontal);
+            }
 
             var worldVertical = vertical * (snapshot.Mobility.GravityInverted ? -1 : 1);
             if (arena.ClearanceUp < _settings.ArenaVerticalMarginPixels && worldVertical > 0)
@@ -884,6 +898,38 @@ namespace Chaite.Core
         {
             return target.Life > 0 && !target.Invulnerable && snapshot.Weapon.IsUsable && snapshot.Weapon.HasAmmo &&
                 (target.LineOfSightKnown ? target.HasLineOfSight : snapshot.LineOfSightToPrimary);
+        }
+
+        private static bool WeaponProfileReady(CombatSnapshot snapshot, out string reason)
+        {
+            var weapon = snapshot?.Weapon;
+            if (weapon != null && weapon.NativeProfileRequired && weapon.Profile.Status != WeaponProfileStatus.Supported)
+            {
+                reason = weapon.Profile.Reason;
+                return false;
+            }
+            reason = null;
+            return true;
+        }
+
+        private static void ApplyWeaponAim(CombatSnapshot snapshot, TargetSnapshot target, bool requested, ref ControlPlan plan)
+        {
+            if (snapshot.Weapon.NativeProfileRequired)
+            {
+                var shot = WeaponAimSolver.Solve(snapshot.Weapon.Profile, snapshot.Player.Center, target.Center, target.Velocity);
+                plan.AimWorld = shot.AimWorld;
+                plan.Fire = requested && shot.CanFire && CanFireAt(snapshot, target);
+                // Report unsupported equipment, not ordinary momentary LOS/range
+                // misses. Never emit a message every frame or interrupt a Boss.
+                if (snapshot.Weapon.Profile.Status != WeaponProfileStatus.Supported)
+                    plan.WeaponIssue = snapshot.Weapon.Profile.Reason;
+            }
+            else
+            {
+                plan.Fire = requested && CanFireAt(snapshot, target);
+                plan.AimWorld = InterceptSolver.PredictAim(snapshot.Player.Center, target.Center, target.Velocity,
+                    snapshot.Weapon.IsProjectile ? snapshot.Weapon.ShootSpeed : 0f);
+            }
         }
 
         private static float TargetScore(TargetSnapshot target, Vec2 player)

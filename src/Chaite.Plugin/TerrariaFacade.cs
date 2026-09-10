@@ -55,6 +55,7 @@ namespace Chaite.Plugin
         private readonly Func<object, int> _whoAmI;
         private readonly Func<object, int> _npcRealLife;
         private readonly Func<object, float[]> _npcAi;
+        private readonly Func<object, float[]> _npcLocalAi;
 
         private readonly Func<object, int> _width;
         private readonly Func<object, int> _height;
@@ -69,6 +70,8 @@ namespace Chaite.Plugin
         private readonly Func<object, int> _projectileTimeLeft;
         private readonly Func<object, int> _projectileExtraUpdates;
         private readonly Func<object, object, object> _pickAmmoItem;
+        private readonly Func<object, object, int> _weaponDamage;
+        private readonly Func<object, object, float> _weaponDamageMultiplier;
         private readonly Func<int, object> _projectileSample;
         private readonly Func<object, int> _projectileTypeId;
         private readonly Func<object, int> _projectileOwner;
@@ -146,6 +149,8 @@ namespace Chaite.Plugin
         private readonly FieldInfo _itemFavoritedField;
         private readonly Func<object, int> _itemDamage;
         private readonly Func<object, int> _itemUseTime;
+        private readonly Func<object, int> _itemUseAnimation;
+        private readonly Func<object, int> _itemReuseDelay;
         private readonly Func<object, bool> _itemAutoReuse;
         private readonly Func<object, bool> _itemChannel;
         private readonly Func<object, int> _itemUseStyle;
@@ -195,6 +200,7 @@ namespace Chaite.Plugin
         private readonly EncounterObservation _observation = new EncounterObservation();
         private readonly List<int> _activeBossKeys = new List<int>(32);
         private readonly TargetSightCache _sightCache = new TargetSightCache();
+        private readonly WeaponSnapshot _weaponSelectionSnapshot = new WeaponSnapshot();
         private int _sightFrame;
         private int _sightQueryBudget;
 
@@ -267,6 +273,7 @@ namespace Chaite.Plugin
             _whoAmI = ReflectionAccess.Getter<int>(entityType, "whoAmI");
             _npcRealLife = ReflectionAccess.Getter<int>(npcType, "realLife");
             _npcAi = ReflectionAccess.Getter<float[]>(npcType, "ai");
+            _npcLocalAi = ReflectionAccess.Getter<float[]>(npcType, "localAI");
 
             _width = ReflectionAccess.Getter<int>(entityType, "width");
             _height = ReflectionAccess.Getter<int>(entityType, "height");
@@ -281,6 +288,10 @@ namespace Chaite.Plugin
             _projectileTimeLeft = ReflectionAccess.Getter<int>(projectileType, "timeLeft");
             _projectileExtraUpdates = ReflectionAccess.Getter<int>(projectileType, "extraUpdates");
             _pickAmmoItem = ReflectionAccess.MethodGetterWithArgument<object>(playerType, "PickAmmo_PickAmmoItem", itemType);
+            // Metadata-audited pure arithmetic/getters in the hash-locked build.
+            // Unlike PickAmmo, these do not consume RNG or ammunition.
+            _weaponDamage = ReflectionAccess.MethodGetterWithArgument<int>(playerType, "GetWeaponDamage", itemType);
+            _weaponDamageMultiplier = ReflectionAccess.MethodGetterWithArgument<float>(playerType, "GetWeaponDamageMultiplier", itemType);
             _projectileSample = ReflectionAccess.StaticIntDictionaryValueGetter(game.GetType("Terraria.ID.ContentSamples", true), "ProjectilesByType");
             _projectileTypeId = ReflectionAccess.Getter<int>(projectileType, "type");
             _projectileOwner = ReflectionAccess.Getter<int>(projectileType, "owner");
@@ -366,6 +377,8 @@ namespace Chaite.Plugin
             _itemFavoritedField = ReflectionAccess.Field(itemType, "favorited");
             _itemDamage = ReflectionAccess.Getter<int>(itemType, "damage");
             _itemUseTime = ReflectionAccess.Getter<int>(itemType, "useTime");
+            _itemUseAnimation = ReflectionAccess.Getter<int>(itemType, "useAnimation");
+            _itemReuseDelay = ReflectionAccess.Getter<int>(itemType, "reuseDelay");
             _itemAutoReuse = ReflectionAccess.Getter<bool>(itemType, "autoReuse");
             _itemChannel = ReflectionAccess.Getter<bool>(itemType, "channel");
             _itemUseStyle = ReflectionAccess.Getter<int>(itemType, "useStyle");
@@ -637,6 +650,7 @@ namespace Chaite.Plugin
                 if (distanceSquared <= maxTargetDistanceSquared)
                 {
                     var ai = _npcAi(npc);
+                    var localAi = _npcLocalAi(npc);
                     bool visible;
                     var known = _sightCache.TryGet(_whoAmI(npc), _npcTypeId(npc), playerCenter, center, _sightFrame, out visible);
                     snapshot.Targets.Add(new TargetSnapshot
@@ -655,7 +669,10 @@ namespace Chaite.Plugin
                         Invulnerable = _npcInvulnerable(npc),
                         LineOfSightKnown = known,
                         HasLineOfSight = visible,
-                        Ai0 = Ai(ai, 0), Ai1 = Ai(ai, 1), Ai2 = Ai(ai, 2), Ai3 = Ai(ai, 3)
+                        Ai0 = Ai(ai, 0), Ai1 = Ai(ai, 1), Ai2 = Ai(ai, 2), Ai3 = Ai(ai, 3),
+                        LocalAiKnown = localAi != null && localAi.Length >= 3 && localAi[1] > 0f && localAi[2] > 0f &&
+                            !float.IsInfinity(localAi[1]) && !float.IsInfinity(localAi[2]),
+                        LocalAi1 = Ai(localAi, 1), LocalAi2 = Ai(localAi, 2)
                     });
                 }
                 var npcVelocity = new Vec2(_velocityX(npc), _velocityY(npc));
@@ -1160,7 +1177,8 @@ namespace Chaite.Plugin
             var weaponSlot = FindBestWeaponSlot(player);
             SetSelectedItem(player, weaponSlot);
             var items = _inventory(player);
-            var weapon = ReadWeapon(player, items, weaponSlot);
+            var weapon = _weaponSelectionSnapshot;
+            ReadWeaponInto(player, items, weaponSlot, weapon);
             var target = new TargetSnapshot
             {
                 Position = new Vec2(_positionX(lacewing), _positionY(lacewing)),
@@ -1170,10 +1188,10 @@ namespace Chaite.Plugin
             };
             var playerCenter = new Vec2(_positionX(player) + _width(player) * .5f, _positionY(player) + _height(player) * .5f);
             ClearCombatControls(player);
-            AimAt(player, InterceptSolver.PredictAim(playerCenter, target.Center, target.Velocity,
-                weapon.IsProjectile ? weapon.ShootSpeed : 0f));
-            var firingItem = items[weaponSlot];
-            SetControl(player, "controlUseItem", firingItem != null && SummonActionGate.ShouldFire(
+            var shot = WeaponAimSolver.Solve(weapon.Profile, playerCenter, target.Center, target.Velocity);
+            AimAt(player, shot.AimWorld);
+            var firingItem = weaponSlot >= 0 && weaponSlot < items.Length ? items[weaponSlot] : null;
+            SetControl(player, "controlUseItem", shot.CanFire && firingItem != null && _canHitLine(player, lacewing) && SummonActionGate.ShouldFire(
                 weapon.IsUsable, weapon.HasAmmo, GetSelectedItem(player) == weaponSlot,
                 _itemAutoReuse(firingItem), _itemChannel(firingItem), _releaseUseItem(player)));
             return new BossStartTick { Issued = true, StillValid = tick <= plan.TimeoutTicks, ControlsApplied = true };
@@ -1301,10 +1319,11 @@ namespace Chaite.Plugin
             var items = _inventory(player);
             var current = GetSelectedItem(player);
             var best = current >= 0 && current < 10 ? current : 0;
-            var bestScore = WeaponScore(items, best);
+            var bestScore = WeaponScore(player, items, best);
             for (var slot = 0; slot < Math.Min(10, items.Length); slot++)
             {
-                var score = WeaponScore(items, slot);
+                if (slot == best) continue;
+                var score = WeaponScore(player, items, slot);
                 if (score > bestScore * 1.08f)
                 {
                     best = slot;
@@ -1351,7 +1370,8 @@ namespace Chaite.Plugin
                 int slot = GetSelectedItem(player);
                 var weapon = slot >= 0 && slot < inventory.Length ? inventory[slot] : null;
                 bool hold = weapon != null && (_itemAutoReuse(weapon) || _itemChannel(weapon) || _releaseUseItem(player));
-                SetControl(player, "controlUseItem", plan.Fire && visible && hold);
+                SetControl(player, "controlUseItem", WeaponActionGate.ShouldFire(plan.Fire,
+                    plan.PreferredWeaponSlot, slot, _requestedSelection) && visible && hold);
             }
         }
 
@@ -1494,7 +1514,7 @@ namespace Chaite.Plugin
             return Math.Max(0f, Math.Min(1f, Math.Max(wing, rocket)));
         }
 
-        private float WeaponScore(object[] items, int slot)
+        private float WeaponScore(object player, object[] items, int slot)
         {
             if (slot < 0 || slot >= items.Length || items[slot] == null)
                 return 0f;
@@ -1505,16 +1525,9 @@ namespace Chaite.Plugin
             // every spear/yoyo/minion or other short-range projectile is supported.
             if (!IsCombatWeapon(item) || _itemShoot(item) <= 0)
                 return 0f;
-            int ammo = _itemUseAmmo(item);
-            if (ammo != 0 && !HasAmmo(items, ammo)) return 0f;
-            return _itemDamage(item) * 60f / _itemUseTime(item) * (_itemShoot(item) > 0 ? 1.18f : 1f);
-        }
-
-        private WeaponSnapshot ReadWeapon(object player, object[] items, int slot)
-        {
-            var result = new WeaponSnapshot();
-            ReadWeaponInto(player, items, slot, result);
-            return result;
+            ReadWeaponInto(player, items, slot, _weaponSelectionSnapshot);
+            return _weaponSelectionSnapshot.Profile.Status == WeaponProfileStatus.Supported ?
+                _weaponSelectionSnapshot.ApproximateDps : 0f;
         }
 
         private bool IsCombatWeapon(object item) => item != null && _itemTypeId(item) > 0 && _itemStack(item) > 0 &&
@@ -1527,6 +1540,9 @@ namespace Chaite.Plugin
             weapon.Damage = 0;
             weapon.UseTime = 1;
             weapon.ShootSpeed = 0;
+            weapon.NativeProfileRequired = true;
+            weapon.WeaponId = weapon.AmmoId = 0;
+            weapon.Profile = WeaponProfileCatalog.Evaluate(default(WeaponProfileInput));
             weapon.IsProjectile = weapon.IsMelee = weapon.HasAmmo = weapon.IsUsable = false;
             if (slot < 0 || slot >= items.Length || items[slot] == null)
                 return;
@@ -1540,21 +1556,51 @@ namespace Chaite.Plugin
             weapon.IsMelee = shoot <= 0;
             weapon.HasAmmo = useAmmo == 0 || HasAmmo(items, useAmmo);
             weapon.IsUsable = IsCombatWeapon(item);
-            // Verified standard-bullet paths. Other weapons keep their previous
-            // approximation until their ammo conversions/ballistics are verified.
             int itemType = _itemTypeId(item);
-            if ((itemType == 98 || itemType == 434) && useAmmo == 97)
+            weapon.WeaponId = itemType;
+            var input = new WeaponProfileInput
             {
+                WeaponId = itemType,
+                WeaponShootSpeed = _itemShootSpeed(item),
+                WeaponDamageAfterModifiers = weapon.IsUsable ? _weaponDamage(player, item) : 0,
+                UseTime = weapon.UseTime,
+                UseAnimation = _itemUseAnimation(item),
+                ReuseDelay = _itemReuseDelay(item),
+                // Ordinary gun shooting runs AFTER ItemCheck decrements the
+                // existing/new animation. Zero is catalog's new-animation case.
+                AnimationRemainingAtShot = GetSelectedItem(player) == slot && _playerItemAnimation(player) > 0 ?
+                    Math.Max(0, _playerItemAnimation(player) - 1) : 0,
+                ProjectileId = shoot,
+                HasAmmo = weapon.HasAmmo
+            };
+            if (weapon.IsUsable && useAmmo != 0)
+            {
+                // Native priority includes cycling/equipped ammo; an inventory
+                // scan is not an adequate substitute. This selector is read-only.
                 var ammo = _pickAmmoItem(player, item);
                 weapon.HasAmmo = ammo != null && _itemStack(ammo) > 0;
                 if (weapon.HasAmmo)
                 {
-                    int shotType = _itemShoot(ammo);
-                    var sample = _projectileSample(shotType);
-                    int extra = sample != null ? _projectileExtraUpdates(sample) :
-                        shotType == 14 || shotType == 89 ? 1 : shotType == 104 || shotType == 279 ? 2 : shotType == 242 ? 7 : 0;
-                    weapon.ShootSpeed = Math.Max(0f, _itemShootSpeed(item) + _itemShootSpeed(ammo)) * Math.Max(1, extra + 1);
+                    input.AmmoId = weapon.AmmoId = _itemTypeId(ammo);
+                    input.AmmoShootSpeed = _itemShootSpeed(ammo);
+                    input.AmmoBaseDamage = _itemDamage(ammo);
+                    input.AmmoDamageMultiplier = _weaponDamageMultiplier(player, ammo);
+                    input.ProjectileId = _itemShoot(ammo);
                 }
+                input.HasAmmo = weapon.HasAmmo;
+            }
+            var sample = _projectileSample(input.ProjectileId);
+            // Exact audited defaults only for the two supported bullet IDs.
+            // Never create projectiles or initialize ContentSamples while reading.
+            input.ProjectileExtraUpdates = sample != null ? _projectileExtraUpdates(sample) :
+                input.ProjectileId == 14 || input.ProjectileId == 89 ? 1 : 0;
+            input.ProjectileLifetimeSubupdates = sample != null ? _projectileTimeLeft(sample) :
+                input.ProjectileId == 14 || input.ProjectileId == 89 ? 600 : 0;
+            weapon.Profile = WeaponProfileCatalog.Evaluate(input);
+            if (weapon.Profile.Status == WeaponProfileStatus.Supported)
+            {
+                weapon.Damage = weapon.Profile.DirectDamage;
+                weapon.ShootSpeed = weapon.Profile.SpeedPixelsPerTick;
             }
         }
 

@@ -31,6 +31,7 @@ namespace Chaite.Plugin
         private static long _timingMaximum;
         private static int _timingFrames;
         private static bool _expectedBossKilled;
+        private static int _weaponIssueCooldown;
 
         public static void Tick(object player, int playerIndex)
         {
@@ -43,6 +44,7 @@ namespace Chaite.Plugin
                 if (!_game.IsLocalPlayer(player, playerIndex))
                     return;
                 _game.BeginInputFrame();
+                if (_weaponIssueCooldown > 0) _weaponIssueCooldown--;
                 _pendingInput = false;
                 _frameApplied = false;
                 _pendingPlayer = player;
@@ -84,7 +86,7 @@ namespace Chaite.Plugin
                     observation.RequirePreparation = true;
                     if (_startPlan != null)
                     {
-                        var preflight = _game.BuildCombatSnapshot(player, true);
+                        var preflight = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
                         string reason;
                         var ready = _planner.RequirementsMetForExpected(preflight, _startPlan.Id, _startPlan.ExpectedBossType, out reason);
                         if (!ready)
@@ -171,6 +173,11 @@ namespace Chaite.Plugin
                 SelectCombatWeapon(player);
                 var snapshot = _game.BuildCombatSnapshot(player);
                 var plan = _planner.Plan(snapshot);
+                if (!string.IsNullOrEmpty(plan.WeaponIssue) && _weaponIssueCooldown == 0)
+                {
+                    _game.Chat("自动射击暂停：" + plan.WeaponIssue + "；仍在避险，F9 可归还操作。", 255, 155, 110);
+                    _weaponIssueCooldown = 600;
+                }
                 _game.ApplyPlan(player, plan);
                 _frameApplied = true;
             }
@@ -311,7 +318,14 @@ namespace Chaite.Plugin
         private static void SelectCombatWeapon(object player)
         {
             if (!_config.AutoSwitchWeapon)
+            {
+                // Summoning still temporarily changes slots. With automatic
+                // ranking disabled, return to the exact weapon checked at entry
+                // instead of leaving the character holding the summon forever.
+                if (_originalWeapon >= 0 && _originalWeapon < 10 && _game.GetSelectedItem(player) != _originalWeapon)
+                    _game.SetSelectedItem(player, _originalWeapon);
                 return;
+            }
             var best = _game.FindBestWeaponSlot(player);
             if (best != _game.GetSelectedItem(player))
                 _game.SetSelectedItem(player, best);
@@ -325,6 +339,7 @@ namespace Chaite.Plugin
             _startTicks = 0;
             _summonIssued = false;
             _expectedBossKilled = false;
+            _weaponIssueCooldown = 0;
             _planner?.Reset();
             _game?.ResetBossStart();
         }

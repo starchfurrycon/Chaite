@@ -26,6 +26,9 @@
     <Compile Include="SupportTests.cs" />
     <Compile Include="PlannerBenchmarks.cs" />
     <Compile Include="ReflectionTests.cs" />
+    <Compile Include="WeaponProfileTests.cs" />
+    <Compile Include="WeaponActionGateTests.cs" />
+    <Compile Include="KingSlimeStrategyTests.cs" />
     <Compile Include="TransactionTests.cs" />
     <Compile Include="PatcherTests.cs" />
   </ItemGroup>

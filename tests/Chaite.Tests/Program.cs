@@ -48,6 +48,9 @@ namespace Chaite.Tests
             RunMobilityRegressions();
             RunSupportRegressions();
             RunReflectionRegressions();
+            RunWeaponProfileRegressions();
+            RunWeaponActionGateRegressions();
+            RunKingSlimeRegressions();
             RunTransactionRegressions();
             RunPatcherRegressions();
 

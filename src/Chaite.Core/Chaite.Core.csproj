@@ -24,6 +24,8 @@
     <Compile Include="Models.cs" />
     <Compile Include="PlannerSettings.cs" />
     <Compile Include="InterceptSolver.cs" />
+    <Compile Include="WeaponProfileCatalog.cs" />
+    <Compile Include="WeaponAimSolver.cs" />
     <Compile Include="BossStrategyCatalog.cs" />
     <Compile Include="BossStartPlanner.cs" />
     <Compile Include="CombatPlanner.cs" />

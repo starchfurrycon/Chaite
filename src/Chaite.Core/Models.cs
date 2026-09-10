@@ -230,7 +230,16 @@ namespace Chaite.Core
         public bool HasAmmo;
         public bool IsUsable;
 
-        public float ApproximateDps => IsUsable && UseTime > 0 ? Damage * 60f / UseTime : 0f;
+        // Native adapters must opt into exact identity/profile validation.
+        // False is retained only for synthetic/legacy snapshot tests, never set
+        // by the production facade even when the selected slot is empty.
+        public bool NativeProfileRequired;
+        public int WeaponId;
+        public int AmmoId;
+        public WeaponProfileEvaluation Profile;
+
+        public float ApproximateDps => !IsUsable ? 0f : NativeProfileRequired ?
+            Profile.ApproximateDirectDps : UseTime > 0 ? Damage * 60f / UseTime : 0f;
     }
 
     public struct TargetSnapshot
@@ -254,6 +263,11 @@ namespace Chaite.Core
         public float Ai1;
         public float Ai2;
         public float Ai3;
+        // Native local AI is not synchronized like ai[]. Never invent a teleport
+        // destination for adapters which did not actually observe these fields.
+        public bool LocalAiKnown;
+        public float LocalAi1;
+        public float LocalAi2;
 
         public Vec2 Center => new Vec2(Position.X + Width * 0.5f, Position.Y + Height * 0.5f);
     }
@@ -319,6 +333,7 @@ namespace Chaite.Core
         public TacticalMode TacticalMode;
         public string StrategyId;
         public string PhaseId;
+        public string WeaponIssue;
     }
 
     public enum TacticalMode
