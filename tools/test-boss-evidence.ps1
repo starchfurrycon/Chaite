@@ -170,3 +170,7 @@ foreach ($change in @(
 }
 Write-Output "Offline native-evidence regression: $script:passed passed, $script:failed failed."
 if ($script:failed -gt 0) { exit 1 }
+# This script makes no native process calls. Explicit success is necessary in
+# a fresh CI PowerShell process, where LASTEXITCODE would otherwise be null (or
+# inherited from an unrelated prior command), despite every assertion passing.
+exit 0
