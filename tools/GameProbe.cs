@@ -1304,6 +1304,23 @@ public static class ChaiteGameProbe
                 Game.tile[x,y].active(true);
                 Game.tile[x,y].type = groundType;
             }
+            if (scenario.Ocean)
+            {
+                // Native BossStartPlanner requires a real liquid scan, not
+                // merely ZoneBeach. Fill a shallow water basin above the
+                // shoreline inside the isolated in-memory fixture.
+                for (int x = groundLeft; x < groundRight; x++)
+                for (int y = arenaGroundY - 18; y < arenaGroundY; y++)
+                {
+                    if (Game.tile[x,y] == null) Game.tile[x,y] = new Tile();
+                    // Liquid tiles must remain inactive in vanilla's Tile
+                    // representation; an active tile with liquid is treated
+                    // as a solid block and Tile.water() returns false.
+                    Game.tile[x,y].active(false);
+                    Game.tile[x,y].liquid = 255;
+                    Game.tile[x,y].liquidType(0);
+                }
+            }
             // Two ordinary, non-actuated wooden-platform rows. Priority Bosses
             // receive the disclosed 500-tile multi-row arena assumed by their
             // minimum-mobility contract. The legacy baseline and Wall runway
