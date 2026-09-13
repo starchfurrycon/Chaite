@@ -658,6 +658,7 @@ namespace Chaite.Core
         // and accept a one-tick target lag without relaxing real drift checks.
         public bool HasPreviousEmpressNative;
         public EmpressNativeCombatObservation PreviousEmpressNative;
+        public int EmpressOrbitStep;
 
         public void Enter(string strategy, string phase)
         {
@@ -685,6 +686,7 @@ namespace Chaite.Core
                 ResetFishron();
                 HasPreviousEmpressNative = false;
                 PreviousEmpressNative = default(EmpressNativeCombatObservation);
+                EmpressOrbitStep = 0;
             }
             if (StrategyId != strategy || PhaseId != phase)
             {
@@ -7761,6 +7763,7 @@ namespace Chaite.Core
                 m.HasPreviousEmpressNative = false;
                 m.PreviousEmpressNative =
                     default(EmpressNativeCombatObservation);
+                m.EmpressOrbitStep = 0;
             }
             var nativeAi0 = t.Ai0;
             var nativeAi1 = t.Ai1;
@@ -7826,13 +7829,14 @@ namespace Chaite.Core
                 lethalDayContract ? 520f : 340f);
             var strictHorizontal = 0;
             var strictVertical = 0;
+            m.EmpressOrbitStep++;
             // Tutorials describe every Empress pattern as a large, continuously
             // moving loop. Keep that baseline for both the lethal daytime form
             // and the ordinary night form instead of only giving the explicit
             // controller movement when day-lethal is observed. Several night
             // states previously emitted two zero intents, which let the player
             // coast through a bullet curtain.
-            OrbitIntents(s, t, loop, out strictHorizontal,
+            OrbitIntents(s, t, loop, m, out strictHorizontal,
                 out strictVertical);
             switch (state)
             {
@@ -7885,7 +7889,7 @@ namespace Chaite.Core
                     // reversing straight back into the curved bolt path.
                     pattern = BossPattern.CircleOrbit;
                     var boltLoop = FreshPrismaticLoopDirection(s, t, loop);
-                    OrbitIntents(s, t, boltLoop, out horizontal,
+                    OrbitIntents(s, t, boltLoop, m, out horizontal,
                         out vertical);
                     break;
                 case 4:
@@ -7905,7 +7909,7 @@ namespace Chaite.Core
                     // through its old path, so flip the loop when the nearest
                     // live trail is ahead of the current orbit direction.
                     var freshLoop = FreshRainbowLoopDirection(s, t, loop);
-                    OrbitIntents(s, t, freshLoop, out horizontal,
+                    OrbitIntents(s, t, freshLoop, m, out horizontal,
                         out vertical);
                     break;
                 case 6:
@@ -8209,12 +8213,36 @@ namespace Chaite.Core
         }
 
         private static void OrbitIntents(CombatSnapshot snapshot,
-            TargetSnapshot target, int loop, out int horizontal,
-            out int vertical)
+            TargetSnapshot target, int loop, BossMemory memory,
+            out int horizontal, out int vertical)
         {
-            horizontal = loop;
-            vertical = snapshot.Player.Center.X >= target.Center.X ? loop :
-                -loop;
+            // A single diagonal intent is not a loop: it pushes the player
+            // into one corner until the arena-edge correction reverses it,
+            // which is exactly the kind of straight back-track that homing
+            // Empress projectiles punish. Advance through the four diagonal
+            // quadrants in order so the explicit route stays continuously
+            // curved even with only discrete control intents.
+            var step = memory.EmpressOrbitStep;
+            if (step < 0) step = 0;
+            switch ((step / 16) & 3)
+            {
+                case 1:
+                    horizontal = -loop;
+                    vertical = loop;
+                    break;
+                case 2:
+                    horizontal = -loop;
+                    vertical = -loop;
+                    break;
+                case 3:
+                    horizontal = loop;
+                    vertical = -loop;
+                    break;
+                default:
+                    horizontal = loop;
+                    vertical = loop;
+                    break;
+            }
             if (vertical > 0 && snapshot.Arena.ClearanceUp < 220f)
                 vertical = -1;
             else if (vertical < 0 && snapshot.Arena.ClearanceDown < 220f)
