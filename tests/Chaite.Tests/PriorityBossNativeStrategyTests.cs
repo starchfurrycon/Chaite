@@ -557,8 +557,8 @@ namespace Chaite.Tests
                 "daytime pre-dash did not choose a perpendicular escape");
             True(dayDecision.ForceContinuousMovement,
                 "daytime pre-dash did not reserve continuous clearance");
-            True(dayDecision.OwnsMovementClosure,
-                "daytime pre-dash let the generic scorer re-enter the charge lane");
+            False(dayDecision.OwnsMovementClosure,
+                "daytime pre-dash locked the vertical lane against the homing streak");
             True(dayDecision.OwnsHorizontalClosure,
                 "daytime pre-dash did not lock the horizontal escape direction");
 
@@ -593,8 +593,8 @@ namespace Chaite.Tests
                 new BossStrategyEngine().Evaluate(withStreak).Directive;
             True(withStreakDecision.OwnsHorizontalClosure,
                 "daytime pre-dash did not keep horizontal escape away from the Empress with a live streak");
-            True(withStreakDecision.OwnsMovementClosure,
-                "daytime pre-dash lost its perpendicular dodge closure with a live streak");
+            False(withStreakDecision.OwnsMovementClosure,
+                "daytime pre-dash locked the vertical lane with a live streak");
 
             var night = CombatScenario(636);
             night.Difficulty.DayTime = false;
@@ -609,8 +609,8 @@ namespace Chaite.Tests
             True(dayDecision.ExtraContactMargin >
                 nightDecision.ExtraContactMargin + 120f,
                 "daytime pre-dash did not widen its lethal contact margin");
-            True(nightDecision.OwnsMovementClosure,
-                "nighttime pre-dash did not reserve its perpendicular charge lane");
+            False(nightDecision.OwnsMovementClosure,
+                "nighttime pre-dash unexpectedly locked its vertical lane");
         }
 
         private static void MoonLordBalancesEyesAndReadsPreSpawnClocks()

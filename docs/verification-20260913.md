@@ -117,6 +117,11 @@ made.
   gap is in the full `EyeShieldDashState` / `CanScoreEyeShieldDash` admission,
   not only the raw native field. The next step is to trace that admission path
   in the isolated probe rather than add more one-line state overrides.
+- The daytime pre-dash route now locks horizontal escape away from the Empress
+  but leaves the vertical lane free, so the scorer can step around a homing
+  873 streak instead of being forced downward into it. The same expert seed
+  still dies once in the isolated smoke, so this is a necessary but not
+  sufficient part of the daytime-Empress lower-bound route.
 
 ## Git
 

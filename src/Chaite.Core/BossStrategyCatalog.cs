@@ -7843,7 +7843,6 @@ namespace Chaite.Core
                         horizontal = AwayX(s.Player, t);
                         vertical = PerpendicularY(s.Player, t);
                         margin += lethalDayContract ? 240f : 28f;
-                        ownsDashClosure = true;
                         ownsHorizontalClosure = true;
                     }
                     else if (lethalDayContract)
