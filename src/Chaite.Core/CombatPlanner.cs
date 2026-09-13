@@ -641,6 +641,29 @@ namespace Chaite.Core
             plan.StrategyId = directive.StrategyId;
             plan.PhaseId = directive.PhaseId;
             plan.FormulaRoute = _formulaRoute;
+            if (_formulaRoute != FormulaRoute.None)
+            {
+                var scriptInput = new FormulaScriptInput
+                {
+                    BossType = target.Type,
+                    Route = _formulaRoute,
+                    NativeState = (int)target.Ai0,
+                    NativeTimer = (int)target.Ai2,
+                    NativeSequence = (int)target.Ai3,
+                    PlayerBelowBoss = snapshot.Player.Center.Y >= target.Center.Y,
+                    PlayerRightOfBoss = snapshot.Player.Center.X >= target.Center.X
+                };
+                var script = FormulaScriptController.Tick(in scriptInput);
+                if (script.Accepted)
+                {
+                    plan.Horizontal = script.Horizontal;
+                    plan.Jump = script.Jump;
+                    plan.Dash = script.Dash;
+                    plan.Drop = false;
+                    plan.TacticalMode = TacticalMode.StablePattern;
+                    plan.PhaseId = script.Phase;
+                }
+            }
 
             // Source-specific controllers (e.g. a committed King run-under)
             // must keep the scored escape, not receive an unscored reversal/jump
@@ -808,6 +831,7 @@ namespace Chaite.Core
             var reservedSummonWhipOutput = preserveMobilityRoute
                 ? _summonWhipOutputController : null;
             var reservedMinimumOutputDps = _latchedMinimumOutputDps;
+            var reservedFormulaRoute = _formulaRoute;
             _strategies.Reset();
             _lastHorizontal = 1;
             _patternDirection = 1;
@@ -867,6 +891,7 @@ namespace Chaite.Core
                 _latchedOutputRoute = reservedOutputRoute;
                 _summonWhipOutputController = reservedSummonWhipOutput;
                 _latchedMinimumOutputDps = reservedMinimumOutputDps;
+                _formulaRoute = reservedFormulaRoute;
             }
         }
 
