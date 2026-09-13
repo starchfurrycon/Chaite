@@ -7819,6 +7819,9 @@ namespace Chaite.Core
             var ownsMovementClosure = ownsDashClosure ||
                 ownsPrismaticClosure;
             var ownsHorizontalClosure = false;
+            var pendingHorizontalDash = state == 1 &&
+                (NextAttack(second, expertSchedule, nextIndex) == 8 ||
+                 NextAttack(second, expertSchedule, nextIndex) == 9);
             string phase;
             BossPattern pattern;
             var horizontal = 0;
@@ -7993,6 +7996,7 @@ namespace Chaite.Core
                 lethalDayContract ? "day-lethal-" : "night-") +
                 (second ? "p2-" : "p1-") + phase;
             var preferDash = dash || state == 2 &&
+                HasRainbowStreakThreat(s) || pendingHorizontalDash &&
                 HasRainbowStreakThreat(s);
             var result = Decision(s, t, phase, pattern, distance,
                 lethalDayContract ? -40 : -190, horizontal, vertical,

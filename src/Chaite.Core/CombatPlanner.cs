@@ -1498,7 +1498,6 @@ namespace Chaite.Core
                 directive.PhaseId.Contains("day-rage-") &&
                 directive.PhaseId.Contains("horizontal-dash");
             var empressPreDashWithStreak = directive.PhaseId != null &&
-                directive.PhaseId.Contains("day-rage-") &&
                 directive.PhaseId.Contains("reposition-before-horizontal-dash") &&
                 HasRainbowStreakThreat(snapshot);
             var preferRequiredShieldDash = directive.PreferDash &&
