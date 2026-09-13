@@ -782,7 +782,7 @@ public static class ChaiteGameProbe
         if(Terraria.Program.LaunchParameters.TryGetValue("-maxticks",out value))
             tickLimit=BoundedInt(value,600,24000,"maxticks");
         if(Terraria.Program.LaunchParameters.TryGetValue("-wallseconds",out value))
-            wallLimitSeconds=BoundedInt(value,15,180,"wallseconds");
+            wallLimitSeconds=BoundedInt(value,15,900,"wallseconds");
         if(Terraria.Program.LaunchParameters.TryGetValue("-takeovertick",out value))
             takeoverTick=BoundedInt(value,120,23880,"takeovertick");
         if(Terraria.Program.LaunchParameters.TryGetValue("-phase",out value)) requestedPhase=value.ToLowerInvariant();
@@ -1519,12 +1519,12 @@ public static class ChaiteGameProbe
                 // three native shots and clears Fishron's production output
                 // threshold without relying on Onyx secondary projectiles.
                 weaponType=ItemID.ClockworkAssaultRifle;
-                ammoType=ItemID.CrystalBullet;
+                ammoType=ItemID.IchorBullet;
                 healingType=ItemID.GreaterHealingPotion;
                 break;
             case "post-plantera":
                 weaponType=ItemID.ChainGun;
-                ammoType=ItemID.CrystalBullet;
+                ammoType=ItemID.IchorBullet;
                 healingType=ItemID.GreaterHealingPotion;
                 break;
             case "pre-moon-lord":
@@ -1534,7 +1534,7 @@ public static class ChaiteGameProbe
                 // an unsupported stronger weapon would make the controller
                 // fail closed and invalidate the fixture rather than improve it.
                 weaponType=ItemID.ChainGun;
-                ammoType=ItemID.CrystalBullet;
+                ammoType=ItemID.IchorBullet;
                 healingType=ItemID.GreaterHealingPotion;
                 break;
         }
@@ -1585,7 +1585,7 @@ public static class ChaiteGameProbe
                 player.extraAccessory=true;
                 player.armor[8].SetDefaults(ItemID.EoCShield);
             }
-            scenario.Equipment="early-Hardmode adamantite-ranger+lightning+demon-wings+charm+obsidian-shield+ranger-emblem+clockwork-rifle+crystal-bullets; greater-healing x20";
+            scenario.Equipment="early-Hardmode adamantite-ranger+lightning+demon-wings+charm+obsidian-shield+ranger-emblem+clockwork-rifle+ichor-bullets; greater-healing x20";
         }
         else if(scenario.EquipmentTier=="post-plantera")
         {
@@ -1611,7 +1611,7 @@ public static class ChaiteGameProbe
             player.dashType=2;
             player.dashDelay=0;
             player.dashTime=0;
-            scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+cross-necklace+charm+ranger-emblem+chain-gun+crystal-bullets; greater-healing x20";
+            scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+cross-necklace+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
         {
@@ -1628,7 +1628,7 @@ public static class ChaiteGameProbe
                 player.extraAccessory=true;
                 player.armor[8].SetDefaults(ItemID.AnkhShield);
             }
-            scenario.Equipment="pre-Moon-Lord shroomite-bullet+frostspark+beetle-wings+master-ninja+charm+sniper-scope+chain-gun+crystal-bullets; greater-healing x20";
+            scenario.Equipment="pre-Moon-Lord shroomite-bullet+frostspark+beetle-wings+master-ninja+charm+sniper-scope+chain-gun+ichor-bullets; greater-healing x20";
         }
         else
         {

@@ -5,7 +5,7 @@ param(
     [string]$OutputDirectory,
     [string]$GameDirectory = 'D:\Program Files (x86)\Steam\steamapps\common\Terraria',
     [ValidateRange(1, 180)][int]$MaximumCases = 36,
-    [ValidateRange(120, 240)][int]$TimeoutSeconds = 120
+    [ValidateRange(120, 960)][int]$TimeoutSeconds = 120
 )
 
 # Default is a read-only plan. Actual native-engine execution requires -Run.
@@ -15,7 +15,7 @@ param(
 # Priority/mid-fight plan: {"schema":"chaite-boss-cases/v2","cases":[
 #   {"scenario":"deerclops","phase":"forward-spikes","takeoverTick":360,
 #    "seed":20260910,"difficulty":"expert"}]}
-# Optional case fields: maxTicks (600..24000), wallSeconds (15..180). A staged
+# Optional case fields: maxTicks (600..24000), wallSeconds (15..900). A staged
 # phase is a disclosed test-only native-field fixture, never an organic phase or
 # a win-rate claim. Unsupported scenario/phase/difficulty tuples fail closed.
 $ErrorActionPreference = 'Stop'
@@ -906,7 +906,7 @@ $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     [pscustomobject]@{
         Id = ('case{0:D3}' -f ($index + 1)); Scenario = $scenario; Phase = $phase; TakeoverTick = $takeoverTick
         Seed = $seed; Difficulty = $difficulty; Variant = $variant; MaxTicks = $maxTicks
-        WallSeconds = (Require-Integer (Read-Field $case 'wallSeconds' 90) 15 180 'wallSeconds')
+        WallSeconds = (Require-Integer (Read-Field $case 'wallSeconds' 90) 15 900 'wallSeconds')
     }
 })
 Write-Output ("Plan: $($plan.Count) serial cases from $planSource")

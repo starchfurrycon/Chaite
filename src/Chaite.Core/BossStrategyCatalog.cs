@@ -650,6 +650,14 @@ namespace Chaite.Core
         public bool FishronDashDirectionLocked;
         public int FishronDashHorizontal;
         public int FishronDashVertical;
+        // The native priority capture and the ordinary TargetSnapshot are
+        // sampled in separate hooks. AI_120 can advance phase 0->1 or 2->3
+        // exactly between those hooks, so the next strategy frame may observe
+        // the ordinary target one native tick behind the authoritative
+        // priority observation. Keep the previous authoritative observation
+        // and accept a one-tick target lag without relaxing real drift checks.
+        public bool HasPreviousEmpressNative;
+        public EmpressNativeCombatObservation PreviousEmpressNative;
 
         public void Enter(string strategy, string phase)
         {
@@ -675,6 +683,8 @@ namespace Chaite.Core
                 QueenBeeRunwaySurfaceY = 0f;
                 QueenBeeRunwayBoundsAge = 0;
                 ResetFishron();
+                HasPreviousEmpressNative = false;
+                PreviousEmpressNative = default(EmpressNativeCombatObservation);
             }
             if (StrategyId != strategy || PhaseId != phase)
             {
@@ -7744,6 +7754,12 @@ namespace Chaite.Core
         public override BossDecision Evaluate(CombatSnapshot s, BossMemory m)
         {
             var t = Pick(s, 636);
+            if (m.PreviousTargetKey != t.Key)
+            {
+                m.HasPreviousEmpressNative = false;
+                m.PreviousEmpressNative =
+                    default(EmpressNativeCombatObservation);
+            }
             var nativeAi0 = t.Ai0;
             var nativeAi1 = t.Ai1;
             var nativeAi2 = t.Ai2;
@@ -7754,16 +7770,16 @@ namespace Chaite.Core
                 EmpressNativeCombatObservation native;
                 if (!t.Ai0Known || !t.Ai1Known || !t.Ai2Known ||
                     !t.Ai3Known || !TryGetNativeCombat(s, t.Key, out native) ||
-                    native.Ai0AttackState != t.Ai0 ||
-                    native.Ai1AttackTimer != t.Ai1 ||
-                    native.Ai2AttackIndex != t.Ai2 ||
-                    native.Ai3PhaseAndRage != t.Ai3)
+                    !EmpressTargetMatchesNativeOrPrevious(in native,
+                        t.Ai0, t.Ai1, t.Ai2, t.Ai3, m))
                     return UnknownNativeState(s, t,
                         "missing-or-inconsistent-native-combat-state");
                 nativeAi0 = native.Ai0AttackState;
                 nativeAi1 = native.Ai1AttackTimer;
                 nativeAi2 = native.Ai2AttackIndex;
                 nativeAi3 = native.Ai3PhaseAndRage;
+                m.PreviousEmpressNative = native;
+                m.HasPreviousEmpressNative = true;
                 // AI_120 uses ShouldEmpressBeEnraged every tick for 9999
                 // contact/projectile damage. ai[3] is only the separately
                 // latched phase/genuine-rage bit and can legitimately lag a
@@ -8183,6 +8199,24 @@ namespace Chaite.Core
                 return true;
             }
             return false;
+        }
+
+        private static bool EmpressTargetMatchesNativeOrPrevious(
+            in EmpressNativeCombatObservation native,
+            float ai0, float ai1, float ai2, float ai3,
+            BossMemory memory)
+        {
+            if (native.Ai0AttackState == ai0 &&
+                native.Ai1AttackTimer == ai1 &&
+                native.Ai2AttackIndex == ai2 &&
+                native.Ai3PhaseAndRage == ai3)
+                return true;
+            if (!memory.HasPreviousEmpressNative) return false;
+            var previous = memory.PreviousEmpressNative;
+            return previous.Ai0AttackState == ai0 &&
+                previous.Ai1AttackTimer == ai1 &&
+                previous.Ai2AttackIndex == ai2 &&
+                previous.Ai3PhaseAndRage == ai3;
         }
 
         private static int NextAttack(bool second, bool expertSchedule,

@@ -1,7 +1,7 @@
 param(
     [string]$TargetExe,
     [string[]]$TargetArguments = @(),
-    [ValidateRange(120, 240)][int]$TimeoutSeconds = 120,
+    [ValidateRange(120, 960)][int]$TimeoutSeconds = 120,
     [switch]$Probe,
     [string]$OutputDirectory
 )
@@ -435,7 +435,7 @@ if ($Probe) {
                 if ($fixtureArguments.Contains('-wallseconds') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -wallseconds.' }
                 $value = $TargetArguments[$index]
                 $limit = 0
-                if ($value -cnotmatch '^[1-9][0-9]{1,2}$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 15 -or $limit -gt 180) { throw '-wallseconds must be an integer in 15..180.' }
+                if ($value -cnotmatch '^[1-9][0-9]{1,2}$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 15 -or $limit -gt 900) { throw '-wallseconds must be an integer in 15..900.' }
                 $fixtureArguments['-wallseconds'] = $limit.ToString([Globalization.CultureInfo]::InvariantCulture)
             }
             default { throw "Unreviewed target argument: $($TargetArguments[$index])" }

@@ -35,7 +35,7 @@ internal static class DesktopHost
             var output = WorkspacePath(Required(options, "output"), root, false);
             var working = WorkspacePath(Required(options, "working"), root, false);
             var timeout = int.Parse(Required(options, "timeout"), CultureInfo.InvariantCulture);
-            if (timeout < 120 || timeout > 240) throw new ArgumentOutOfRangeException("timeout", "Timeout must be 120..240 seconds.");
+            if (timeout < 120 || timeout > 960) throw new ArgumentOutOfRangeException("timeout", "Timeout must be 120..960 seconds.");
             if (!Directory.Exists(output) || !Directory.Exists(working)) throw new DirectoryNotFoundException("Output and working directory must already exist.");
             var arguments = Encoding.UTF8.GetString(Convert.FromBase64String(Required(options, "args64")));
             Log = TextWriter.Synchronized(new StreamWriter(new FileStream(Path.Combine(output, "desktop-host.log"), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true });
