@@ -63,6 +63,19 @@ made.
 - Daytime Empress is therefore still not verified as a high-reliability win.
   This remains an active follow-up, not a completed acceptance claim.
 
+## Further daytime-Empress tuning
+
+- The state-1 pre-dash escape now keeps horizontal movement directed away from
+  the approaching Empress and locks that horizontal direction, while leaving
+  the vertical axis free to step around the homing 873 streaks.
+- The daytime Empress horizontal-dash phase now prefers the reviewed
+  Shield-of-Cthulhu dash even in Classic, without making the dash a hard
+  requirement for the ordinary night/Classic profile.
+- Same deterministic smoke seed still ends in one NPC-636 contact death around
+  tick 340; the day-Empress lower-bound route is not yet closed. The next
+  follow-up should verify the native dash angle and exact contact envelope
+  rather than claim a no-hit result.
+
 ## Git
 
 - GitHub remote: `https://github.com/starchfurrycon/Chaite.git`

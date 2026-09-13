@@ -7798,6 +7798,7 @@ namespace Chaite.Core
                 return UnmodeledThreatSafetyHold(s, t, threatHoldReason);
             var dash = state == 8 || state == 9;
             var ownsDashClosure = dash;
+            var ownsHorizontalClosure = false;
             string phase;
             BossPattern pattern;
             var horizontal = 0;
@@ -7839,10 +7840,11 @@ namespace Chaite.Core
                         // transition, then keep that perpendicular clearance.
                         // The dedicated state-8/9 branch still owns the
                         // committed charge escape once the dash starts.
-                        horizontal = 0;
+                        horizontal = AwayX(s.Player, t);
                         vertical = PerpendicularY(s.Player, t);
                         margin += lethalDayContract ? 240f : 28f;
                         ownsDashClosure = true;
+                        ownsHorizontalClosure = true;
                     }
                     else if (lethalDayContract)
                     {
@@ -7952,17 +7954,12 @@ namespace Chaite.Core
             // explicit controller, rather than chase a target-relative ring
             // which moves with Empress and changes shape at each attack edge.
             result.Directive.UseExplicitMovement = true;
-            // The native 8/9 charge is a short, predictable horizontal line.
-            // Both the inter-attack reposition and the committed dash must
-            // reserve that perpendicular lane even when a generic scorer sees
-            // a slightly lower short-term hazard on the opposite side. The
-            // immediate-risk layer still vetoes a genuinely unsafe closure.
-            // The 8/9 body charge needs a locked perpendicular escape, but the
-            // inter-attack reposition (state 1) must remain free to step around
-            // the homing rainbow streak.  A pure vertical dodge can otherwise
-            // walk straight into the streak's path while it tracks the player.
-            result.Directive.OwnsMovementClosure = ownsDashClosure &&
-                !(state == 1 && HasRainbowStreakThreat(s));
+            // The 8/9 body charge needs a locked perpendicular escape.  During
+            // the inter-attack reposition the vertical axis may still move to
+            // avoid a homing streak, but horizontal must never turn back into
+            // the Empress's approaching body.
+            result.Directive.OwnsMovementClosure = ownsDashClosure;
+            result.Directive.OwnsHorizontalClosure = ownsHorizontalClosure;
             if (lethalDayContract || dash)
             {
                 // This bypasses generic direction hysteresis. Threat scoring is

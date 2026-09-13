@@ -1489,8 +1489,17 @@ namespace Chaite.Core
             var best = ScoreCandidate(snapshot, target, directive, desiredHorizontal, desiredVertical, desiredHorizontal, desiredVertical);
             var edgeFreeBest = best;
             CaptureLateMobilityFallback(edgeFreeBest);
+            // The daytime Empress horizontal-dash phase is the one reviewed
+            // phase whose lower-bound formula names the shield dash even in
+            // Classic.  Other Classic charges keep the dash optional, exactly
+            // as their baseline declares it.
+            var empressDayDash = directive.PreferDash &&
+                directive.PhaseId != null &&
+                directive.PhaseId.Contains("day-rage-") &&
+                directive.PhaseId.Contains("horizontal-dash");
             var preferRequiredShieldDash = directive.PreferDash &&
-                requiredDash == BossDashBaseline.ShieldOfCthulhu &&
+                (requiredDash == BossDashBaseline.ShieldOfCthulhu ||
+                 empressDayDash) &&
                 CanScoreEyeShieldDash(snapshot);
             Candidate gravityReturn = default(Candidate);
             var hasGravityReturn = false;

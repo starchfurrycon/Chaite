@@ -551,13 +551,16 @@ namespace Chaite.Tests
             True(dayDecision.PhaseId.Contains(
                 "day-rage-p1-reposition-before-horizontal-dash"),
                 dayDecision.PhaseId);
-            Equal(0, dayDecision.HorizontalIntent);
+            False(dayDecision.HorizontalIntent == 0,
+                "daytime pre-dash did not step away from the approaching Empress");
             False(dayDecision.VerticalIntent == 0,
                 "daytime pre-dash did not choose a perpendicular escape");
             True(dayDecision.ForceContinuousMovement,
                 "daytime pre-dash did not reserve continuous clearance");
             True(dayDecision.OwnsMovementClosure,
                 "daytime pre-dash let the generic scorer re-enter the charge lane");
+            True(dayDecision.OwnsHorizontalClosure,
+                "daytime pre-dash did not lock the horizontal escape direction");
 
             var withStreak = CombatScenario(636);
             withStreak.Difficulty.DayTime = true;
@@ -588,8 +591,10 @@ namespace Chaite.Tests
             RefreshPriorityNativeContext(withStreak);
             var withStreakDecision =
                 new BossStrategyEngine().Evaluate(withStreak).Directive;
-            False(withStreakDecision.OwnsMovementClosure,
-                "daytime pre-dash locked the vertical lane despite a homing rainbow streak");
+            True(withStreakDecision.OwnsHorizontalClosure,
+                "daytime pre-dash did not keep horizontal escape away from the Empress with a live streak");
+            True(withStreakDecision.OwnsMovementClosure,
+                "daytime pre-dash lost its perpendicular dodge closure with a live streak");
 
             var night = CombatScenario(636);
             night.Difficulty.DayTime = false;
