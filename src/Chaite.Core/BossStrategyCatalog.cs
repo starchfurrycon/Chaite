@@ -7882,8 +7882,13 @@ namespace Chaite.Core
                     phase = tick == 0 ? "everlasting-rainbow-spawn" :
                         "everlasting-rainbow-arc-" + tick;
                     pattern = BossPattern.CircleOrbit;
-                    horizontal = strictHorizontal;
-                    vertical = strictVertical;
+                    // The rainbow trail lingers behind the Empress. Retracing
+                    // the previous loop segment walks the player straight
+                    // through its old path, so flip the loop when the nearest
+                    // live trail is ahead of the current orbit direction.
+                    var freshLoop = FreshRainbowLoopDirection(s, t, loop);
+                    OrbitIntents(s, t, freshLoop, out horizontal,
+                        out vertical);
                     break;
                 case 6:
                     phase = "sun-dance-wave-" + Math.Min(3, tick / 60 + 1) +
@@ -7999,6 +8004,60 @@ namespace Chaite.Core
                     return true;
             }
             return false;
+        }
+
+        private static bool HasRainbowTrailThreat(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.Threats == null)
+                return false;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind == ThreatKind.Projectile &&
+                    threat.Trajectory == ThreatTrajectory.EmpressRainbowTrail)
+                    return true;
+            }
+            return false;
+        }
+
+        private static int FreshRainbowLoopDirection(CombatSnapshot snapshot,
+            TargetSnapshot target, int currentLoop)
+        {
+            if (!HasRainbowTrailThreat(snapshot)) return currentLoop;
+            var loop = currentLoop == 0 ? 1 : currentLoop;
+            var playerX = snapshot.Player.Center.X;
+            var playerY = snapshot.Player.Center.Y;
+            var nearestSquared = float.MaxValue;
+            var nearestX = 0f;
+            var nearestY = 0f;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind != ThreatKind.Projectile ||
+                    threat.Trajectory != ThreatTrajectory.EmpressRainbowTrail)
+                    continue;
+                var centerX = threat.Position.X + threat.Width * .5f;
+                var centerY = threat.Position.Y + threat.Height * .5f;
+                var deltaX = centerX - playerX;
+                var deltaY = centerY - playerY;
+                var distanceSquared = deltaX * deltaX + deltaY * deltaY;
+                if (distanceSquared >= nearestSquared) continue;
+                nearestSquared = distanceSquared;
+                nearestX = deltaX;
+                nearestY = deltaY;
+            }
+            // Only flip when the nearest trail is close enough to matter.
+            if (nearestSquared > 900f * 900f || nearestSquared <= 0f)
+                return loop;
+
+            // The unmodified OrbitIntent moves in player-gravity input
+            // coordinates. Convert its vertical component back to native world
+            // Y (positive down) before dotting against the trail vector.
+            var desiredX = loop;
+            var verticalIntent = playerX >= target.Center.X ? loop : -loop;
+            var desiredWorldY = -verticalIntent;
+            var dot = nearestX * desiredX + nearestY * desiredWorldY;
+            return dot > 0f ? -loop : loop;
         }
 
         private static bool ValidNativeAttack(int state, int tick,

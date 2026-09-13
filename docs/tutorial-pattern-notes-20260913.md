@@ -43,6 +43,9 @@ meant to replace blind scoring tuning with per-attack deterministic responses.
   coasting through Prismatic Bolts.
 - State 2 (Prismatic Bolts) is now always `CircleOrbit` with the strict
   horizontal/vertical loop intent.
+- State 5 (Everlasting Rainbow) keeps a `CircleOrbit`, but `FreshRainbowLoopDirection`
+  flips the orbit when the nearest live trail lies ahead of the current loop,
+  matching the guide's "never retrace the path, fly to fresh space" rule.
 - State 6 (Sun Dance) no longer uses a tangent orbit. It moves vertically
   toward the Empress body line with `PerpendicularY`, which matches the guide
   "stay near the pivot where the beam is slowest": player below -> up,
