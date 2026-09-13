@@ -16,6 +16,7 @@ namespace Chaite.Tests
         private static void RunAudioCueRegressions()
         {
             Run(nameof(FormulaRoutesKeepBossAndWeatherBoundaries), FormulaRoutesKeepBossAndWeatherBoundaries);
+            Run(nameof(FormulaScriptIsDeterministic), FormulaScriptIsDeterministic);
             Run(nameof(UnsupportedBossCueRemainsDistinct), UnsupportedBossCueRemainsDistinct);
             Run(nameof(LegacyAudioCueOrdinalsRemainStable),
                 LegacyAudioCueOrdinalsRemainStable);
@@ -51,6 +52,23 @@ namespace Chaite.Tests
             Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 0, 0, false, 12, false));
             Equal(FormulaRoute.EmpressRainFishron, FormulaRouteCatalog.Select(636, 0, 0, false, 12, true));
             Equal(FormulaRoute.None, FormulaRouteCatalog.Select(4, 2609, 3097, false, -1, true));
+        }
+
+        private static void FormulaScriptIsDeterministic()
+        {
+            var input = new FormulaScriptInput
+            {
+                BossType = 636, Route = FormulaRoute.EmpressStrongWingsDash,
+                NativeState = 8, NativeTimer = 20, PlayerBelowBoss = true,
+                PlayerRightOfBoss = false
+            };
+            var a = FormulaScriptController.Tick(in input);
+            var b = FormulaScriptController.Tick(in input);
+            True(a.Accepted && a.Fire && a.Jump && a.Dash);
+            Equal(a.Horizontal, b.Horizontal); Equal(a.Vertical, b.Vertical);
+            Equal(a.Phase, b.Phase);
+            input.BossType = 4;
+            False(FormulaScriptController.Tick(in input).Accepted);
         }
 
         private static void LegacyAudioCueOrdinalsRemainStable()
