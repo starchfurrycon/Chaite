@@ -1254,6 +1254,7 @@ namespace Chaite.Plugin
                 else if (type == 977 || type == 984) conflictingDashSources++;
                 if (FormulaMobilityContract.IsMobilityAccessory(type) &&
                     type != FormulaMobilityContract.DemonWingsItem &&
+                    type != 761 && type != 2609 &&
                     type != FormulaMobilityContract.LightningBootsItem &&
                     type != FormulaMobilityContract.ShieldOfCthulhuItem &&
                     unexpectedFormulaMobilityItemType == 0)

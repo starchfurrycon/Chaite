@@ -21,7 +21,10 @@ namespace Chaite.Plugin
             { AudioCue.FailedBossDesign, "failed_boss_design.wav" },
             { AudioCue.LowLevelChaite, "low_level_chaite.wav" },
             { AudioCue.UnsupportedBoss, "boss_too_hard_for_me.wav" },
-            { AudioCue.UntestedLoadout, "never_tried_this_loadout.wav" }
+            { AudioCue.UntestedLoadout, "never_tried_this_loadout.wav" },
+            // Reuse the existing unmodified MAN clip for arming; TryMinnie
+            // is reserved for the actual transition into combat control.
+            { AudioCue.MonitorArmed, "man.wav" }
         };
         private readonly HashSet<string> _reportedMissing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<AudioCue> _pending = new HashSet<AudioCue>();

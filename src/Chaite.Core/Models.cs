@@ -31,7 +31,8 @@ namespace Chaite.Core
         SuccessAfterDeath,
         FailedAfterDeath,
         Cancelled,
-        EncounterInterrupted
+        EncounterInterrupted,
+        Monitoring
     }
 
     public enum AudioCue
@@ -51,7 +52,8 @@ namespace Chaite.Core
         // The audio slot is user-supplied; Chaite never generates or
         // downloads the meme clip.
         UnsupportedBoss,
-        UntestedLoadout
+        UntestedLoadout,
+        MonitorArmed
     }
 
     public enum ThreatKind

@@ -23,6 +23,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="BossMonitoringTests.cs" />
     <Compile Include="AudioCueTests.cs" />
     <Compile Include="SupportedBossPolicyTests.cs" />
     <Compile Include="SafetyTests.cs" />

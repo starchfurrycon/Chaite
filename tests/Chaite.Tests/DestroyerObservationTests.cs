@@ -397,6 +397,15 @@ namespace Chaite.Tests
             Equal(492, state.WingAccessoryItemType);
             Equal(898, state.RocketBootAccessoryItemType);
 
+            foreach (var wing in new[] { 761, 2609 })
+            {
+                player.Slots[3] = new DestroyerEquipmentItem { Type = wing, WingSlot = 6 };
+                var formulaIdentity = read.Invoke(facade, new object[] { player, state });
+                Equal(wing, state.WingAccessoryItemType);
+                Equal(0, (int)formulaIdentity.GetType().GetField("UnexpectedFormulaMobilityItemType").GetValue(formulaIdentity));
+            }
+            player.Slots[3] = new DestroyerEquipmentItem { Type = 492, WingSlot = 1 };
+
             player.Slots[4] = new DestroyerEquipmentItem { Type = 405 };
             state = new PlayerSnapshot();
             read.Invoke(facade, new object[] { player, state });
@@ -410,41 +419,9 @@ namespace Chaite.Tests
 
         private static void DestroyerRuntimePreflightDominatesBossStart()
         {
-            using (var assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly(typeof(Chaite.Plugin.Runtime).Assembly.Location))
-            {
-                var runtime = FindCecilType(assembly, "Chaite.Plugin.Runtime");
-                var tick = FindCecilMethod(runtime, "Tick");
-                var requirements = -1;
-                var reset = -1;
-                var bossStart = -1;
-                for (var i = 0; i < tick.Body.Instructions.Count; i++)
-                {
-                    var call = tick.Body.Instructions[i].Operand as Mono.Cecil.MethodReference;
-                    if (call == null) continue;
-                    if (call.Name == "PrepareForSupportedExpectedEncounter" ||
-                        call.Name == "PrepareForExpectedEncounter") requirements = i;
-                    else if (call.Name == "ResetSessionAutomation" && requirements >= 0 && bossStart < 0) reset = i;
-                    else if (call.Name == "ExecuteBossStart") bossStart = i;
-                }
-                True(requirements >= 0 && bossStart > requirements,
-                    "Runtime must perform the supported preflight before ExecuteBossStart can consume a summon");
-                var conditional = -1;
-                for (var i = requirements + 1;
-                    i < tick.Body.Instructions.Count && i <= requirements + 12;
-                    i++)
-                {
-                    if (tick.Body.Instructions[i].OpCode.FlowControl ==
-                        Mono.Cecil.Cil.FlowControl.Cond_Branch)
-                    {
-                        conditional = i;
-                        break;
-                    }
-                }
-                // Release branches directly. Debug materializes `!result`
-                // through ldc/ceq and a temporary local before the same guard.
-                True(conditional > requirements && (reset < 0 || conditional < reset),
-                    "PrepareForExpectedEncounter must immediately guard the boss-start path");
-            }
+            // Manual summon monitoring replaces this old automatic-summon
+            // entry. Verify the stronger invariant: Runtime cannot summon.
+            BossMonitoringProductionHasNoSummonOrSurvivalPath();
         }
 
         private static void DestroyerRuntimeControlReturnDominatesInput()

@@ -27,7 +27,7 @@ namespace Chaite.Core
                 s.Mobility.EyeShieldDash.EquipmentIdentity ==
                     DashEquipmentIdentity.ShieldOfCthulhuItem3097;
             if (!fishronMount && !empressMount && !wingRoute)
-            { reason = "公式机动套装必须是恶魔之翼和闪电靴"; return false; }
+            { reason = "未匹配当前 Boss 的公式翅膀／冲刺或坐骑路线"; return false; }
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.MountActive || s.Mobility.Grappling ||
                 s.Mobility.GravityInverted)

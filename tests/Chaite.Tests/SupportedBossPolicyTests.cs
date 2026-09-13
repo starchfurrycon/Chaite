@@ -507,8 +507,7 @@ namespace Chaite.Tests
                 runtimeField("_authorizedBossGeneration"),
                 runtimeField("_authorizedBossObserved"),
                 runtimeField("_authorizedBossContinuityBroken"),
-                runtimeField("_startPlan"),
-                runtimeField("_expectedBossKilled")
+                runtimeField("_startPlan")
             };
             var oldValues = new Dictionary<FieldInfo, object>();
             foreach (var field in fields)

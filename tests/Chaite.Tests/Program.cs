@@ -15,6 +15,10 @@ namespace Chaite.Tests
             if (args.Length == 2 && args[0] == "--native-motion-trace") return VerifyNativeMotionTrace(args[1]);
             if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length != 0) return 2;
+            Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
+            Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
+            Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
+            Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);
             Run(nameof(GravityDashMotionContracts), GravityDashMotionContracts);
             Run(nameof(GrappleMotionContracts), GrappleMotionContracts);
             Run(nameof(GrappleRouteFactoryContracts), GrappleRouteFactoryContracts);

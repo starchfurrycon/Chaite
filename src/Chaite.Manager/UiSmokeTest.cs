@@ -143,11 +143,11 @@ namespace Chaite.Manager
             var required = new[]
             {
                 "来吧，试一下米妮",
-                "仅接管猪鲨公爵与昼间/夜间光之女皇",
-                "其他 Boss 直接拒绝",
-                "用松露虫在海洋水体钓鱼",
-                "七彩草蛉可在昼夜自动释放并击杀",
-                "白天按致命光女门槛预检"
+                "MAN！开始监视",
+                "取消监视 / 立即归还操作",
+                "自行用松露虫在海洋钓鱼",
+                "自行释放并击杀七彩草蛉",
+                "不接受战斗中途 F8"
             };
             foreach (var value in required)
                 if (copy.IndexOf(value, StringComparison.Ordinal) < 0)

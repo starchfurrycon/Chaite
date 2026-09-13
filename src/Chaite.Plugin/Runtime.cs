@@ -22,15 +22,12 @@ namespace Chaite.Plugin
         private static int _originalWeapon = -1;
         private static int _terminalDelay;
         private static BossStartPlan _startPlan;
-        private static int _startTicks;
-        private static bool _summonIssued;
         private static bool _pendingInput;
         private static bool _frameApplied;
         private static object _pendingPlayer;
         private static long _timingTotal;
         private static long _timingMaximum;
         private static int _timingFrames;
-        private static bool _expectedBossKilled;
         private static int _authorizedBossType;
         private static int _authorizedBossKey = -1;
         private static int _authorizedBossGeneration = -1;
@@ -45,6 +42,8 @@ namespace Chaite.Plugin
         private static int _authorizedNetMode = -1;
         private static int _authorizedPlayerIndex = -1;
         private static int _weaponIssueCooldown;
+        private static FormulaRoute _monitorFishronRoute;
+        private static FormulaRoute _monitorEmpressRoute;
         private static readonly CombatWeaponSelectionHandoff
             CombatWeaponSelection = new CombatWeaponSelectionHandoff();
         // Retained for the standalone contract regression. Runtime now owns a
@@ -72,7 +71,7 @@ namespace Chaite.Plugin
                 EnsureInitialized(player.GetType().Assembly, player.GetType());
                 if (!_game.IsLocalPlayer(player, playerIndex))
                 {
-                    if (_encounter.IsControlling &&
+                    if (_encounter.IsSessionActive &&
                         playerIndex == _authorizedPlayerIndex)
                         AbandonChangedSession(player);
                     return;
@@ -80,7 +79,7 @@ namespace Chaite.Plugin
                 // Validate the old authorization before polling cancellation or
                 // restoring any saved item. A new Player/world object can keep
                 // the same vanilla IDs after a reload.
-                if (_encounter.IsControlling &&
+                if (_encounter.IsSessionActive &&
                     !MatchesAuthorizedSessionIdentity(player))
                 {
                     AbandonChangedSession(player);
@@ -94,6 +93,11 @@ namespace Chaite.Plugin
                 var keys = _hotkeys.Poll();
                 if (keys.CancelPressed)
                 {
+                    if (_encounter.State == SessionState.Monitoring)
+                    {
+                        StopBossMonitor("已取消监视；操作权始终由你保留。", AudioCue.None);
+                        return;
+                    }
                     if (ActiveNativeMobilityHandoff.Active)
                     {
                         _encounter.Cancel();
@@ -143,243 +147,16 @@ namespace Chaite.Plugin
                     !TryCompleteDeferredActiveAdmission(player))
                     return;
 
-                if (!_encounter.IsControlling)
+                if (_encounter.State == SessionState.Monitoring)
                 {
-                    if (!keys.ActivatePressed)
-                        return;
-                    // Idle kills are unrelated to this session and must never
-                    // satisfy completion for a future boss reusing the NPC slot.
-                    PendingKilledBosses.Clear();
-                    var observation = _game.BuildObservation(player, Array.Empty<int>());
-                    // An already active Boss takes priority over every summon in
-                    // the hotbar. Admission uses its observed current phase and
-                    // starts from a recovery state; it never consumes another
-                    // summon item just because F9 was pressed mid-fight.
-                    var joiningActiveBoss = observation.HasEncounter;
-                    if (joiningActiveBoss)
-                    {
-                        HandleCue(AudioCue.UntestedLoadout);
-                        _game.Chat("这个波斯，用这个武器来打，从来没试过哦。请在召唤前启动，拆特不再中途接管。", 255, 155, 110);
-                        ResetSessionAutomation();
-                        return;
-                    }
-                    // The production surface is deliberately narrower than
-                    // the offline strategy catalog. Reject an active,
-                    // unreviewed Boss before preflight can latch a route or
-                    // mutate any summon transaction.
-                    string scopeReason;
-                    int observedBossKey = -1;
-                    int observedBossGeneration = -1;
-                    int observedBossType = 0;
-                    if (joiningActiveBoss &&
-                        !TryValidateActiveBossScope(observation,
-                            out observedBossKey, out observedBossGeneration,
-                            out observedBossType,
-                            out scopeReason))
-                    {
-                        RejectUnsupportedBoss(player, scopeReason);
-                        return;
-                    }
-                    _startPlan = joiningActiveBoss || _game.IsDead(player) ?
-                        null : _game.FindBossStartPlan(player);
-                    if (!joiningActiveBoss && _startPlan != null &&
-                        !SupportedBossPolicy.TryValidateStartPlan(_startPlan,
-                            out scopeReason))
-                    {
-                        RejectUnsupportedBoss(player, scopeReason);
-                        return;
-                    }
-                    _authorizedBossType = joiningActiveBoss
-                        ? observedBossType
-                        : _startPlan?.ExpectedBossType ?? 0;
-                    _authorizedBossKey = joiningActiveBoss
-                        ? observedBossKey : -1;
-                    _authorizedBossGeneration = joiningActiveBoss
-                        ? observedBossGeneration : -1;
-                    _authorizedBossObserved = joiningActiveBoss;
-                    _authorizedBossContinuityBroken = false;
-                    observation.StartAuthorized = joiningActiveBoss ||
-                        _startPlan != null;
-                    observation.RequirePreparation = !joiningActiveBoss;
-                    if (joiningActiveBoss || _startPlan != null)
-                    {
-                        string sessionReason;
-                        if (!CaptureAuthorizedSessionIdentity(player,
-                                out sessionReason))
-                        {
-                            HandleCue(AudioCue.NoSlimeAng);
-                            _game.Chat("无法锁定当前世界与连接身份：" +
-                                sessionReason, 255, 155, 110);
-                            ResetSessionAutomation();
-                            return;
-                        }
-                        var preflight = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
-                        string reason = null;
-                        var activePreparation = joiningActiveBoss ?
-                            _planner.PrepareForSupportedActiveEncounterDetailed(
-                                preflight, out reason) :
-                            ActiveEncounterPreparationResult.Ready;
-                        if (joiningActiveBoss && activePreparation ==
-                            ActiveEncounterPreparationResult.
-                                AwaitingNativeMobilityRelease)
-                        {
-                            if (!BeginActiveNativeMobilityHandoff(player,
-                                    observation))
-                                return;
-                            // The helper installed one neutral/release frame
-                            // and captured it for post-input replay. Planner
-                            // admission follows only when the next native
-                            // snapshot proves the old controller is gone.
-                            return;
-                        }
-                        if (joiningActiveBoss && activePreparation !=
-                            ActiveEncounterPreparationResult.Ready)
-                        {
-                            HandleCue(AudioCue.NoSlimeAng);
-                            _game.Chat("未通过该 Boss 的基础开战检查：" + reason, 255, 155, 110);
-                            ResetSessionAutomation();
-                            return;
-                        }
-                        if (!joiningActiveBoss &&
-                            (SupportedBossPolicy.IsSupportedBossType(
-                                _startPlan.ExpectedBossType)
-                                ? !_planner.PrepareForSupportedFormulaEncounter(
-                                    preflight, _startPlan, out reason)
-                                : !_planner.PrepareForSupportedExpectedEncounter(
-                                    preflight, _startPlan, out reason)))
-                        {
-                            HandleCue(AudioCue.NoSlimeAng);
-                            _game.Chat("未通过该 Boss 的基础开战检查：" + reason, 255, 155, 110);
-                            ResetSessionAutomation();
-                            return;
-                        }
-                        if (_startPlan != null &&
-                            !_startPlan.TrySetAdmittedCombatWeaponSlot(
-                                _planner.LatchedOutputSlot))
-                        {
-                            RejectUnsupportedBoss(player,
-                                SupportedBossPolicy.UnsupportedBossMessage +
-                                " (admitted output slot could not be sealed)");
-                            return;
-                        }
-                    }
-                    if (!ActivatePreparedSession(player, observation))
+                    if (!TryStartMonitoredEncounter(player))
                         return;
                 }
-
-                if (_encounter.State == SessionState.PreparingBoss || _encounter.State == SessionState.AwaitingBossSpawn)
+                else if (!_encounter.IsControlling)
                 {
-                    _startTicks++;
-                    // Recheck native roots before issuing another item,
-                    // fishing, movement, or attack edge. A newly arrived Boss
-                    // must be rejected without one frame of summon side effects.
-                    var beforeStart = _game.BuildObservation(player,
-                        Array.Empty<int>(), true, true);
-                    string beforeStartReason;
-                    if (!TryValidateAuthorizedBossScope(beforeStart,
-                            out beforeStartReason))
-                    {
-                        RejectUnsupportedBoss(player, beforeStartReason);
-                        return;
-                    }
-                    string startPlanReason;
-                    if (!beforeStart.HasEncounter &&
-                        !SupportedBossPolicy.TryValidateStartPlan(_startPlan,
-                            out startPlanReason))
-                    {
-                        RejectUnsupportedBoss(player, startPlanReason);
-                        return;
-                    }
-                    // F8 arms a passive monitor for the two production formula
-                    // bosses. Other legacy planner fixtures retain their
-                    // explicit summon path for compatibility tests.
-                    var passiveMonitor = _startPlan != null &&
-                        (_startPlan.ExpectedBossType == 370 || _startPlan.ExpectedBossType == 636);
-                    var start = beforeStart.HasEncounter
-                        ? new BossStartTick
-                        {
-                            Issued = _summonIssued,
-                            StillValid = true
-                        }
-                        : _game.IsDead(player)
-                            ? new BossStartTick
-                            {
-                                Issued = _summonIssued,
-                                StillValid = _startPlan != null &&
-                                    _startTicks <= _startPlan.TimeoutTicks
-                            }
-                            : passiveMonitor ? new BossStartTick
-                            {
-                                Issued = false,
-                                StillValid = true,
-                                ControlsApplied = false
-                            } : _game.ExecuteBossStart(player, _startPlan,
-                                _startTicks, _summonIssued);
-                    _summonIssued |= start.Issued;
-                    _frameApplied = start.ControlsApplied;
-                    if (start.Issued)
-                        _encounter.MarkSummonIssued();
-                    var waitingObservation = _game.BuildObservation(player, DrainKilledBosses(), true, start.StillValid);
-                    string waitingScopeReason;
-                    if (!TryValidateAuthorizedBossScope(waitingObservation,
-                            out waitingScopeReason))
-                    {
-                        RejectUnsupportedBoss(player, waitingScopeReason);
-                        return;
-                    }
-                    waitingObservation.ExpectedBossArrived = _startPlan != null &&
-                        (_expectedBossKilled || _game.HasBossType(_startPlan.ExpectedBossType));
-                    var waitingUpdate = _encounter.Update(waitingObservation);
-                    HandleCue(waitingUpdate.Cue);
-                    if (waitingUpdate.BecameTerminal)
-                    {
-                        if (!string.IsNullOrEmpty(start.FailureReason))
-                            _game.Chat(start.FailureReason, 255, 155, 110);
-                        FinishTerminal(player, waitingUpdate.Current);
-                        return;
-                    }
-                    if (waitingObservation.ExpectedBossArrived)
-                    {
-                        _game.RestorePendingBossStart(player, _startPlan);
-                        _startPlan = null;
-                        _planner.ResetForBossArrival();
-                    }
-                    else
-                    {
-                        if (waitingUpdate.ApplyControls && !_game.IsDead(player) && !start.ControlsApplied)
-                        {
-                            if (!EnsureCombatWeaponSelected(player))
-                                return;
-                            var survivalPlan = _planner.PlanSurvival(
-                                _game.BuildCombatSnapshot(player));
-                            if (survivalPlan.RequestControlReturn)
-                            {
-                                _encounter.Cancel();
-                                _game.RestorePendingBossStart(player, _startPlan);
-                                var reason = string.IsNullOrEmpty(
-                                    survivalPlan.ControlReturnReason)
-                                    ? "等待 Boss 时机动状态超出精确模型"
-                                    : survivalPlan.ControlReturnReason;
-                                Finish(player, "安全条件丢失，已归还操作权（" +
-                                    reason + "）。", AudioCue.None);
-                                return;
-                            }
-                            var outputFailure = _game.ApplyPlan(player,
-                                survivalPlan);
-                            if (!string.IsNullOrEmpty(outputFailure))
-                            {
-                                _encounter.Cancel();
-                                _game.RestorePendingBossStart(player,
-                                    _startPlan);
-                                Finish(player,
-                                    "输出路线失去原生证明，已归还操作权（" +
-                                    outputFailure + "）。", AudioCue.None);
-                                return;
-                            }
-                            _frameApplied = true;
-                        }
-                        return;
-                    }
+                    if (keys.ActivatePressed)
+                        ArmBossMonitor(player);
+                    return;
                 }
 
                 var liveObservation = _game.BuildObservation(player,
@@ -542,9 +319,6 @@ namespace Chaite.Plugin
                 if (_authorizedBossGeneration < 0)
                     _authorizedBossGeneration = generation;
                 _authorizedBossObserved = true;
-                if (_startPlan != null &&
-                    type == _startPlan.ExpectedBossType)
-                    _expectedBossKilled = true;
                 if (!PendingKilledBosses.Contains(key))
                     PendingKilledBosses.Add(key);
             }
@@ -836,6 +610,12 @@ namespace Chaite.Plugin
 
         private static void AbandonChangedSession(object player)
         {
+            if (_encounter?.State == SessionState.Monitoring)
+            {
+                ResetSessionAutomation();
+                _encounter.ReturnToIdle();
+                return;
+            }
             if (_encounter != null && _encounter.IsControlling)
                 _encounter.Cancel();
             try { _game?.ClearCombatControls(player); }
@@ -875,14 +655,103 @@ namespace Chaite.Plugin
                 return false;
             }
             _originalWeapon = _game.GetSelectedItem(player);
-            _startTicks = 0;
-            _summonIssued = false;
-            _expectedBossKilled = false;
             _timingFrames = 0;
             _timingTotal = _timingMaximum = 0;
             _game.ResetBossStart();
             _game.Chat("接管开始；F9 可随时紧急终止。", 255, 210, 78);
             return true;
+        }
+
+        private static void ArmBossMonitor(object player)
+        {
+            var observation = _game.BuildObservation(player, Array.Empty<int>());
+            if (observation.HasEncounter)
+            {
+                int key, generation, type;
+                string reason;
+                var supported = TryValidateActiveBossScope(observation, out key,
+                    out generation, out type, out reason);
+                StopBossMonitor(supported
+                    ? "请在 Boss 出现前按 F8 开始监视；不接受中途接管。"
+                    : SupportedBossPolicy.UnsupportedBossMessage,
+                    supported ? AudioCue.UntestedLoadout : AudioCue.UnsupportedBoss);
+                return;
+            }
+            if (observation.PlayerDead)
+            {
+                StopBossMonitor("请复活后再开始监视。", AudioCue.NoSlimeAng);
+                return;
+            }
+            ResetSessionAutomation();
+            var snapshot = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
+            _originalWeapon = -1;
+            _terminalDelay = 0;
+            _monitorFishronRoute = CombatPlanner.SelectMonitorRoute(snapshot, 370);
+            _monitorEmpressRoute = CombatPlanner.SelectMonitorRoute(snapshot, 636);
+            if (_monitorFishronRoute == FormulaRoute.None && _monitorEmpressRoute == FormulaRoute.None)
+            {
+                StopBossMonitor(FormulaRouteCatalog.Refusal, AudioCue.UntestedLoadout);
+                return;
+            }
+            string sessionReason;
+            if (!CaptureAuthorizedSessionIdentity(player, out sessionReason))
+            {
+                StopBossMonitor("无法锁定当前世界与角色：" + sessionReason, AudioCue.NoSlimeAng);
+                return;
+            }
+            observation.StartAuthorized = true;
+            var update = _encounter.ArmMonitoring(observation);
+            HandleCue(update.Cue);
+            _game.Chat("MAN！监视已开启：请自行召唤猪鲨或光女。出现后接管；F9 取消监视。", 255, 210, 78);
+        }
+
+        private static bool TryStartMonitoredEncounter(object player)
+        {
+            var observation = _game.BuildObservation(player, Array.Empty<int>());
+            if (observation.PlayerDead)
+            {
+                StopBossMonitor("监视期间角色死亡，监视已取消；复活后可再次按 F8。", AudioCue.Dead);
+                return false;
+            }
+            if (!observation.HasEncounter)
+                return false;
+            int key, generation, type;
+            string reason;
+            if (!TryValidateActiveBossScope(observation, out key, out generation, out type, out reason))
+            {
+                StopBossMonitor(SupportedBossPolicy.UnsupportedBossMessage, AudioCue.UnsupportedBoss);
+                return false;
+            }
+            var armedRoute = type == 370 ? _monitorFishronRoute : _monitorEmpressRoute;
+            var snapshot = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
+            if (!_planner.PrepareForMonitoredFormulaEncounter(snapshot, type, armedRoute, out reason))
+            {
+                StopBossMonitor(FormulaRouteCatalog.Refusal + "（" + reason + "）", AudioCue.UntestedLoadout);
+                return false;
+            }
+            _authorizedBossType = type;
+            _authorizedBossKey = key;
+            _authorizedBossGeneration = generation;
+            _authorizedBossObserved = true;
+            _authorizedBossContinuityBroken = false;
+            PendingKilledBosses.Clear();
+            observation.StartAuthorized = true;
+            observation.RequirePreparation = false;
+            // Activate records initial life at actual takeover, excluding
+            // player-controlled monitoring damage from battle statistics.
+            return ActivatePreparedSession(player, observation);
+        }
+
+        private static void StopBossMonitor(string message, AudioCue cue)
+        {
+            // No selection restoration, input clearing or native controls:
+            // monitoring never owned any player input in the first place.
+            ResetSessionAutomation();
+            _originalWeapon = -1;
+            _terminalDelay = 0;
+            _encounter.ReturnToIdle();
+            HandleCue(cue);
+            _game.Chat(message, 255, 210, 78);
         }
 
         private static void EnsureInitialized(System.Reflection.Assembly gameAssembly, Type playerType)
@@ -1006,14 +875,12 @@ namespace Chaite.Plugin
 
         private static void ResetSessionAutomation()
         {
+            _monitorFishronRoute = _monitorEmpressRoute = FormulaRoute.None;
             _pendingInput = _frameApplied = false;
             ActiveAdmissionObservation.Reset();
             ActiveNativeMobilityHandoff.Reset();
             PendingKilledBosses.Clear();
             _startPlan = null;
-            _startTicks = 0;
-            _summonIssued = false;
-            _expectedBossKilled = false;
             _authorizedBossType = 0;
             _authorizedBossKey = -1;
             _authorizedBossGeneration = -1;

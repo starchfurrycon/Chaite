@@ -25,6 +25,8 @@ public static class ChaiteGameProbe
     static bool settingsRead, finishing;
     static int seed = 20260910, difficultyCode, tickLimit = 24000, wallLimitSeconds = 90;
     static int takeoverTick = 120, directSpawnTick = -1;
+    static int monitorArmedTick = -1, monitorCombatTick = -1, monitorPassiveFrames;
+    static bool IsMonitorFixture { get { return requestedPhase == "monitor"; } }
     static string difficulty = "classic";
     static string requestedPhase = "summon";
     static int deaths, minLife = int.MaxValue, grappleTicks, maximumGrappleTicks, expectedBossMask;
@@ -815,11 +817,11 @@ public static class ChaiteGameProbe
                 DirectScenario(113,new[]{113,114},false,new[]{"runway","accelerating","low-health","critical","eye-laser"});
                 scenario.Underworld=true; break;
             case "duke-fishron":
-                DirectScenario(370,new[]{370},true,new[]{"summon","spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; if(requestedPhase=="summon") scenario.Summon=2673; break;
+                DirectScenario(370,new[]{370},true,new[]{"summon","monitor","spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; if(requestedPhase=="summon") scenario.Summon=2673; break;
             case "empress-night":
-                DirectScenario(636,new[]{636},true,new[]{"summon","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"}); scenario.Hallow=true; if(requestedPhase=="summon") scenario.Summon=4961; break;
+                DirectScenario(636,new[]{636},true,new[]{"summon","monitor","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"}); scenario.Hallow=true; if(requestedPhase=="summon") scenario.Summon=4961; break;
             case "empress-day":
-                DirectScenario(636,new[]{636},true,new[]{"summon","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"});
+                DirectScenario(636,new[]{636},true,new[]{"summon","monitor","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"});
                 scenario.Daytime=true; scenario.Hallow=true; break;
             case "moon-lord":
                 DirectScenario(398,new[]{396,397,398},true,new[]{"intro","synchronize-eyes","head-bolts","head-tongue","head-deathray-telegraph","left-sphere-release","right-sphere-release"});
@@ -852,7 +854,7 @@ public static class ChaiteGameProbe
             if(id=="duke-fishron" && requestedPhase.StartsWith("p3-",StringComparison.Ordinal) && difficultyCode==0)
                 throw new ArgumentException("Duke Fishron phase 3 is not a Classic native phase");
             int spawnLead=scenario.Id=="moon-lord"?(requestedPhase=="intro"?15:90):scenario.SpawnLeadTicks;
-            directSpawnTick=scenario.DirectSpawn?(IsScopeNegative?takeoverTick:Math.Max(1,takeoverTick-spawnLead)):-1;
+            directSpawnTick=scenario.DirectSpawn?(IsMonitorFixture?takeoverTick+120:IsScopeNegative?takeoverTick:Math.Max(1,takeoverTick-spawnLead)):-1;
         }
         if(Terraria.Program.LaunchParameters.TryGetValue("-motioncase",out value)) motionCase=value;
         if(Terraria.Program.LaunchParameters.TryGetValue("-flightcase",out value)) flightCase=value;
@@ -1652,6 +1654,11 @@ public static class ChaiteGameProbe
             player.dashDelay=0;
             player.dashTime=0;
             scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+frozen-turtle-shell+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
+            if (IsMonitorFixture && (scenario.Id == "empress-night" || scenario.Id == "empress-day"))
+            {
+                player.armor[4].SetDefaults(ItemID.FishronWings);
+                scenario.Equipment="Empress monitor fixture: shroomite+lightning+Fishron Wings+Shield of Cthulhu+chain gun+ichor bullets";
+            }
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
         {
@@ -2382,7 +2389,7 @@ public static class ChaiteGameProbe
             if (!booted) return;
             ticks++;
             if(scenario.DirectSpawn && ticks==directSpawnTick) SpawnDirectEncounter();
-            if(scenario.DirectSpawn && !IsScopeNegative && ticks==takeoverTick) StageRequestedPhase();
+            if(scenario.DirectSpawn && !IsScopeNegative && !IsMonitorFixture && ticks==takeoverTick) StageRequestedPhase();
             Game.screenPosition=Game.player[0].Center-new Vector2(Game.screenWidth/2f,Game.screenHeight/2f);
             Game.autoSave = false;
             Game.SettingPlayWhenUnfocused = true;
@@ -2442,6 +2449,23 @@ public static class ChaiteGameProbe
         var p=Game.player[0];
         if(playerReturnedTick!=ticks) throw new InvalidOperationException("Native Player.Update did not return at tick "+ticks);
         nativeFrames++;
+        if (IsMonitorFixture)
+        {
+            var monitorState = SessionState();
+            if (monitorState == "Monitoring")
+            {
+                if (monitorArmedTick < 0) monitorArmedTick = ticks;
+                monitorPassiveFrames++;
+                var applied = typeof(Chaite.Plugin.Runtime).GetField("_frameApplied", BindingFlags.NonPublic | BindingFlags.Static);
+                if ((bool)applied.GetValue(null))
+                    throw new InvalidOperationException("Monitor replayed player controls at tick " + ticks);
+            }
+            if (monitorCombatTick < 0 && monitorState == "EngagedAlive")
+            {
+                monitorCombatTick = ticks;
+                Log("MONITOR_TAKEOVER armed=" + monitorArmedTick + " spawn=" + directSpawnTick + " combat=" + ticks + " passiveFrames=" + monitorPassiveFrames);
+            }
+        }
         if(IsScopeNegative)
         {
             AfterScopeNegativeUpdate(p);
@@ -3189,6 +3213,10 @@ public static class ChaiteGameProbe
     }
     static bool EncounterFixtureReady()
     {
+        if (IsMonitorFixture)
+            return monitorArmedTick == takeoverTick && monitorPassiveFrames >= 120 &&
+                monitorCombatTick >= directSpawnTick && monitorCombatTick <= directSpawnTick + 1 &&
+                directSpawnCompleted && !phaseStageAttempted;
         return scenario!=null && (scenario.DirectSpawn?
             directSpawnAttempted && directSpawnCompleted && phaseStageAttempted && phaseStaged &&
                 phaseVerifiedAtTakeover && actualTakeoverTick==takeoverTick:
@@ -3273,7 +3301,7 @@ public static class ChaiteGameProbe
         // result separate from a campaign win rate all the way into readiness
         // evaluation.
         bool stagedPhaseFixture=scenario!=null && scenario.DirectSpawn;
-        string evidenceKind=stagedPhaseFixture?"staged-native-phase-regression":"isolated-native-encounter";
+        string evidenceKind=IsMonitorFixture?"native-monitor-arrival-fixture":stagedPhaseFixture?"staged-native-phase-regression":"isolated-native-encounter";
         bool readinessEligible=!stagedPhaseFixture;
         int reportedBossLife;
         var bossLifeObservation=BuildBossLifeObservation(win,out reportedBossLife);
@@ -3285,6 +3313,7 @@ public static class ChaiteGameProbe
             {"requestedPhase",requestedPhase},{"requestedTakeoverTick",takeoverTick},{"actualTakeoverTick",actualTakeoverTick},
             {"directSpawn",scenario!=null && scenario.DirectSpawn},{"directSpawnTick",directSpawnTick},
             {"directSpawnAttempted",directSpawnAttempted},{"directSpawnCompleted",directSpawnCompleted},
+            {"monitorArmedTick",monitorArmedTick},{"monitorCombatTick",monitorCombatTick},{"monitorPassiveFrames",monitorPassiveFrames},
             {"phaseStageAttempted",phaseStageAttempted},{"phaseStaged",phaseStaged},
             {"phaseVerifiedAtTakeover",phaseVerifiedAtTakeover},{"phaseStage",phaseStageReport},
             {"takeoverNativeSnapshot",takeoverNativeSnapshot},{"encounterFixtureReady",EncounterFixtureReady()},

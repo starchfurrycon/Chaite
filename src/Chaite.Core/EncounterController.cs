@@ -24,6 +24,22 @@ namespace Chaite.Core
         public bool IsControlling => State == SessionState.PreparingBoss || State == SessionState.AwaitingBossSpawn ||
                                      State == SessionState.EngagedAlive || State == SessionState.EngagedDeadWaitingRespawn;
         public bool DiedDuringSession => _died;
+        public bool IsSessionActive => IsControlling || State == SessionState.Monitoring;
+
+        public StateUpdate ArmMonitoring(EncounterObservation observation)
+        {
+            if (IsSessionActive)
+                return Snapshot(AudioCue.None, false, false);
+            ResetSessionData();
+            var previous = State;
+            if (observation == null || observation.PlayerDead || observation.HasEncounter || !observation.StartAuthorized)
+            {
+                State = SessionState.RejectedNoEncounter;
+                return Result(previous, AudioCue.UntestedLoadout, false, true);
+            }
+            State = SessionState.Monitoring;
+            return Result(previous, AudioCue.MonitorArmed, false, false);
+        }
 
         public StateUpdate Activate(EncounterObservation observation)
         {

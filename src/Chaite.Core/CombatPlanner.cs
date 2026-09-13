@@ -244,6 +244,50 @@ namespace Chaite.Core
             return true;
         }
 
+        public static FormulaRoute SelectMonitorRoute(CombatSnapshot snapshot,
+            int bossType)
+        {
+            string reason;
+            if (!FormulaMobilityContract.TryValidate(snapshot, bossType, out reason))
+                return FormulaRoute.None;
+            return FormulaRouteCatalog.Select(bossType,
+                snapshot.Player.WingAccessoryItemType,
+                snapshot.Mobility.EyeShieldDash.EquipmentIdentity ==
+                    DashEquipmentIdentity.ShieldOfCthulhuItem3097 ? 3097 : 0,
+                false,
+                snapshot.Mobility.SelectedMountIdentityKnown ?
+                    snapshot.Mobility.SelectedMountType : -1, false);
+        }
+
+        public bool PrepareForMonitoredFormulaEncounter(CombatSnapshot snapshot,
+            int bossType, FormulaRoute armedRoute, out string reason)
+        {
+            if (!SupportedBossPolicy.IsSupportedNativeSnapshot(snapshot, out reason))
+                return false;
+            if (armedRoute == FormulaRoute.None ||
+                !FormulaRouteCatalog.BelongsToBoss(armedRoute, bossType) ||
+                SelectMonitorRoute(snapshot, bossType) != armedRoute)
+            {
+                reason = FormulaRouteCatalog.Refusal;
+                return false;
+            }
+            // A manually summoned Boss needs no bait, critter-kill weapon or
+            // summon-plan certificate. Revalidate combat readiness on arrival.
+            Reset();
+            OutputRouteProfile outputRoute;
+            SummonWhipOutputController summonWhip;
+            float admittedDps;
+            if (!TryCreateOutputAdmission(snapshot, 0f, out outputRoute,
+                out summonWhip, out admittedDps, out reason)) return false;
+            if (snapshot.Weapon.NativeProfileRequired)
+            {
+                if (summonWhip != null) LatchSummonWhipOutput(summonWhip, 0f);
+                else LatchOutputRoute(in outputRoute, 0f);
+            }
+            _formulaRoute = armedRoute;
+            return true;
+        }
+
         /// <summary>
         /// Production-only active encounter admission when the caller has a
         /// Core snapshot but no separate native type-list observation. The
@@ -470,6 +514,8 @@ namespace Chaite.Core
             var plan = NewPlan(snapshot);
             if (snapshot?.Player == null || snapshot.Player.Dead)
                 return plan;
+            if (_formulaRoute != FormulaRoute.None)
+                return PlanFormula(snapshot);
             if (snapshot.Mobility != null && snapshot.Mobility.MountActive)
                 return UnsupportedActiveMountPlan(plan,
                     TacticalMode.EmergencyEvade);
@@ -688,6 +734,45 @@ namespace Chaite.Core
         }
 
         /// <summary>Low-cost defensive loop used while a scheduled or issued summon is pending.</summary>
+        private ControlPlan PlanFormula(CombatSnapshot snapshot)
+        {
+            LastCandidateCount = 0;
+            var plan = NewPlan(snapshot);
+            var target = default(TargetSnapshot);
+            var found = false;
+            foreach (var candidate in snapshot.Targets)
+                if (FormulaRouteCatalog.BelongsToBoss(_formulaRoute, candidate.Type))
+                { target = candidate; found = true; break; }
+            if (!found) return plan;
+            if (SelectMonitorRoute(snapshot, target.Type) != _formulaRoute)
+                return UnsupportedMobilityRoutePlan(plan, "已锁定的公式机动配置发生变化");
+            FormulaScriptInput input;
+            if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
+                return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
+            var script = FormulaScriptController.Tick(in input);
+            if (!script.Accepted)
+                return UnsupportedMobilityRoutePlan(plan, "未识别的公式 Boss 阶段");
+            string reason;
+            if (snapshot.Weapon.NativeProfileRequired && !EnsureLiveOutput(snapshot, 0f, out reason))
+                return UnsupportedOutputRoutePlan(plan, reason);
+            StampOutputRoute(ref plan);
+            plan.FormulaRoute = _formulaRoute;
+            plan.StrategyId = target.Type == 370 ? "formula-fishron" : "formula-empress";
+            plan.PhaseId = script.Phase;
+            plan.TacticalMode = TacticalMode.StablePattern;
+            plan.TargetKey = target.Key;
+            plan.Horizontal = script.Horizontal;
+            plan.Jump = script.Jump && script.Vertical < 0;
+            plan.JumpAction = plan.Jump ? JumpAction.Default : JumpAction.Release;
+            plan.Drop = script.Vertical > 0;
+            plan.Dash = script.Dash;
+            if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
+                return UnsupportedOutputRoutePlan(plan, reason);
+            ApplyConsumables(snapshot, ref plan);
+            RememberPlan(plan);
+            return plan;
+        }
+
         public ControlPlan PlanSurvival(CombatSnapshot snapshot)
         {
             var plan = NewPlan(snapshot);
