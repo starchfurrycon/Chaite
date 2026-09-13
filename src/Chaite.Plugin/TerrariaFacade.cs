@@ -978,6 +978,9 @@ namespace Chaite.Plugin
                 out selectedMountType);
             var mobility = snapshot.Mobility;
             mobility.MountActive = mountActive;
+            mobility.FormulaAccessoryScanKnown = true;
+            mobility.UnexpectedFormulaMobilityItemType =
+                functionalIdentity.UnexpectedFormulaMobilityItemType;
             PublishMountIdentities(mobility, mountActive,
                 mountActive ? _mountTypeId(mount) : -1, hasMount,
                 selectedMountItemType, selectedMountType);
@@ -1225,6 +1228,7 @@ namespace Chaite.Plugin
             var gravityGlobeSources = 0;
             var shieldSources = 0;
             var conflictingDashSources = 0;
+            var unexpectedFormulaMobilityItemType = 0;
             // Player.UpdateEquips applies functional accessories from slots
             // 3..9 after IsItemSlotUnlockedAndUsable and GetEffectiveArmor.
             // Mirror that read-only identity path; never call ApplyEquipFunctional.
@@ -1248,6 +1252,12 @@ namespace Chaite.Plugin
                 if (type == 1131) gravityGlobeSources++;
                 if (type == 3097) shieldSources++;
                 else if (type == 977 || type == 984) conflictingDashSources++;
+                if (FormulaMobilityContract.IsMobilityAccessory(type) &&
+                    type != FormulaMobilityContract.DemonWingsItem &&
+                    type != FormulaMobilityContract.LightningBootsItem &&
+                    type != FormulaMobilityContract.ShieldOfCthulhuItem &&
+                    unexpectedFormulaMobilityItemType == 0)
+                    unexpectedFormulaMobilityItemType = type;
             }
             state.FunctionalEquipmentIdentityKnown = true;
             state.WingAccessoryItemType = wingSources == 0 ? 0 : wingSources == 1 ? wingType : -1;
@@ -1268,7 +1278,13 @@ namespace Chaite.Plugin
             var dash = shieldSources == 1 && conflictingDashSources == 0
                 ? DashEquipmentIdentity.ShieldOfCthulhuItem3097
                 : DashEquipmentIdentity.Unknown;
-            return new FunctionalMobilityIdentity { Gravity = gravity, Dash = dash };
+            return new FunctionalMobilityIdentity
+            {
+                Gravity = gravity,
+                Dash = dash,
+                UnexpectedFormulaMobilityItemType =
+                    unexpectedFormulaMobilityItemType
+            };
         }
 
         private bool TryReadActiveGravitationBuff(object player, out bool active)
@@ -4615,6 +4631,7 @@ namespace Chaite.Plugin
         {
             public GravityControlIdentity Gravity;
             public DashEquipmentIdentity Dash;
+            public int UnexpectedFormulaMobilityItemType;
         }
 
         private void SetControl(object player, string name, bool value) => _controls[name](player, value);

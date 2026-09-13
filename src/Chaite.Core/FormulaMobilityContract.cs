@@ -4,6 +4,11 @@ namespace Chaite.Core
     {
         public const int DemonWingsItem = 492;
         public const int LightningBootsItem = 898;
+        public const int ShieldOfCthulhuItem = 3097;
+        public static bool IsMobilityAccessory(int type) =>
+            type == DemonWingsItem || type == LightningBootsItem ||
+            type == ShieldOfCthulhuItem || type == 492 || type == 761 ||
+            type == 2609 || type == 984 || type == 4981 || type == 3367;
         public static bool TryValidate(CombatSnapshot s, int boss, out string reason)
         {
             if (s == null || s.Player == null || s.Mobility == null ||
