@@ -290,6 +290,9 @@ namespace Chaite.Plugin
                         RejectUnsupportedBoss(player, startPlanReason);
                         return;
                     }
+                    // F8 now arms a passive monitor. The player performs the
+                    // summon manually; once the reviewed Boss root appears,
+                    // the existing fixed formula controller takes over.
                     var start = beforeStart.HasEncounter
                         ? new BossStartTick
                         {
@@ -303,8 +306,12 @@ namespace Chaite.Plugin
                                 StillValid = _startPlan != null &&
                                     _startTicks <= _startPlan.TimeoutTicks
                             }
-                            : _game.ExecuteBossStart(player, _startPlan,
-                                _startTicks, _summonIssued);
+                            : new BossStartTick
+                            {
+                                Issued = false,
+                                StillValid = true,
+                                ControlsApplied = false
+                            };
                     _summonIssued |= start.Issued;
                     _frameApplied = start.ControlsApplied;
                     if (start.Issued)
