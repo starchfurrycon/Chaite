@@ -1974,7 +1974,8 @@ namespace Chaite.Core
                     {
                         var separation = liveBounds.SeparationSquared(predicted.After);
                         if (separation < 14400f)
-                            risk += _settings.NearMissPenalty * (1f - separation / 14400f) * timeWeight;
+                            risk += NearMissPenalty(_relevantThreats[i]) *
+                                (1f - separation / 14400f) * timeWeight;
                     }
                 }
                 var beamOffset = (tick / step - 1) * _relevantBeams.Count;
@@ -1994,7 +1995,8 @@ namespace Chaite.Core
                     {
                         var separation = BeamGeometry.SeparationSquared(playerSweep, beam.Shape);
                         if (separation < 14400f)
-                            risk += _settings.NearMissPenalty * (1f - separation / 14400f) * timeWeight;
+                            risk += NearMissPenalty(_relevantBeams[i]) *
+                                (1f - separation / 14400f) * timeWeight;
                     }
                 }
                 previousBounds = bounds;
@@ -2528,7 +2530,7 @@ namespace Chaite.Core
                     {
                         var dashTimeWeight = 1f /
                             (1f + elapsedTick * .035f);
-                        risk += _settings.NearMissPenalty *
+                        risk += NearMissPenalty(threat) *
                             (1f - dashSeparation / 14400f) * dashTimeWeight;
                     }
                     continue;
@@ -2549,7 +2551,7 @@ namespace Chaite.Core
                     {
                         var curvedTimeWeight = 1f /
                             (1f + elapsedTick * .035f);
-                        risk += _settings.NearMissPenalty *
+                        risk += NearMissPenalty(threat) *
                             (1f - curvedSeparation / 14400f) *
                             curvedTimeWeight;
                     }
@@ -2563,7 +2565,7 @@ namespace Chaite.Core
                 if (separation < 14400f)
                 {
                     var timeWeight = 1f / (1f + elapsedTick * .035f);
-                    risk += _settings.NearMissPenalty *
+                    risk += NearMissPenalty(threat) *
                         (1f - separation / 14400f) * timeWeight;
                 }
             }
@@ -3148,6 +3150,16 @@ namespace Chaite.Core
             return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
                 ? _settings.ProjectileSafetyMargin + 28f
                 : _settings.ProjectileSafetyMargin;
+        }
+
+        private float NearMissPenalty(in ThreatSnapshot threat)
+        {
+            // The homing 873 streak tracks the candidate body, so a small
+            // separation now can become a hit one native tick later. Price
+            // that near miss more heavily than an ordinary projectile graze.
+            return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
+                ? _settings.NearMissPenalty * 1.5f
+                : _settings.NearMissPenalty;
         }
 
         private static bool HasRainbowStreakThreat(CombatSnapshot snapshot)

@@ -163,6 +163,10 @@ made.
   to the broad envelope. The remaining grazes come from the planner choosing a
   path that the correct homing model still intersects; the next work is scoring
   / candidate diversity for the 873 homing cone, not the motion model itself.
+- Raised the near-miss penalty for the 873 homing streak by 1.5x. The three
+  expert night seeds then reported 1/1/1 hits (previously 3/1/1), still zero
+  deaths. This is the first scoring change to reproducibly reduce the night
+  Empress grazes across all three seeds.
 
 ## Git
 
