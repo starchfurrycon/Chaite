@@ -95,6 +95,17 @@ made.
   `dashType`, so the reviewed shield-dash route has no native edge in this
   fixture. Fixing that refresh path is required before the daytime-Empress
   formula can be exercised end to end.
+- Expert daytime-Empress, same deterministic seed, no longer dies in the early
+  pre-dash window: the 600-tick run reported 0 deaths / 0 hits. A longer
+  24000-tick run still dies once at about native tick 960 and is classified as
+  a loss, so the daytime-Empress route is not yet a high-reliability win.
+- Product direction: support multiple equivalent lower-bound routes rather
+  than one fixed loadout. Candidate routes include certified dash, Witch's
+  Broom / other flight mounts, wings + mobility accessories, and multi-jump +
+  feather-fall for the daytime Empress; dash, wings, or high-speed mounts for
+  Duke Fishron. The Witch's Broom model is currently only kinematic and is
+  still marked `ProductionClosureCertified=false`, so it cannot yet authorize
+  production input; this is the next route to complete.
 
 ## Git
 
