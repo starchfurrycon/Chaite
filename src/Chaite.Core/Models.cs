@@ -342,6 +342,8 @@ namespace Chaite.Core
         public bool DashLeftProbeBlocked;
         public bool DashRightProbeKnown;
         public bool DashRightProbeBlocked;
+        public bool FormulaAccessoryScanKnown;
+        public int UnexpectedFormulaMobilityItemType;
         // Capability is independent of remaining charge: no wings/rocket boots
         // and genuinely exhausted flight both have a zero resource fraction.
         public bool HasFiniteFlightResource;

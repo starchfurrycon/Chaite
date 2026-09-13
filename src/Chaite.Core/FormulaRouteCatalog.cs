@@ -11,6 +11,8 @@ namespace Chaite.Core
     public static class FormulaRouteCatalog
     {
         public const string Refusal = "这个波斯，用这个武器来打，从来没试过哦";
+        public static bool IsSupportedBoss(int bossType) =>
+            bossType == 370 || bossType == 636;
 
         public static FormulaRoute Select(int bossType, int wingItem,
             int dashItem, bool crystalAssassinSet, int mountType,

@@ -210,6 +210,23 @@ namespace Chaite.Core
                 startPlan.ExpectedBossType, out reason);
         }
 
+        public bool PrepareForSupportedFormulaEncounter(
+            CombatSnapshot snapshot, BossStartPlan startPlan,
+            out string reason)
+        {
+            if (!SupportedBossPolicy.TryValidateStartPlan(startPlan,
+                    out reason)) return false;
+            if (!FormulaRouteCatalog.IsSupportedBoss(startPlan.ExpectedBossType))
+            {
+                reason = FormulaRouteCatalog.Refusal;
+                return false;
+            }
+            if (!FormulaMobilityContract.TryValidate(snapshot,
+                    startPlan.ExpectedBossType, out reason)) return false;
+            return PrepareForExpectedEncounter(snapshot, startPlan.Id,
+                startPlan.ExpectedBossType, out reason);
+        }
+
         /// <summary>
         /// Production-only active encounter admission when the caller has a
         /// Core snapshot but no separate native type-list observation. The

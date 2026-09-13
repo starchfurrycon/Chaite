@@ -241,7 +241,7 @@ namespace Chaite.Plugin
                             return;
                         }
                         if (!joiningActiveBoss &&
-                            !_planner.PrepareForSupportedExpectedEncounter(
+                            !_planner.PrepareForSupportedFormulaEncounter(
                                 preflight, _startPlan,
                                 out reason))
                         {

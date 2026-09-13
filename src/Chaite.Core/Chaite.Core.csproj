@@ -51,6 +51,7 @@
     <Compile Include="NativeWindEmissionGate.cs" />
     <Compile Include="SummonWhipOutputContract.cs" />
     <Compile Include="BossMobilityCapability.cs" />
+    <Compile Include="FormulaMobilityContract.cs" />
     <Compile Include="FormulaRouteCatalog.cs" />
     <Compile Include="ClassicSecondaryBossContract.cs" />
     <Compile Include="OrdinarySecondaryBossContracts.cs" />
