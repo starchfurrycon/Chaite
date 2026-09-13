@@ -47,9 +47,10 @@ meant to replace blind scoring tuning with per-attack deterministic responses.
   flips the orbit when the nearest live trail lies ahead of the current loop,
   matching the guide's "never retrace the path, fly to fresh space" rule.
 - State 6 (Sun Dance) no longer uses a tangent orbit. It moves vertically
-  toward the Empress body line with `PerpendicularY`, which matches the guide
+  toward the Empress body line with `-PerpendicularY`, which matches the guide
   "stay near the pivot where the beam is slowest": player below -> up,
-  player above -> down.
+  player above -> down. `PerpendicularY` itself is world-space signed, so the
+  negation converts it into the player-gravity `VerticalIntent` convention.
 - State 1 with the next fixed table entry 8/9 keeps the perpendicular charge
   lane reservation. States 4/7/11 retain vertical lane escape for lance walls.
 - `EmpressSunDanceMovesTowardPivotLine` regression pins the up/down sign

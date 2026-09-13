@@ -205,7 +205,7 @@ namespace Chaite.Tests
                 Directive;
             False(belowPlan.RequestControlReturn, belowPlan.ControlReturnReason);
             Equal(0, belowPlan.HorizontalIntent);
-            Equal(-1, belowPlan.VerticalIntent);
+            Equal(1, belowPlan.VerticalIntent);
 
             var above = EmpressScene(E("sun-above", 6, 100, 3, 0));
             above.Player.Position = new Vec2(1500f, 300f);
@@ -213,7 +213,7 @@ namespace Chaite.Tests
                 Directive;
             False(abovePlan.RequestControlReturn, abovePlan.ControlReturnReason);
             Equal(0, abovePlan.HorizontalIntent);
-            Equal(1, abovePlan.VerticalIntent);
+            Equal(-1, abovePlan.VerticalIntent);
         }
 
         private static void MoonLordAcceptsEveryHeadHandAndTrueEyeClockSegment()

@@ -7908,11 +7908,13 @@ namespace Chaite.Core
                         // deterministic guide response is vertical motion
                         // toward that pivot line, not an orbiting tangent that
                         // can carry the player through a faster outer sweep.
-                        // PerpendicularY returns the upward/downward intent
-                        // that closes the world-space gap toward the Empress
-                        // center: below -> up, above -> down.
+                        // PerpendicularY encodes the world-space sign, while
+                        // VerticalIntent is positive Up in player-gravity
+                        // coordinates. Negate it so below-the-boss becomes an
+                        // upward input and above-the-boss becomes a downward
+                        // input, exactly like the original native rule.
                         horizontal = 0;
-                        vertical = PerpendicularY(s.Player, t);
+                        vertical = -PerpendicularY(s.Player, t);
                     }
                     break;
                 case 7:
