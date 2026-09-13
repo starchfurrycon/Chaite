@@ -167,6 +167,10 @@ made.
   expert night seeds then reported 1/1/1 hits (previously 3/1/1), still zero
   deaths. This is the first scoring change to reproducibly reduce the night
   Empress grazes across all three seeds.
+- Re-published the reviewed Shield-of-Cthulhu dash state at `Player.Update`
+  return for the daytime-Empress probe. The same expert daytime seed now
+  reports 0 deaths / 0 hits across the 600-tick smoke, the first daytime
+  no-hit window achieved in the isolated fixture.
 
 ## Git
 

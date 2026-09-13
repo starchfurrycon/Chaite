@@ -1116,6 +1116,17 @@ public static class ChaiteGameProbe
     public static void PlayerReturned(Player player,string location)
     {
         if(booted && player.whoAmI==0) playerReturnedTick=ticks;
+        if(booted && player.whoAmI==0 && scenario!=null && scenario.Id=="empress-day")
+        {
+            // Player.Update has already run its accessory functional pass and
+            // reset the dash fields in the dedicated-server headless path.
+            // Re-publish the reviewed Shield-of-Cthulhu edge before ApplyPlan
+            // captures the mobility snapshot, so the dash controller has a
+            // real native state to score this frame.
+            player.dashType=2;
+            player.dashDelay=0;
+            player.dashTime=0;
+        }
         if(IsMotion && motionFrame!=null && player.whoAmI==0)
         {
             if(motionFrame.ContainsKey("postPlayer")) throw new InvalidOperationException("Multiple native Player.Update returns in one motion frame");
