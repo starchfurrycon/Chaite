@@ -1570,6 +1570,7 @@ public static class ChaiteGameProbe
             // keeps it in the hotbar so the real Truffle Worm path can select
             // it before the special bait is consumed.
             player.inventory[2].SetDefaults(229);
+            Log("FISHRON_ROD_FIXTURE type="+player.inventory[2].type+" fishingPole="+player.inventory[2].fishingPole+" bait="+player.inventory[1].type);
         }
         player.inventory[54].SetDefaults(ammoType);
         player.inventory[54].stack=9999;
