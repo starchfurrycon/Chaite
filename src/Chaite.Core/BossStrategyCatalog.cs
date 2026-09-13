@@ -7995,8 +7995,7 @@ namespace Chaite.Core
             phase = (genuinelyEnraged ? "day-rage-" :
                 lethalDayContract ? "day-lethal-" : "night-") +
                 (second ? "p2-" : "p1-") + phase;
-            var preferDash = dash || state == 2 &&
-                HasRainbowStreakThreat(s) || pendingHorizontalDash &&
+            var preferDash = dash || pendingHorizontalDash &&
                 HasRainbowStreakThreat(s);
             var result = Decision(s, t, phase, pattern, distance,
                 lethalDayContract ? -40 : -190, horizontal, vertical,
