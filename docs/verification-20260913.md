@@ -143,6 +143,12 @@ made.
   so the remaining grazes are near the sampling/noise boundary rather than a
   single missing margin. Further no-hit work should target the native 873/923
   age/scale capture rather than blindly increasing the safety cushion.
+- Decompiled `Projectile.AI_180_FairyQueenSunDance` (type 923): the existing
+  `BeamGeometry` scale and rotation formulas match native, but native also moves
+  the beam origin to the live Empress NPC center every tick. The current
+  snapshot uses the projectile position captured at one frame, so the next
+  correction is to couple the 923 beam origin to the Empress body in the
+  candidate rollout rather than enlarge the margin further.
 
 ## Git
 
