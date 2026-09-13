@@ -771,11 +771,59 @@ namespace Chaite.Core
             plan.JumpAction = plan.Jump ? JumpAction.Default : JumpAction.Release;
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
+            int hazardVertical;
+            int hazardHorizontal;
+            if (TryFixedFishronHazardEscape(snapshot, out hazardHorizontal,
+                    out hazardVertical))
+            {
+                plan.Horizontal = hazardHorizontal;
+                plan.Jump = hazardVertical < 0;
+                plan.JumpAction = plan.Jump ? JumpAction.Default : JumpAction.Release;
+                plan.Drop = hazardVertical > 0;
+                plan.Dash = false;
+                plan.PhaseId = "fishron-known-hazard-escape";
+            }
             if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
             ApplyConsumables(snapshot, ref plan);
             RememberPlan(plan);
             return plan;
+        }
+
+        private static bool TryFixedFishronHazardEscape(CombatSnapshot snapshot,
+            out int horizontal, out int vertical)
+        {
+            horizontal = 0;
+            vertical = 0;
+            if (snapshot?.Player == null || snapshot.Threats == null) return false;
+            var player = snapshot.Player.Center;
+            var best = float.MaxValue;
+            ThreatSnapshot selected = default(ThreatSnapshot);
+            var found = false;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                // Fishron Sharkrons and bubbles are the only explicitly
+                // reviewed hazard identities in this fixed branch.
+                if (threat.Type != 371 && threat.Type != 372 &&
+                    threat.Type != 373 && threat.Type != 384 &&
+                    threat.Type != 385 && threat.Type != 386) continue;
+                var center = new Vec2(threat.Position.X + threat.Width * .5f,
+                    threat.Position.Y + threat.Height * .5f);
+                var dx = center.X - player.X;
+                var dy = center.Y - player.Y;
+                var dist = dx * dx + dy * dy;
+                if (float.IsNaN(dist) || float.IsInfinity(dist) || dist > 320f * 320f) continue;
+                var toward = dx * threat.Velocity.X + dy * threat.Velocity.Y;
+                if (toward > 0f && dist > 128f * 128f) continue;
+                if (dist < best) { best = dist; selected = threat; found = true; }
+            }
+            if (!found) return false;
+            var selectedCenter = new Vec2(selected.Position.X + selected.Width * .5f,
+                selected.Position.Y + selected.Height * .5f);
+            vertical = selectedCenter.Y >= player.Y ? -1 : 1;
+            horizontal = selectedCenter.X >= player.X ? -1 : 1;
+            return true;
         }
 
         public ControlPlan PlanSurvival(CombatSnapshot snapshot)
