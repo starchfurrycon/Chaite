@@ -13,16 +13,23 @@ $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $gamePath = [IO.Path]::GetFullPath($TerrariaExe)
 $facadePath = Join-Path $projectRoot 'src\Chaite.Plugin\TerrariaFacade.cs'
 $jumpReaderPath = Join-Path $projectRoot 'src\Chaite.Plugin\NativeJumpReader.cs'
+$flightReaderPath = Join-Path $projectRoot 'src\Chaite.Plugin\NativeFlightReader.cs'
+$grappleReaderPath = Join-Path $projectRoot 'src\Chaite.Plugin\NativeGrappleReader.cs'
+$broomReaderPath = Join-Path $projectRoot 'src\Chaite.Plugin\NativeWitchBroomReader.cs'
 $pluginPath = Join-Path $projectRoot 'src\Chaite.Plugin\bin\Release\net48\Chaite.Plugin.dll'
 $patcherPath = Join-Path $projectRoot 'src\Chaite.Patcher\bin\Release\net48\Chaite.Patcher.exe'
 $cecilPath = Join-Path $projectRoot 'src\Chaite.Patcher\bin\Release\net48\Mono.Cecil.dll'
-foreach ($required in @($gamePath, $facadePath, $jumpReaderPath, $pluginPath, $patcherPath, $cecilPath)) {
+foreach ($required in @($gamePath, $facadePath, $jumpReaderPath, $flightReaderPath,
+    $grappleReaderPath, $broomReaderPath, $pluginPath, $patcherPath, $cecilPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing required input: $required" }
 }
 
 $sourceHashBefore = (Get-FileHash -LiteralPath $gamePath -Algorithm SHA256).Hash
 $facadeSourceHash = (Get-FileHash -LiteralPath $facadePath -Algorithm SHA256).Hash
 $jumpReaderSourceHash = (Get-FileHash -LiteralPath $jumpReaderPath -Algorithm SHA256).Hash
+$flightReaderSourceHash = (Get-FileHash -LiteralPath $flightReaderPath -Algorithm SHA256).Hash
+$grappleReaderSourceHash = (Get-FileHash -LiteralPath $grappleReaderPath -Algorithm SHA256).Hash
+$broomReaderSourceHash = (Get-FileHash -LiteralPath $broomReaderPath -Algorithm SHA256).Hash
 $expectedSourceHash = '960A03BFF6050CF7BE16DFC1A7B19E10FC2C4F8F835A6A3B135A50DD9E6BA2F3'
 if ($sourceHashBefore -ne $expectedSourceHash) { throw 'Live executable does not match the verified vanilla 1.4.5.8 SHA-256; refusing to guess an API contract.' }
 if ($PatchCopy -and [string]::IsNullOrWhiteSpace($OutputDirectory)) { throw '-PatchCopy requires a workspace artifacts OutputDirectory.' }
@@ -107,14 +114,18 @@ function Is-MetadataCall($Instruction, [string]$Owner, [string]$Name) {
 try {
     $source = Get-Content -LiteralPath $facadePath -Raw -Encoding UTF8
     $source += [Environment]::NewLine + (Get-Content -LiteralPath $jumpReaderPath -Raw -Encoding UTF8)
+    $source += [Environment]::NewLine + (Get-Content -LiteralPath $flightReaderPath -Raw -Encoding UTF8)
+    $source += [Environment]::NewLine + (Get-Content -LiteralPath $grappleReaderPath -Raw -Encoding UTF8)
+    $source += [Environment]::NewLine + (Get-Content -LiteralPath $broomReaderPath -Raw -Encoding UTF8)
     $owners = @{
-        _mainType = 'Terraria.Main'; playerType = 'Terraria.Player'; npcType = 'Terraria.NPC'
+        _mainType = 'Terraria.Main'; mainType = 'Terraria.Main'; playerType = 'Terraria.Player'; npcType = 'Terraria.NPC'
         projectileType = 'Terraria.Projectile'; itemType = 'Terraria.Item'; entityType = 'Terraria.Entity'
         worldGenType = 'Terraria.WorldGen'; mountType = 'Terraria.Mount'; tileType = 'Terraria.Tile'
-        mountDataType = 'Terraria.Mount/MountData'
+        worldFileDataType = 'Terraria.IO.WorldFileData'
+        mountDataType = 'Terraria.Mount/MountData'; playerInputType = 'Terraria.GameInput.PlayerInput'
     }
-    $types = @{ bool = 'System.Boolean'; byte = 'System.Byte'; int = 'System.Int32'; float = 'System.Single'; double = 'System.Double'
-        ushort = 'System.UInt16'; 'bool[]' = 'System.Boolean[]'; 'float[]' = 'System.Single[]' }
+    $types = @{ bool = 'System.Boolean'; byte = 'System.Byte'; sbyte = 'System.SByte'; int = 'System.Int32'; float = 'System.Single'; double = 'System.Double'
+        Guid = 'System.Guid'; ushort = 'System.UInt16'; 'bool[]' = 'System.Boolean[]'; 'int[]' = 'System.Int32[]'; 'float[]' = 'System.Single[]' }
     $pattern = 'ReflectionAccess\.(?<op>Getter|Setter|StaticGetter|StaticSetter|PropertyGetter|PropertySetter|StaticPropertyGetter|MethodGetter)<(?<type>[^>]+)>\((?<owner>\w+),\s*"(?<name>[^"]+)"\)'
     $bindings = [regex]::Matches($source, $pattern)
     $checkedBindings = 0
@@ -126,8 +137,16 @@ try {
         $operation = $binding.Groups['op'].Value
         $type = $binding.Groups['type'].Value
         $expectedType = $types[$type]
+        if ($type -eq 'object[]' -and $owner -eq 'Terraria.Main' -and $name -eq 'projectile') {
+            $expectedType = 'Terraria.Projectile[]'
+        }
+        if ($type -eq 'Array' -and $owner -eq 'Terraria.Main' -and $name -eq 'tile') {
+            $expectedType = 'Terraria.Tile[0...,0...]'
+        }
         if ($type -eq 'object') {
-            $expectedType = if ($name -eq 'mount') { 'Terraria.Mount' } else { 'Terraria.Item' }
+            $expectedType = if ($name -eq 'mount') { 'Terraria.Mount' }
+                elseif ($name -eq 'ActiveWorldFileData') { 'Terraria.IO.WorldFileData' }
+                else { 'Terraria.Item' }
         }
         if ([string]::IsNullOrWhiteSpace($expectedType)) { throw "Unmapped reflection generic type: $type" }
         if ($operation -eq 'MethodGetter') {
@@ -143,6 +162,38 @@ try {
 
     # Remaining constructor bindings are arrays, vector fields and dynamic control names.
     Test-Field 'Terraria.Main' 'npc' 'Terraria.NPC[]' $true
+    Test-Method 'Terraria.NPC' 'get_generation' @() 'System.Byte' $false $true
+    Test-Method 'Terraria.NPC' 'NewNPCInstanceInSlot' @('System.Int32','System.Byte') 'Terraria.NPC' $true
+    $npcDefinition = $module.GetType('Terraria.NPC')
+    $newNpcInSlot = @($npcDefinition.Methods | Where-Object {
+        $_.Name -eq 'NewNPCInstanceInSlot' -and $_.Parameters.Count -eq 2 -and
+        $_.Parameters[0].ParameterType.FullName -eq 'System.Int32' -and
+        $_.Parameters[1].ParameterType.FullName -eq 'System.Byte'
+    })
+    $generationSequence = $false
+    $generationActual = 'matching overload unavailable'
+    if ($newNpcInSlot.Count -eq 1 -and $newNpcInSlot[0].HasBody) {
+        $instructions = @($newNpcInSlot[0].Body.Instructions)
+        $getter = @($instructions | Where-Object {
+            Is-MetadataCall $_ 'Terraria.NPC' 'get_generation'
+        })
+        $setter = @($instructions | Where-Object {
+            Is-MetadataCall $_ 'Terraria.NPC' 'set_generation'
+        })
+        if ($getter.Count -eq 1 -and $setter.Count -eq 1) {
+            $getterIndex = [Array]::IndexOf($instructions, $getter[0])
+            $setterIndex = [Array]::IndexOf($instructions, $setter[0])
+            $generationSequence = $getterIndex -ge 0 -and
+                $getterIndex + 4 -lt $instructions.Count -and
+                $instructions[$getterIndex + 1].OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldc_I4_1 -and
+                $instructions[$getterIndex + 2].OpCode.Code -eq [Mono.Cecil.Cil.Code]::Add -and
+                $instructions[$getterIndex + 3].OpCode.Code -eq [Mono.Cecil.Cil.Code]::Conv_U1 -and
+                $instructions[$getterIndex + 4].OpCode.Code -eq [Mono.Cecil.Cil.Code]::Starg_S -and
+                $setterIndex -gt $getterIndex
+            $generationActual = "get=$getterIndex; +1/conv.u1/starg=$generationSequence; set=$setterIndex"
+        }
+    }
+    Add-ContractResult 'IL' 'Terraria.NPC' 'NewNPCInstanceInSlot.generation' 'exactly one get_generation followed by +1/conv.u1/starg; later set_generation' $generationActual $generationSequence
     Test-Field 'Terraria.Main' 'projectile' 'Terraria.Projectile[]' $true
     Test-Field 'Terraria.Main' 'tile' 'Terraria.Tile[0...,0...]' $true
     Test-Field 'Terraria.Player' 'inventory' 'Terraria.Item[]' $false
@@ -182,6 +233,15 @@ try {
     Test-Method -Owner 'Terraria.Player' -Name 'PickAmmo_PickAmmoItem' -ParameterTypes @('Terraria.Item') -ReturnType 'Terraria.Item' -Static $false
     Test-Method -Owner 'Terraria.Player' -Name 'GetWeaponDamage' -ParameterTypes @('Terraria.Item') -ReturnType 'System.Int32' -Static $false
     Test-Method -Owner 'Terraria.Player' -Name 'GetWeaponDamageMultiplier' -ParameterTypes @('Terraria.Item') -ReturnType 'System.Single' -Static $false
+    Test-Method -Owner 'Terraria.Player' -Name 'GetEffectiveArmor' -ParameterTypes @('System.Int32') -ReturnType 'Terraria.Item' -Static $false
+    Test-Method -Owner 'Terraria.Player' -Name 'IsItemSlotUnlockedAndUsable' -ParameterTypes @('System.Int32') -ReturnType 'System.Boolean' -Static $false
+    # Active-encounter handoff may emit one mount key edge only after this
+    # native read-only space probe succeeds. Keep the parameter and public
+    # surface pinned independently because MethodGetterWithArgument is not in
+    # the generic literal-binding extractor above.
+    Test-Method -Owner 'Terraria.Mount' -Name 'CanDismount' -ParameterTypes @('Terraria.Player') -ReturnType 'System.Boolean' -Static $false -PublicOnly $true
+    $mountDismountBridge = [regex]::IsMatch($source, 'ReflectionAccess\.MethodGetterWithArgument<bool>\(\s*mountType,\s*"CanDismount",\s*playerType\s*\)')
+    Add-ContractResult 'SourceBridge' 'TerrariaFacade' '_mountCanDismount' 'MethodGetterWithArgument<bool> through Mount.CanDismount(Player)' ([string]$mountDismountBridge) $mountDismountBridge
     Test-Field 'Terraria.ID.ContentSamples' 'ProjectilesByType' 'System.Collections.Generic.Dictionary`2<System.Int32,Terraria.Projectile>' $true $false
     Test-Method -Owner 'Terraria.GameInput.TriggersSet' -Name 'CopyInto' -ParameterTypes @('Terraria.Player') -ReturnType 'System.Void' -Static $false
     Test-Method -Owner 'Terraria.NPC' -Name 'NPCLoot' -ParameterTypes @() -ReturnType 'System.Void' -Static $false
@@ -203,11 +263,11 @@ try {
         $failed | Format-Table Kind, Owner, Name, Expected, Actual -AutoSize | Out-String | Write-Output
         throw "API contract failures: $($failed.Count) / $($results.Count)"
     }
-    Write-Output "PASS API contract: $($results.Count) checks; $checkedBindings literal bindings extracted from current TerrariaFacade.cs"
+    Write-Output "PASS API contract: $($results.Count) checks; $checkedBindings literal bindings extracted from current native adapters"
 
     if ($PatchCopy) {
         $copyPath = Join-Path $OutputDirectory 'Terraria.vanilla.readonly-copy.exe'
-        $patchedPath = Join-Path $OutputDirectory 'Terraria.chaite.four-hook-copy.exe'
+        $patchedPath = Join-Path $OutputDirectory 'Terraria.chaite.five-hook-copy.exe'
         foreach ($output in @($copyPath, $patchedPath)) {
             if (Test-Path -LiteralPath $output) { throw "Verification output already exists; preserve it and choose a fresh directory: $output" }
         }
@@ -220,7 +280,7 @@ try {
         try {
             $patchedUpdate = @($patched.GetType('Terraria.Player').Methods | Where-Object { $_.Name -eq 'Update' -and $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.Int32' })[0]
             $patchedLoot = @($patched.GetType('Terraria.NPC').Methods | Where-Object { $_.Name -eq 'NPCLoot' -and $_.Parameters.Count -eq 0 })[0]
-            foreach ($name in @('Tick','ApplyPendingInput','ApplyPendingSelection','OnNpcKilled')) {
+            foreach ($name in @('Tick','ApplyPendingInput','ApplyPendingSelection','ValidatePendingMobility','OnNpcKilled')) {
                 $method = if ($name -eq 'OnNpcKilled') { $patchedLoot } else { $patchedUpdate }
                 $calls = @($method.Body.Instructions | Where-Object { Is-MetadataCall $_ 'Chaite.Plugin.Runtime' $name })
                 if ($calls.Count -ne 1) { throw "Hook count mismatch: $name = $($calls.Count)" }
@@ -232,9 +292,39 @@ try {
                     throw "Replay hook is not immediately after native $($entry[1])"
                 }
             }
+            $horizontal = @($patchedUpdate.Body.Instructions | Where-Object {
+                Is-MetadataCall $_ 'Terraria.Player' 'HorizontalMovement'
+            })
+            if ($horizontal.Count -ne 1) {
+                throw "Native HorizontalMovement anchor count mismatch: $($horizontal.Count)"
+            }
+            $mobility = @($patchedUpdate.Body.Instructions | Where-Object {
+                Is-MetadataCall $_ 'Chaite.Plugin.Runtime' 'ValidatePendingMobility'
+            })[0]
+            if ($horizontal[0].Previous -ne $mobility -or $mobility.Previous -eq $null -or
+                $mobility.Previous.OpCode.Code -ne [Mono.Cecil.Cil.Code]::Ldarg_0 -or
+                $mobility.Previous.Previous -eq $null -or
+                $mobility.Previous.Previous.OpCode.Code -ne [Mono.Cecil.Cil.Code]::Ldarg_0) {
+                throw 'Late mobility validation hook is not immediately before native HorizontalMovement with its receiver preserved.'
+            }
+            $ordered = @('Tick','ApplyPendingInput','ApplyPendingSelection','ValidatePendingMobility') |
+                ForEach-Object {
+                    $hookName = $_
+                    @($patchedUpdate.Body.Instructions | Where-Object {
+                        Is-MetadataCall $_ 'Chaite.Plugin.Runtime' $hookName
+                    })[0]
+                }
+            if ($patchedUpdate.Body.Instructions.IndexOf($ordered[0]) -ge
+                    $patchedUpdate.Body.Instructions.IndexOf($ordered[1]) -or
+                $patchedUpdate.Body.Instructions.IndexOf($ordered[1]) -ge
+                    $patchedUpdate.Body.Instructions.IndexOf($ordered[2]) -or
+                $patchedUpdate.Body.Instructions.IndexOf($ordered[2]) -ge
+                    $patchedUpdate.Body.Instructions.IndexOf($ordered[3])) {
+                throw 'Player.Update production hook order changed.'
+            }
             if (@($patched.AssemblyReferences | Where-Object { $_.Name -eq 'Chaite.Plugin' }).Count -ne 1) { throw 'Plugin reference is not unique.' }
             if ((Get-FileHash -LiteralPath $copyPath -Algorithm SHA256).Hash -ne $sourceHashBefore) { throw 'Read-only source copy changed during patching.' }
-            Write-Output 'PASS workspace patch copy: entry Tick + post-input + post-hotbar + loot, each exactly once; source copy unchanged'
+            Write-Output 'PASS workspace patch copy: entry Tick + post-input + post-hotbar + pre-horizontal mobility validation + loot, each exactly once; source copy unchanged'
         } finally { $patched.Dispose() }
     }
 
@@ -245,9 +335,12 @@ try {
         LiveGamePath = $gamePath; SourceSha256Before = $sourceHashBefore; SourceSha256After = $sourceHashAfter
         SourceUnchanged = $sourceHashBefore -eq $sourceHashAfter; FacadeSourceSha256 = $facadeSourceHash
         NativeJumpReaderSourceSha256 = $jumpReaderSourceHash
+        NativeFlightReaderSourceSha256 = $flightReaderSourceHash
+        NativeGrappleReaderSourceSha256 = $grappleReaderSourceHash
+        NativeWitchBroomReaderSourceSha256 = $broomReaderSourceHash
         PluginSha256 = (Get-FileHash -LiteralPath $pluginPath -Algorithm SHA256).Hash
         ContractChecks = $results.Count; LiteralSourceBindings = $checkedBindings; Contracts = $results.ToArray()
-        FourHookCopyVerified = [bool]$PatchCopy; Hooks = $hookResults.ToArray()
+        FiveHookCopyVerified = [bool]$PatchCopy; Hooks = $hookResults.ToArray()
     }
     if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
         $reportPath = Join-Path $OutputDirectory 'api-contract-and-hooks.json'

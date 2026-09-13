@@ -28,9 +28,17 @@ namespace Chaite.Tests
             Run(nameof(FacadeAimPreservesWorldTargetWithInvertedGravity), FacadeAimPreservesWorldTargetWithInvertedGravity);
             Run(nameof(FacadeMinisharkUsesAmmoSpeedAndProjectileSubupdates), FacadeMinisharkUsesAmmoSpeedAndProjectileSubupdates);
             Run(nameof(FacadeClockworkUsesNativeSelectedAmmoWithoutConsumption), FacadeClockworkUsesNativeSelectedAmmoWithoutConsumption);
+            Run(nameof(FacadeDartWeaponsUseExactFallbackMotionWithoutConsumption), FacadeDartWeaponsUseExactFallbackMotionWithoutConsumption);
+            Run(nameof(FacadeStarCannonsUseNativeProjectileAndFallenStarWithoutConsumption), FacadeStarCannonsUseNativeProjectileAndFallenStarWithoutConsumption);
+            Run(nameof(FacadeMagicWeaponPublishesLiveManaContract), FacadeMagicWeaponPublishesLiveManaContract);
             Run(nameof(FacadeWeaponReadUsesLiveProjectileSample), FacadeWeaponReadUsesLiveProjectileSample);
             Run(nameof(FacadeWeaponReadRejectsMissingNativeAmmo), FacadeWeaponReadRejectsMissingNativeAmmo);
             Run(nameof(FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee), FacadeWeaponSelectionDoesNotPreferHighDpsPureMelee);
+            Run(nameof(FacadeWeaponSelectionRejectsCatalogMeleeProjectile), FacadeWeaponSelectionRejectsCatalogMeleeProjectile);
+            Run(nameof(FacadeWeaponSelectionRejectsDemonScytheBeyondVisibleIntercept), FacadeWeaponSelectionRejectsDemonScytheBeyondVisibleIntercept);
+            Run(nameof(FacadeWeaponSelectionKeepsDemonScytheWhenVisibleTargetIsReachable), FacadeWeaponSelectionKeepsDemonScytheWhenVisibleTargetIsReachable);
+            Run(nameof(FacadeWeaponSelectionFailsClosedWithoutReliableVisibility), FacadeWeaponSelectionFailsClosedWithoutReliableVisibility);
+            Run(nameof(FacadeWeaponScoreRejectsStrictRouteWithoutSolverSolution), FacadeWeaponScoreRejectsStrictRouteWithoutSolverSolution);
             Run(nameof(FacadeWeaponProfilesUseDamageModifiersAndBurstPhase), FacadeWeaponProfilesUseDamageModifiersAndBurstPhase);
             Run(nameof(FacadeWeaponProfilesResetOnAmmoAndWeaponChanges), FacadeWeaponProfilesResetOnAmmoAndWeaponChanges);
             Run(nameof(PlannerRefusesUnsupportedNativeCombinationBeforeSummoning), PlannerRefusesUnsupportedNativeCombinationBeforeSummoning);
@@ -402,6 +410,143 @@ namespace Chaite.Tests
             True(ReferenceEquals(crystal, fixture.Player.SelectedAmmo));
         }
 
+        private static void FacadeDartWeaponsUseExactFallbackMotionWithoutConsumption()
+        {
+            var darts = new[]
+            {
+                TestAmmoItem.Seed(), TestAmmoItem.PoisonDart(),
+                TestAmmoItem.CrystalDart(), TestAmmoItem.CursedDart(),
+                TestAmmoItem.IchorDart()
+            };
+            var expectedSpeeds = new[] { 14.5f, 16.5f, 31f, 17.5f,
+                17.5f };
+            var expectedDamage = new[] { 56, 62, 66, 61, 62 };
+            var expectedUpdates = new[] { 0, 0, 1, 0, 0 };
+            var expectedLifetime = new[] { 600, 600, 600, 300, 600 };
+            for (var index = 0; index < darts.Length; index++)
+            {
+                var fixture = new FacadeWeaponFixture(
+                    TestAmmoItem.DartRifle(), darts[index]);
+                var result = fixture.Read();
+                True(result.Profile.IsSupported,
+                    "facade rejected dart ammo " + darts[index].type);
+                Equal(3008, result.WeaponId);
+                Equal(darts[index].type, result.AmmoId);
+                Equal(darts[index].shoot, result.ProjectileId);
+                Equal(expectedSpeeds[index], result.ShootSpeed);
+                Equal(expectedDamage[index], result.Damage);
+                Equal(expectedUpdates[index],
+                    result.Profile.Profile.DefaultExtraUpdates);
+                Equal(expectedLifetime[index],
+                    result.Profile.Profile.DefaultLifetimeSubupdates);
+                Equal(1, fixture.SelectionCalls);
+                Equal(999, darts[index].stack);
+                Equal(0, fixture.Player.ConsumptionCalls);
+            }
+        }
+
+        private static void FacadeStarCannonsUseNativeProjectileAndFallenStarWithoutConsumption()
+        {
+            var weapons = new[]
+            {
+                TestAmmoItem.StarCannon(),
+                TestAmmoItem.SuperStarCannon()
+            };
+            var expectedProjectile = new[] { 955, 728 };
+            var expectedSpeed = new[] { 14f, 20f };
+            var expectedDamage = new[] { 55, 60 };
+            var expectedUseTime = new[] { 12, 18 };
+            for (var index = 0; index < weapons.Length; index++)
+            {
+                var fallenStar = TestAmmoItem.FallenStar();
+                var fixture = new FacadeWeaponFixture(weapons[index],
+                    fallenStar);
+                var result = fixture.Read();
+                True(result.Profile.IsSupported,
+                    "facade rejected star cannon " + weapons[index].type);
+                Equal(weapons[index].type, result.WeaponId);
+                Equal(75, result.AmmoId);
+                Equal(expectedProjectile[index], result.ProjectileId);
+                Equal(expectedSpeed[index], result.ShootSpeed);
+                Equal(expectedDamage[index], result.Damage);
+                Equal(expectedUseTime[index], result.UseTime);
+                Equal(0, result.Profile.Profile.DefaultExtraUpdates);
+                Equal(3600,
+                    result.Profile.Profile.DefaultLifetimeSubupdates);
+                Equal(Chaite.Core.OutputResourceKind.Ammunition,
+                    result.Profile.Profile.ResourceKind);
+                Equal(1, fixture.SelectionCalls);
+                Equal(999, fallenStar.stack);
+                Equal(0, fixture.Player.ConsumptionCalls);
+            }
+
+            // A live ContentSamples entry may shorten the lifetime, but it
+            // must not change the native projectile identity or consume ammo.
+            var sampledStar = TestAmmoItem.FallenStar();
+            var sampledFixture = new FacadeWeaponFixture(
+                TestAmmoItem.SuperStarCannon(), sampledStar);
+            sampledFixture.Samples[728] = new TestProjectileSample
+            {
+                extraUpdates = 0,
+                timeLeft = 240
+            };
+            var sampled = sampledFixture.Read();
+            True(sampled.Profile.IsSupported);
+            Equal(728, sampled.ProjectileId);
+            Equal(240, sampled.Profile.MaxFlightTicks);
+            Equal(999, sampledStar.stack);
+            Equal(0, sampledFixture.Player.ConsumptionCalls);
+
+            sampledStar.stack = 0;
+            False(sampledFixture.Read().HasAmmo);
+            Equal(Chaite.Core.WeaponProfileStatus.MissingAmmo,
+                sampledFixture.Read().Profile.Status);
+            Equal(0, sampledFixture.Player.ConsumptionCalls);
+        }
+
+        private static void FacadeMagicWeaponPublishesLiveManaContract()
+        {
+            var fixture = new FacadeWeaponFixture(TestAmmoItem.SpaceGun(),
+                null);
+            fixture.Player.Mana = 4;
+            fixture.Player.MaxMana = 200;
+            fixture.Player.ManaCost = .8f;
+            fixture.Player.ManaRegen = 3;
+            fixture.Player.ManaRegenCount = 19;
+            fixture.Player.ManaRegenDelay = 7.5f;
+            fixture.Player.ManaPotionDelay = 0;
+            fixture.Player.QuickManaItem = TestAmmoItem.ManaPotion();
+            var result = fixture.Read();
+            True(result.Profile.IsSupported);
+            Equal(Chaite.Core.OutputRouteKind.StraightMagic,
+                result.Profile.Profile.OutputKind);
+            Equal(4, result.Profile.ManaCostPerUse);
+            True(result.Mana.Known);
+            Equal(4, result.Mana.CurrentMana);
+            Equal(200, result.Mana.MaximumMana);
+            Equal(4, result.Mana.ManaCostPerUse);
+            Equal(3, result.Mana.RegenerationRate);
+            Equal(19, result.Mana.RegenerationCount);
+            Equal(7.5f, result.Mana.RegenerationDelay);
+            True(result.Mana.QuickManaAutomationAllowed);
+            True(result.Mana.QuickManaReleaseReady);
+            True(result.Mana.QuickManaUsableNow);
+            True(result.Mana.QuickManaItemAvailable);
+            Equal(100, result.Mana.QuickManaHeal);
+            True(result.Mana.ManaSicknessKnown);
+            Equal(0f, result.Mana.ManaSicknessReduction);
+
+            fixture.Player.ManaSick = true;
+            fixture.Player.ManaSickReduction = .2f;
+            result = fixture.Read();
+            Equal(.2f, result.Mana.ManaSicknessReduction);
+
+            fixture.Player.SpaceGun = true;
+            result = fixture.Read();
+            Equal(0, result.Profile.ManaCostPerUse);
+            Equal(0, result.Mana.ManaCostPerUse);
+        }
+
         private static void FacadeWeaponReadUsesLiveProjectileSample()
         {
             var fixture = new FacadeWeaponFixture(TestAmmoItem.Minishark(), TestAmmoItem.MusketBall());
@@ -446,6 +591,114 @@ namespace Chaite.Tests
             Equal(0, fixture.FindBestSlot());
             Equal(0, fixture.Player.ConsumptionCalls);
             Equal(999, ammo.stack);
+        }
+
+        private static void FacadeWeaponSelectionRejectsCatalogMeleeProjectile()
+        {
+            var gun = TestAmmoItem.Minishark();
+            var ammo = TestAmmoItem.MusketBall();
+            var melee = TestAmmoItem.EnchantedBoomerang();
+            var fixture = new FacadeWeaponFixture(gun, ammo);
+            fixture.Items = new object[] { melee, gun, ammo };
+            var experimental = fixture.Read();
+            True(experimental.Profile.IsSupported);
+            Equal(Chaite.Core.OutputRouteKind.MeleeProjectile,
+                experimental.Profile.Profile.OutputKind);
+            Equal(0f, fixture.Score(0));
+            True(fixture.Score(1) > 0f);
+            Equal(1, fixture.FindBestSlot());
+            Equal(0, fixture.Player.ConsumptionCalls);
+            Equal(999, ammo.stack);
+        }
+
+        private static void FacadeWeaponSelectionRejectsDemonScytheBeyondVisibleIntercept()
+        {
+            var demonScythe = TestAmmoItem.DemonScythe();
+            var spaceGun = TestAmmoItem.SpaceGun();
+            var fixture = new FacadeWeaponFixture(demonScythe, null);
+            fixture.Items = new object[] { demonScythe, spaceGun };
+
+            var target = VisibleTarget(500f, 0f);
+            // The exact type-45 path needs almost 86 ticks merely to cover
+            // 100 px. At 500 px it cannot solve inside the production 90-tick
+            // prediction horizon; the lower-paper-DPS Space Gun can.
+            Equal(0f, fixture.ScoreAtTarget(0, target, new Chaite.Core.Vec2()));
+            True(fixture.ScoreAtTarget(1, target,
+                new Chaite.Core.Vec2()) > 0f);
+            Equal(1, fixture.FindBestSlotAt(target,
+                new Chaite.Core.Vec2()));
+        }
+
+        private static void FacadeWeaponSelectionKeepsDemonScytheWhenVisibleTargetIsReachable()
+        {
+            var demonScythe = TestAmmoItem.DemonScythe();
+            var spaceGun = TestAmmoItem.SpaceGun();
+            var fixture = new FacadeWeaponFixture(demonScythe, null);
+            fixture.Items = new object[] { demonScythe, spaceGun };
+
+            var target = VisibleTarget(100f, 0f);
+            True(fixture.ScoreAtTarget(0, target,
+                new Chaite.Core.Vec2()) >
+                fixture.ScoreAtTarget(1, target,
+                    new Chaite.Core.Vec2()));
+            Equal(0, fixture.FindBestSlotAt(target,
+                new Chaite.Core.Vec2()));
+        }
+
+        private static void FacadeWeaponSelectionFailsClosedWithoutReliableVisibility()
+        {
+            var demonScythe = TestAmmoItem.DemonScythe();
+            var spaceGun = TestAmmoItem.SpaceGun();
+            // A high modifier is valid live state and makes a paper-DPS switch
+            // tempting. It must not override the currently held route while
+            // the sole planner target is blocked/unknown.
+            spaceGun.damage = 40;
+            var fixture = new FacadeWeaponFixture(demonScythe, null);
+            fixture.Items = new object[] { demonScythe, spaceGun };
+
+            var blocked = VisibleTarget(500f, 0f);
+            blocked.HasLineOfSight = false;
+            True(fixture.Score(1) > fixture.Score(0));
+            Equal(0, fixture.FindBestSlotAt(blocked,
+                new Chaite.Core.Vec2()));
+
+            var unknown = VisibleTarget(500f, 0f);
+            unknown.LineOfSightKnown = false;
+            Equal(0, fixture.FindBestSlotAt(unknown,
+                new Chaite.Core.Vec2()));
+        }
+
+        private static void FacadeWeaponScoreRejectsStrictRouteWithoutSolverSolution()
+        {
+            var demonScythe = TestAmmoItem.DemonScythe();
+            var fixture = new FacadeWeaponFixture(demonScythe, null);
+            var escaping = VisibleTarget(100f, 0f);
+            escaping.Velocity = new Chaite.Core.Vec2(20f, 0f);
+
+            // This is not merely the fixed 90-tick cutoff: the target exits
+            // the bounded type-45 hit window, so no reliable intercept exists.
+            Equal(0f, fixture.ScoreAtTarget(0, escaping,
+                new Chaite.Core.Vec2()));
+            True(fixture.Score(0) > 0f);
+        }
+
+        private static Chaite.Core.TargetSnapshot VisibleTarget(float centerX,
+            float centerY)
+        {
+            return new Chaite.Core.TargetSnapshot
+            {
+                Key = 7,
+                Position = new Chaite.Core.Vec2(centerX - 10f,
+                    centerY - 10f),
+                Velocity = new Chaite.Core.Vec2(),
+                Width = 20,
+                Height = 20,
+                Life = 100,
+                LifeMax = 100,
+                Chaseable = true,
+                LineOfSightKnown = true,
+                HasLineOfSight = true
+            };
         }
 
         private static void FacadeWeaponProfilesUseDamageModifiersAndBurstPhase()
@@ -736,6 +989,7 @@ namespace Chaite.Tests
                 Items = new object[] { weapon, ammo };
                 _facadeType = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.TerrariaFacade", true);
                 _facade = FormatterServices.GetUninitializedObject(_facadeType);
+                Set("_config", new Chaite.Plugin.ChaiteConfig());
                 Set("_inventory", new Func<object, object[]>(player => Items));
                 Set("_selectedItem", new Func<object, int>(player => 0));
                 Set("_weaponSelectionSnapshot", new Chaite.Core.WeaponSnapshot());
@@ -743,12 +997,47 @@ namespace Chaite.Tests
                 Set("_weaponDamage", new Func<object, object, int>((player, item) =>
                     (int)(((TestAmmoItem)item).damage * ((TestAmmoPlayer)player).DamageMultiplier + .000005f)));
                 Set("_weaponDamageMultiplier", new Func<object, object, float>((player, item) => ((TestAmmoPlayer)player).DamageMultiplier));
+                Set("_playerMana", new Func<object, int>(player =>
+                    ((TestAmmoPlayer)player).Mana));
+                Set("_playerMaxMana", new Func<object, int>(player =>
+                    ((TestAmmoPlayer)player).MaxMana));
+                Set("_playerManaRegen", new Func<object, int>(player =>
+                    ((TestAmmoPlayer)player).ManaRegen));
+                Set("_playerManaRegenCount", new Func<object, int>(player =>
+                    ((TestAmmoPlayer)player).ManaRegenCount));
+                Set("_playerManaRegenDelay", new Func<object, float>(player =>
+                    ((TestAmmoPlayer)player).ManaRegenDelay));
+                Set("_playerManaPotionDelay", new Func<object, int>(player =>
+                    ((TestAmmoPlayer)player).ManaPotionDelay));
+                Set("_playerManaCost", new Func<object, float>(player =>
+                    ((TestAmmoPlayer)player).ManaCost));
+                Set("_playerSpaceGun", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).SpaceGun));
+                Set("_releaseQuickMana", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).ReleaseQuickMana));
+                Set("_playerManaSick", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).ManaSick));
+                Set("_playerManaSickReduction", new Func<object, float>(player =>
+                    ((TestAmmoPlayer)player).ManaSickReduction));
+                Set("_playerDead", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).Dead));
+                Set("_playerCCed", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).CrowdControlled));
+                Set("_playerNoItems", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).NoItems));
+                Set("_playerCursed", new Func<object, bool>(player =>
+                    ((TestAmmoPlayer)player).Cursed));
+                Set("_quickManaItem", new Func<object, object>(player =>
+                    ((TestAmmoPlayer)player).QuickManaItem));
                 BindItem<int>("_itemTypeId", "type");
                 BindItem<int>("_itemStack", "stack");
                 BindItem<int>("_itemDamage", "damage");
                 BindItem<int>("_itemUseTime", "useTime");
                 BindItem<int>("_itemUseAnimation", "useAnimation");
                 BindItem<int>("_itemReuseDelay", "reuseDelay");
+                BindItem<bool>("_itemAutoReuse", "autoReuse");
+                BindItem<int>("_itemMana", "mana");
+                BindItem<int>("_itemHealMana", "healMana");
                 BindItem<int>("_itemUseStyle", "useStyle");
                 BindItem<int>("_itemPick", "pick");
                 BindItem<int>("_itemAxe", "axe");
@@ -803,11 +1092,59 @@ namespace Chaite.Tests
                 return (int)method.Invoke(_facade, new object[] { Player });
             }
 
+            public int FindBestSlotAt(Chaite.Core.TargetSnapshot target,
+                Chaite.Core.Vec2 playerCenter)
+            {
+                var method = _facadeType.GetMethod("FindBestWeaponSlot",
+                    BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new[]
+                    {
+                        typeof(object),
+                        typeof(IList<Chaite.Core.TargetSnapshot>),
+                        typeof(Chaite.Core.Vec2),
+                        typeof(Chaite.Core.WeaponSnapshot)
+                    }, null);
+                True(method != null);
+                return (int)method.Invoke(_facade, new object[]
+                {
+                    Player,
+                    new List<Chaite.Core.TargetSnapshot> { target },
+                    playerCenter,
+                    null
+                });
+            }
+
             public float Score(int slot)
             {
-                var method = _facadeType.GetMethod("WeaponScore", BindingFlags.Instance | BindingFlags.NonPublic);
+                var method = _facadeType.GetMethod("WeaponScore",
+                    BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new[] { typeof(object), typeof(object[]), typeof(int) },
+                    null);
                 True(method != null);
                 return (float)method.Invoke(_facade, new object[] { Player, Items, slot });
+            }
+
+            public float ScoreAtTarget(int slot,
+                Chaite.Core.TargetSnapshot target,
+                Chaite.Core.Vec2 playerCenter)
+            {
+                var method = _facadeType.GetMethod("WeaponScore",
+                    BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new[]
+                    {
+                        typeof(object),
+                        typeof(object[]),
+                        typeof(int),
+                        typeof(bool),
+                        typeof(Chaite.Core.Vec2),
+                        typeof(Chaite.Core.TargetSnapshot),
+                        typeof(Chaite.Core.WeaponSnapshot)
+                    }, null);
+                True(method != null);
+                return (float)method.Invoke(_facade, new object[]
+                {
+                    Player, Items, slot, true, playerCenter, target, null
+                });
             }
         }
 
@@ -979,6 +1316,22 @@ namespace Chaite.Tests
         public int ConsumptionCalls;
         public int ItemAnimation;
         public float DamageMultiplier = 1f;
+        public int Mana = 200;
+        public int MaxMana = 200;
+        public int ManaRegen;
+        public int ManaRegenCount;
+        public float ManaRegenDelay;
+        public int ManaPotionDelay;
+        public float ManaCost = 1f;
+        public bool SpaceGun;
+        public bool ReleaseQuickMana = true;
+        public bool ManaSick;
+        public float ManaSickReduction;
+        public bool Dead;
+        public bool CrowdControlled;
+        public bool NoItems;
+        public bool Cursed;
+        public TestAmmoItem QuickManaItem;
 
         private TestAmmoItem PickAmmo_PickAmmoItem(TestAmmoItem weapon) =>
             ReferenceEquals(weapon, ExpectedWeapon) ? SelectedAmmo : null;
@@ -1000,6 +1353,9 @@ namespace Chaite.Tests
         public int useTime;
         public int useAnimation;
         public int reuseDelay;
+        public bool autoReuse;
+        public int mana;
+        public int healMana;
         public int useStyle;
         public int pick;
         public int axe;
@@ -1013,12 +1369,54 @@ namespace Chaite.Tests
 
         // Exact unprefixed 1.4.5.8 fields audited from Item.SetDefaults1.
         public static TestAmmoItem Minishark() => new TestAmmoItem
-        { type = 98, damage = 6, useTime = 8, useAnimation = 8, useStyle = 5, shoot = 10, shootSpeed = 7f, useAmmo = 97 };
+        { type = 98, damage = 6, useTime = 8, useAnimation = 8, autoReuse = true, useStyle = 5, shoot = 10, shootSpeed = 7f, useAmmo = 97 };
         public static TestAmmoItem Clockwork() => new TestAmmoItem
-        { type = 434, damage = 17, useTime = 4, useAnimation = 12, reuseDelay = 14, useStyle = 5, shoot = 10, shootSpeed = 7.75f, useAmmo = 97 };
+        { type = 434, damage = 17, useTime = 4, useAnimation = 12, reuseDelay = 14, autoReuse = true, useStyle = 5, shoot = 10, shootSpeed = 7.75f, useAmmo = 97 };
+        public static TestAmmoItem StarCannon() => new TestAmmoItem
+        { type = 197, damage = 55, useTime = 12, useAnimation = 12,
+            autoReuse = true, useStyle = 5, shoot = 955, shootSpeed = 14f,
+            useAmmo = 75 };
+        public static TestAmmoItem SuperStarCannon() => new TestAmmoItem
+        { type = 4060, damage = 60, useTime = 18, useAnimation = 18,
+            autoReuse = true, useStyle = 5, shoot = 728, shootSpeed = 20f,
+            useAmmo = 75 };
         public static TestAmmoItem MusketBall() => new TestAmmoItem
         { type = 97, stack = 999, damage = 7, shoot = 14, shootSpeed = 4f, ammo = 97 };
         public static TestAmmoItem CrystalBullet() => new TestAmmoItem
         { type = 515, stack = 999, damage = 9, shoot = 89, shootSpeed = 5f, ammo = 97 };
+        public static TestAmmoItem DartRifle() => new TestAmmoItem
+        { type = 3008, damage = 52, useTime = 38, useAnimation = 38,
+            autoReuse = true, useStyle = 5, shoot = 10,
+            shootSpeed = 14.5f, useAmmo = 283 };
+        public static TestAmmoItem Seed() => new TestAmmoItem
+        { type = 283, stack = 999, damage = 4, shoot = 51,
+            shootSpeed = 0f, ammo = 283 };
+        public static TestAmmoItem PoisonDart() => new TestAmmoItem
+        { type = 1310, stack = 999, damage = 10, shoot = 267,
+            shootSpeed = 2f, ammo = 283 };
+        public static TestAmmoItem CrystalDart() => new TestAmmoItem
+        { type = 3009, stack = 999, damage = 14, shoot = 477,
+            shootSpeed = 1f, ammo = 283 };
+        public static TestAmmoItem CursedDart() => new TestAmmoItem
+        { type = 3010, stack = 999, damage = 9, shoot = 478,
+            shootSpeed = 3f, ammo = 283 };
+        public static TestAmmoItem IchorDart() => new TestAmmoItem
+        { type = 3011, stack = 999, damage = 10, shoot = 479,
+            shootSpeed = 3f, ammo = 283 };
+        public static TestAmmoItem FallenStar() => new TestAmmoItem
+        { type = 75, stack = 999, damage = 0, shoot = 0, shootSpeed = 0f,
+            ammo = 75 };
+        public static TestAmmoItem SpaceGun() => new TestAmmoItem
+        { type = 127, damage = 20, useTime = 17, useAnimation = 17,
+            autoReuse = true, useStyle = 5, shoot = 20, shootSpeed = 10f,
+            mana = 6 };
+        public static TestAmmoItem DemonScythe() => new TestAmmoItem
+        { type = 272, damage = 35, useTime = 20, useAnimation = 20,
+            useStyle = 5, shoot = 45, shootSpeed = .2f, mana = 14 };
+        public static TestAmmoItem EnchantedBoomerang() => new TestAmmoItem
+        { type = 55, damage = 17, useTime = 20, useAnimation = 20,
+            useStyle = 1, shoot = 6, shootSpeed = 10f };
+        public static TestAmmoItem ManaPotion() => new TestAmmoItem
+        { type = 189, stack = 10, healMana = 100 };
     }
 }

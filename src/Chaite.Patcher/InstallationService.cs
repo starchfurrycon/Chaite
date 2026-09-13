@@ -49,16 +49,29 @@ namespace Chaite.Patcher
         public InstallStatus Install(string terrariaExe, string payloadDirectory)
         {
             EnsureTerrariaClosed();
+            return InstallWithGameClosed(terrariaExe, payloadDirectory);
+        }
+
+        private InstallStatus InstallWithGameClosed(string terrariaExe,
+            string payloadDirectory)
+        {
             var before = GetStatus(terrariaExe);
-            if (before.State == InstallState.Installed)
-                return before;
-            if (before.State != InstallState.CleanSupported)
+            if (before.State != InstallState.CleanSupported &&
+                before.State != InstallState.Installed)
                 throw new InvalidOperationException(before.Message);
 
             var pluginSource = Path.Combine(payloadDirectory, "Chaite.Plugin.dll");
             var coreSource = Path.Combine(payloadDirectory, "Chaite.Core.dll");
-            if (!File.Exists(pluginSource) || !File.Exists(coreSource))
-                throw new FileNotFoundException("安装载荷缺少 Chaite.Plugin.dll 或 Chaite.Core.dll。", payloadDirectory);
+            var audioReadmeSource = Path.Combine(payloadDirectory, "Audio", "README.txt");
+            if (!File.Exists(pluginSource) || !File.Exists(coreSource) ||
+                !File.Exists(audioReadmeSource))
+                throw new FileNotFoundException(
+                    "安装载荷缺少 Chaite.Plugin.dll、Chaite.Core.dll 或 Audio/README.txt。",
+                    payloadDirectory);
+
+            if (before.State == InstallState.Installed)
+                return UpgradeInstalled(terrariaExe, payloadDirectory,
+                    pluginSource, coreSource);
 
             var gameDirectory = Path.GetDirectoryName(terrariaExe);
             var dataDirectory = Path.Combine(gameDirectory, "Chaite");
@@ -74,8 +87,7 @@ namespace Chaite.Patcher
 
             File.Copy(pluginSource, Path.Combine(gameDirectory, "Chaite.Plugin.dll"), true);
             File.Copy(coreSource, Path.Combine(gameDirectory, "Chaite.Core.dll"), true);
-            CopyIfMissing(Path.Combine(payloadDirectory, "config.json"), Path.Combine(dataDirectory, "config.json"));
-            CopyIfMissing(Path.Combine(payloadDirectory, "Audio", "README.txt"), Path.Combine(dataDirectory, "Audio", "README.txt"));
+            CopyUserDataPayload(payloadDirectory, dataDirectory);
 
             var temporary = Path.Combine(gameDirectory, "Terraria.exe.chaite-new");
             try
@@ -99,6 +111,61 @@ namespace Chaite.Patcher
                 InstalledUtc = DateTime.UtcNow,
                 PatcherVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString()
             };
+            WriteManifest(terrariaExe, manifest);
+            return GetStatus(terrariaExe);
+        }
+
+        private InstallStatus UpgradeInstalled(string terrariaExe,
+            string payloadDirectory, string pluginSource, string coreSource)
+        {
+            var manifest = ReadManifest(terrariaExe);
+            if (manifest == null)
+                throw new InvalidOperationException(
+                    "没有找到拆特安装清单，拒绝猜测升级源。");
+            var gameDirectory = Path.GetDirectoryName(terrariaExe);
+            var dataDirectory = Path.Combine(gameDirectory, "Chaite");
+            var backupPath = Path.Combine(dataDirectory,
+                manifest.BackupFile ?? string.Empty);
+            if (!string.Equals(manifest.GameVersion, SupportedVersion,
+                    StringComparison.Ordinal) ||
+                !File.Exists(backupPath) ||
+                !Sha256(backupPath).Equals(manifest.OriginalSha256,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "原版备份缺失、版本不符或哈希不匹配，拒绝原地升级。");
+
+            Directory.CreateDirectory(dataDirectory);
+            Directory.CreateDirectory(Path.Combine(dataDirectory, "Audio"));
+            var temporary = Path.Combine(gameDirectory,
+                "Terraria.exe.chaite-upgrade");
+            try
+            {
+                // Always rebuild the injected executable from the verified
+                // original backup. New releases may add a hook, so replacing
+                // only the managed payload would leave an old IL layout live.
+                PatchAssembly(backupPath, pluginSource, temporary);
+                ValidatePatchedAssembly(temporary);
+
+                // The old injected executable references a subset of the same
+                // stable Runtime entry points, so publish its compatible DLLs
+                // before atomically replacing the executable with the new hook
+                // layout. User config and WAV files are handled separately.
+                File.Copy(pluginSource,
+                    Path.Combine(gameDirectory, "Chaite.Plugin.dll"), true);
+                File.Copy(coreSource,
+                    Path.Combine(gameDirectory, "Chaite.Core.dll"), true);
+                CopyUserDataPayload(payloadDirectory, dataDirectory);
+                File.Replace(temporary, terrariaExe, null, true);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+
+            manifest.PatchedSha256 = Sha256(terrariaExe);
+            manifest.InstalledUtc = DateTime.UtcNow;
+            manifest.PatcherVersion = Assembly.GetExecutingAssembly()
+                .GetName().Version.ToString();
             WriteManifest(terrariaExe, manifest);
             return GetStatus(terrariaExe);
         }
@@ -150,15 +217,21 @@ namespace Chaite.Patcher
                 var runtime = plugin.Types.Single(t => t.FullName == "Chaite.Plugin.Runtime");
                 var tickReference = module.ImportReference(runtime.Methods.Single(m => m.Name == "Tick" && m.Parameters.Count == 2));
                 var inputReference = module.ImportReference(runtime.Methods.Single(m => m.Name == "ApplyPendingInput" && m.Parameters.Count == 1));
+                var mobilityReference = module.ImportReference(runtime.Methods.Single(m => m.Name == "ValidatePendingMobility" && m.Parameters.Count == 1));
                 var selectionReference = module.ImportReference(runtime.Methods.Single(m => m.Name == "ApplyPendingSelection" && m.Parameters.Count == 1));
                 var lootReference = module.ImportReference(runtime.Methods.Single(m => m.Name == "OnNpcKilled" && m.Parameters.Count == 1));
 
                 var player = module.Types.Single(t => t.FullName == "Terraria.Player");
                 var update = player.Methods.Single(m => m.Name == "Update" && m.Parameters.Count == 1 && m.Parameters[0].ParameterType.MetadataType == MetadataType.Int32);
                 var copyInput = RequireUniqueCall(update, "Terraria.GameInput.TriggersSet", "CopyInto");
+                var horizontalMovement = RequireUniqueCall(update, "Terraria.Player", "HorizontalMovement");
                 var selectHotbar = RequireUniqueCall(update, "Terraria.Player", "HandleHotbarControls");
-                if (update.Body.Instructions.IndexOf(copyInput) >= update.Body.Instructions.IndexOf(selectHotbar))
-                    throw new InvalidDataException("原版输入复制/快捷栏处理顺序不符合已验证的注入布局。");
+                if (horizontalMovement.Previous == null || horizontalMovement.Previous.OpCode != OpCodes.Ldarg_0 ||
+                    BranchTargets(update, horizontalMovement))
+                    throw new InvalidDataException("HorizontalMovement does not match the reviewed 1.4.5.8 instance-call anchor.");
+                if (update.Body.Instructions.IndexOf(copyInput) >= update.Body.Instructions.IndexOf(selectHotbar) ||
+                    update.Body.Instructions.IndexOf(selectHotbar) >= update.Body.Instructions.IndexOf(horizontalMovement))
+                    throw new InvalidDataException("原版输入复制/快捷栏/水平移动顺序不符合已验证的 1.4.5.8 注入布局。");
                 InjectAtStart(update, new[]
                 {
                     Instruction.Create(OpCodes.Ldarg_0),
@@ -173,6 +246,15 @@ namespace Chaite.Patcher
                     Instruction.Create(OpCodes.Ldarg_0),
                     Instruction.Create(OpCodes.Call, inputReference)
                 });
+                // Preserve the original instance receiver already on the stack:
+                // a second ldarg.0 is consumed by this static validation call,
+                // then the original receiver flows into HorizontalMovement.
+                InjectBefore(update, horizontalMovement, new[]
+                {
+                    Instruction.Create(OpCodes.Ldarg_0),
+                    Instruction.Create(OpCodes.Call, mobilityReference)
+                });
+                update.Body.MaxStackSize = Math.Max(update.Body.MaxStackSize, 2);
                 // Mouse-wheel / number-key selection is processed later. Restore only selection and
                 // aim here, never the full movement controls (which may have been constrained by CC).
                 InjectAfter(update, selectHotbar, new[]
@@ -211,6 +293,25 @@ namespace Chaite.Patcher
                 processor.InsertAfter(anchor, instruction);
                 anchor = instruction;
             }
+        }
+
+        private static void InjectBefore(MethodDefinition method, Instruction anchor,
+            IEnumerable<Instruction> instructions)
+        {
+            var processor = method.Body.GetILProcessor();
+            foreach (var instruction in instructions)
+                processor.InsertBefore(anchor, instruction);
+        }
+
+        private static bool BranchTargets(MethodDefinition method, Instruction target)
+        {
+            foreach (var instruction in method.Body.Instructions)
+            {
+                if (ReferenceEquals(instruction.Operand, target)) return true;
+                if (instruction.Operand is Instruction[] targets &&
+                    targets.Any(item => ReferenceEquals(item, target))) return true;
+            }
+            return false;
         }
 
         private static Instruction RequireUniqueCall(MethodDefinition method, string declaringType, string name)
@@ -264,8 +365,10 @@ namespace Chaite.Patcher
                 var update = player.Methods.Single(m => m.Name == "Update" && m.Parameters.Count == 1 && m.Parameters[0].ParameterType.MetadataType == MetadataType.Int32);
                 var tick = RequireUniqueCall(update, "Chaite.Plugin.Runtime", "Tick");
                 var input = RequireUniqueCall(update, "Chaite.Plugin.Runtime", "ApplyPendingInput");
+                var mobility = RequireUniqueCall(update, "Chaite.Plugin.Runtime", "ValidatePendingMobility");
                 var selection = RequireUniqueCall(update, "Chaite.Plugin.Runtime", "ApplyPendingSelection");
                 var copyInput = RequireUniqueCall(update, "Terraria.GameInput.TriggersSet", "CopyInto");
+                var horizontalMovement = RequireUniqueCall(update, "Terraria.Player", "HorizontalMovement");
                 var selectHotbar = RequireUniqueCall(update, "Terraria.Player", "HandleHotbarControls");
                 var instructions = update.Body.Instructions;
                 if (instructions.Count < 3 || instructions[0].OpCode != OpCodes.Ldarg_0 ||
@@ -273,8 +376,14 @@ namespace Chaite.Patcher
                     throw new InvalidDataException("Player.Update 入口 Tick 注入点验证失败。");
                 ValidatePostCallHook(copyInput, input, "原版输入复制后");
                 ValidatePostCallHook(selectHotbar, selection, "原版快捷栏处理后");
+                if (horizontalMovement.Previous != mobility || mobility.Previous == null ||
+                    mobility.Previous.OpCode != OpCodes.Ldarg_0 ||
+                    mobility.Previous.Previous == null || mobility.Previous.Previous.OpCode != OpCodes.Ldarg_0)
+                    throw new InvalidDataException("The late mobility hook is not immediately before HorizontalMovement.");
                 if (instructions.IndexOf(tick) >= instructions.IndexOf(copyInput) ||
-                    instructions.IndexOf(input) >= instructions.IndexOf(selectHotbar))
+                    instructions.IndexOf(input) >= instructions.IndexOf(selectHotbar) ||
+                    instructions.IndexOf(selection) >= instructions.IndexOf(mobility) ||
+                    instructions.IndexOf(mobility) >= instructions.IndexOf(horizontalMovement))
                     throw new InvalidDataException("Player.Update 四阶段输入处理顺序验证失败。");
 
                 var npc = module.Types.Single(t => t.FullName == "Terraria.NPC");
@@ -309,6 +418,26 @@ namespace Chaite.Patcher
         {
             if (File.Exists(source) && !File.Exists(destination))
                 File.Copy(source, destination, false);
+        }
+
+        private static void CopyUserDataPayload(string payloadDirectory,
+            string dataDirectory)
+        {
+            var audioDirectory = Path.Combine(dataDirectory, "Audio");
+            Directory.CreateDirectory(dataDirectory);
+            Directory.CreateDirectory(audioDirectory);
+
+            // User state is never replaced during an upgrade. README is the
+            // shipped slot contract, so every successful install refreshes it.
+            CopyIfMissing(Path.Combine(payloadDirectory, "config.json"),
+                Path.Combine(dataDirectory, "config.json"));
+            var readmeSource = Path.Combine(payloadDirectory, "Audio",
+                "README.txt");
+            if (!File.Exists(readmeSource))
+                throw new FileNotFoundException(
+                    "安装载荷缺少 Audio/README.txt。", readmeSource);
+            File.Copy(readmeSource,
+                Path.Combine(audioDirectory, "README.txt"), true);
         }
 
         private static void DeleteIfExists(string path)

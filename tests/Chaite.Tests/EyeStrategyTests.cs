@@ -1,5 +1,6 @@
 using Chaite.Core;
 using System;
+using System.Reflection;
 using System.Reflection.Emit;
 
 namespace Chaite.Tests
@@ -21,6 +22,8 @@ namespace Chaite.Tests
             Run("Eye low friction preserves actual stopping distance", EyeLowFriction);
             Run("Eye observed low dash can use native held jump", EyeGroundHop);
             Run("Eye hop launch tick keeps native grounded acceleration", EyeFirstJumpTickGroundAcceleration);
+            Run("Eye forward straight interval excludes first damping tick", EyeGuaranteedFutureTicks);
+            Run("Eye hop does not spend a future damping tick", EyeFutureWindowControlsHop);
             Run("Eye unknown jump or airborne cloud is not invented", EyeNoUnobservedJump);
             Run("Eye reset clears committed direction", EyeResetDirection);
             Run("Eye fire honors real visibility and invulnerability", EyeFireGuards);
@@ -322,6 +325,47 @@ namespace Chaite.Tests
             eye.Ai1 = 2;
             s.Targets[0] = eye;
             Equal(-1, engine.Evaluate(s).Directive.HorizontalIntent);
+        }
+
+        private static void EyeGuaranteedFutureTicks()
+        {
+            var type = typeof(BossStrategyEngine).Assembly.GetType("Chaite.Core.EyeStrategy", true);
+            var method = type.GetMethod("GuaranteedStraightTicks", BindingFlags.NonPublic | BindingFlags.Static);
+            True(method != null);
+            var ticks = (Func<float, float, int>)Delegate.CreateDelegate(typeof(Func<float, float, int>), method);
+            Equal(24, ticks(0f, 40f));
+            Equal(1, ticks(38f, 40f));
+            Equal(0, ticks(39f, 40f));
+            Equal(0, ticks(40f, 40f));
+            Equal(1, ticks(48f, 50f));
+            Equal(0, ticks(49f, 50f));
+            // Do not assume the conditional <200 extension at the fast boundary.
+            Equal(0, ticks(19f, 20f));
+            Equal(0, ticks(9f, 10f));
+            Equal(1, ticks(38.5f, 40f));
+            Equal(0, ticks(float.NaN, 40f));
+            Equal(0, ticks(float.PositiveInfinity, 40f));
+        }
+
+        private static void EyeFutureWindowControlsHop()
+        {
+            var s = EyeSnapshot();
+            var engine = new BossStrategyEngine();
+            engine.Evaluate(s);
+            var eye = s.Targets[0];
+            eye.Ai0 = 3;
+            eye.Ai1 = 2;
+            eye.Ai2 = 36;
+            eye.Position = new Vec2(1894.2f, 1010f);
+            eye.Velocity = new Vec2(-6.8f, 0f);
+            s.Targets[0] = eye;
+            // Ground contact enters the margin at future tick four. At timer36
+            // that tick already damps; the old T-Ai2 window invented a straight
+            // fourth tick and used it to authorize this jump.
+            Equal(JumpAction.Release, engine.Evaluate(s).Directive.JumpAction);
+            eye.Ai2 = 35;
+            s.Targets[0] = eye;
+            Equal(JumpAction.Hold, engine.Evaluate(s).Directive.JumpAction);
         }
 
         private static void EyeFireGuards()

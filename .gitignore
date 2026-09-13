@@ -6,7 +6,10 @@ packages/
 .validation/
 artifacts/
 tools/research/
+.analysis-tools/
 DEVELOPMENT_NOTES.md
+/release-tests.log
+/tests-resolve.log
 *.user
 *.suo
 *.bak

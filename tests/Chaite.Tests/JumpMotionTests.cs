@@ -16,6 +16,11 @@ namespace Chaite.Tests
             Run(nameof(NativeLandedReleaseRefreshesCloudBeforeJumpMovement), NativeLandedReleaseRefreshesCloudBeforeJumpMovement);
             Run(nameof(NativeJumpMirrorsGravityWithoutClampingAscent), NativeJumpMirrorsGravityWithoutClampingAscent);
             Run(nameof(NativeLowAndZeroGravityAreNotInflated), NativeLowAndZeroGravityAreNotInflated);
+            Run(nameof(FeatherFallUsesThirdGravityAndFallCap), FeatherFallUsesThirdGravityAndFallCap);
+            Run(nameof(FeatherFallUpUsesTenthGravityAndFallCap), FeatherFallUpUsesTenthGravityAndFallCap);
+            Run(nameof(FeatherFallDownRestoresOrdinaryGravity), FeatherFallDownRestoresOrdinaryGravity);
+            Run(nameof(FeatherFallMirrorsInvertedGravity), FeatherFallMirrorsInvertedGravity);
+            Run(nameof(FeatherFallRejectsNonFiniteInputsWithoutMutation), FeatherFallRejectsNonFiniteInputsWithoutMutation);
             Run(nameof(CloudControlPulseRequiresObservedResource), CloudControlPulseRequiresObservedResource);
             Run(nameof(CloudControlDoesNotInterruptGrappleRelease), CloudControlDoesNotInterruptGrappleRelease);
             Run(nameof(JumpInputsHonorReleaseAndAutoJump), JumpInputsHonorReleaseAndAutoJump);
@@ -152,6 +157,95 @@ namespace Chaite.Tests
             MotionNear(-4.96f, JumpMotion.ApplyGravity(-5f, .04f, 10f, false));
         }
 
+        private static void FeatherFallUsesThirdGravityAndFallCap()
+        {
+            var vy = 1f;
+            Equal(GravityPhase.FeatherFall, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, false, false));
+            MotionNear(1.2f, vy);
+            vy = 9f;
+            Equal(GravityPhase.FeatherFall, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, false, false));
+            MotionNear(4f, vy);
+        }
+
+        private static void FeatherFallUpUsesTenthGravityAndFallCap()
+        {
+            var vy = 1f;
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, true, false));
+            MotionNear(1.06f, vy);
+            vy = 1.5f;
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, true, false));
+            MotionNear(1.56f, vy); // Native only snaps to max/10 after crossing max/5.
+            vy = 2.35f;
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, true, false));
+            MotionNear(1.2f, vy);
+            vy = 9f;
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, true, false));
+            MotionNear(1.2f, vy);
+        }
+
+        private static void FeatherFallDownRestoresOrdinaryGravity()
+        {
+            var vy = 9f;
+            Equal(GravityPhase.Ballistic, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, true, true));
+            MotionNear(9.6f, vy);
+            vy = 13f;
+            Equal(GravityPhase.Ballistic, JumpMotion.ApplyGravityChecked(
+                ref vy, .6f, 12f, false, true, false, true));
+            MotionNear(12f, vy);
+        }
+
+        private static void FeatherFallMirrorsInvertedGravity()
+        {
+            var normal = 2f;
+            var inverted = -2f;
+            Equal(GravityPhase.FeatherFall, JumpMotion.ApplyGravityChecked(
+                ref normal, .6f, 12f, false, true, false, false));
+            Equal(GravityPhase.FeatherFall, JumpMotion.ApplyGravityChecked(
+                ref inverted, .6f, 12f, true, true, false, false));
+            MotionNear(normal, -inverted);
+
+            normal = -5f;
+            inverted = 5f;
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref normal, .6f, 12f, false, true, true, false));
+            Equal(GravityPhase.FeatherFallUp, JumpMotion.ApplyGravityChecked(
+                ref inverted, .6f, 12f, true, true, true, false));
+            MotionNear(normal, -inverted);
+        }
+
+        private static void FeatherFallRejectsNonFiniteInputsWithoutMutation()
+        {
+            foreach (var gravity in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+            {
+                var vy = 2f;
+                Equal(GravityPhase.Unsupported, JumpMotion.ApplyGravityChecked(
+                    ref vy, gravity, 12f, false, true, false, false));
+                MotionNear(2f, vy);
+            }
+            foreach (var cap in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+            {
+                var vy = 2f;
+                Equal(GravityPhase.Unsupported, JumpMotion.ApplyGravityChecked(
+                    ref vy, .6f, cap, false, true, false, false));
+                MotionNear(2f, vy);
+            }
+            var nan = float.NaN;
+            Equal(GravityPhase.Unsupported, JumpMotion.ApplyGravityChecked(
+                ref nan, .6f, 12f, false, true, false, false));
+            True(float.IsNaN(nan));
+            var infinity = float.PositiveInfinity;
+            Equal(GravityPhase.Unsupported, JumpMotion.ApplyGravityChecked(
+                ref infinity, .6f, 12f, false, true, false, false));
+            True(float.IsPositiveInfinity(infinity));
+        }
+
         private static void CloudControlPulseRequiresObservedResource()
         {
             var state = OrdinaryJump(true);
@@ -240,12 +334,12 @@ namespace Chaite.Tests
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
             True(method != null);
             object[] arguments = { scene, 1, 1, JumpAction.Hold, 0f, floor, scene.Player.Jump,
-                scene.Player.Position, scene.Player.Velocity, true, floor, scene.Player.Position.Y };
+                default(FlightSnapshot), scene.Player.Position, scene.Player.Velocity, true, floor, scene.Player.Position.Y };
             method.Invoke(null, arguments);
-            var velocity = (Vec2)arguments[8];
+            var velocity = (Vec2)arguments[9];
             MotionNear(4.516f, velocity.X);
             MotionNear(-4.61f, velocity.Y);
-            False((bool)arguments[9]);
+            False((bool)arguments[10]);
             Equal(15, ((JumpSnapshot)arguments[6]).RemainingTicks);
         }
 
@@ -263,23 +357,23 @@ namespace Chaite.Tests
             var method = typeof(CombatPlanner).GetMethod("AdvanceNativeJump",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
             object[] arguments = { scene, 0, 1, JumpAction.Hold, 0f, floor, scene.Player.Jump,
-                scene.Player.Position, scene.Player.Velocity, false, floor, scene.Player.Position.Y };
+                default(FlightSnapshot), scene.Player.Position, scene.Player.Velocity, false, floor, scene.Player.Position.Y };
             method.Invoke(null, arguments);
-            Equal(7958f, ((Vec2)arguments[7]).Y);
-            MotionNear(1.486816f, ((Vec2)arguments[8]).Y);
-            False((bool)arguments[9]);
+            Equal(7958f, ((Vec2)arguments[8]).Y);
+            MotionNear(1.486816f, ((Vec2)arguments[9]).Y);
+            False((bool)arguments[10]);
             False(((JumpSnapshot)arguments[6]).CloudAvailable);
             method.Invoke(null, arguments);
-            Equal(0f, ((Vec2)arguments[8]).Y);
-            True((bool)arguments[9]);
+            Equal(0f, ((Vec2)arguments[9]).Y);
+            True((bool)arguments[10]);
             Equal(0, ((JumpSnapshot)arguments[6]).RemainingTicks);
             method.Invoke(null, arguments); // Grounded release gate, no early autojump.
-            Equal(0f, ((Vec2)arguments[8]).Y);
+            Equal(0f, ((Vec2)arguments[9]).Y);
             True(((JumpSnapshot)arguments[6]).ReleaseReady);
             True(((JumpSnapshot)arguments[6]).CloudAvailable);
             method.Invoke(null, arguments);
             Equal(15, ((JumpSnapshot)arguments[6]).RemainingTicks);
-            MotionNear(-4.61f, ((Vec2)arguments[8]).Y);
+            MotionNear(-4.61f, ((Vec2)arguments[9]).Y);
         }
     }
 }

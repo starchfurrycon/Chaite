@@ -53,6 +53,7 @@ namespace Chaite.Manager
                         form.SetPreviewStatus(InstallState.CleanSupported);
                         LayoutAll(form);
                         ValidateTree(form, failures);
+                        ValidateSupportedBossCopy(form, failures);
                         ValidatePrimary(form, form.InstallAction, failures);
                         ValidatePrimary(form, form.RestoreAction, failures);
                         if (!form.InstallAction.Enabled || form.RestoreAction.Enabled) failures.Add("Clean supported install gates incorrect.");
@@ -131,6 +132,34 @@ namespace Chaite.Manager
                 if (child is TextBox && child.Height < child.Font.Height) failures.Add("Input too short: " + Describe(child));
                 ValidateTree(child, failures);
             }
+        }
+
+        private static void ValidateSupportedBossCopy(Control root,
+            List<string> failures)
+        {
+            var copy = string.Join("\n", AllControls(root)
+                .Where(control => control.Visible)
+                .Select(control => control.Text));
+            var required = new[]
+            {
+                "来吧，试一下米妮",
+                "仅接管猪鲨公爵与昼间/夜间光之女皇",
+                "其他 Boss 直接拒绝",
+                "用松露虫在海洋水体钓鱼",
+                "七彩草蛉可在昼夜自动释放并击杀",
+                "白天按致命光女门槛预检"
+            };
+            foreach (var value in required)
+                if (copy.IndexOf(value, StringComparison.Ordinal) < 0)
+                    failures.Add("Missing supported-Boss UI contract: " + value);
+        }
+
+        private static IEnumerable<Control> AllControls(Control root)
+        {
+            yield return root;
+            foreach (Control child in root.Controls)
+                foreach (var nested in AllControls(child))
+                    yield return nested;
         }
 
         private static Color EffectiveBackColor(Control control)

@@ -100,6 +100,45 @@ namespace Chaite.Plugin
             return Expression.Lambda<Func<object, float>>(body, source).Compile();
         }
 
+        /// <summary>
+        /// Compiled component access for an instance vector array (for example
+        /// Projectile.oldPos). Unlike Array.GetValue this performs no boxing or
+        /// per-read reflection work on the hot capture path.
+        /// </summary>
+        public static Func<object, int, float> VectorArrayComponentGetter(
+            Type type, string arrayFieldName, string component)
+        {
+            var arrayField = Field(type, arrayFieldName);
+            if (!arrayField.FieldType.IsArray)
+                throw new ArgumentException("Expected a vector array.", nameof(arrayFieldName));
+            var elementType = arrayField.FieldType.GetElementType();
+            var componentField = elementType.GetField(component,
+                BindingFlags.Public | BindingFlags.Instance);
+            if (componentField == null)
+                throw new MissingFieldException(elementType.FullName, component);
+            var source = Expression.Parameter(typeof(object), "source");
+            var index = Expression.Parameter(typeof(int), "index");
+            var array = Expression.Field(Expression.Convert(source,
+                arrayField.DeclaringType), arrayField);
+            var element = Expression.ArrayIndex(array, index);
+            var body = Expression.Field(element, componentField);
+            return Expression.Lambda<Func<object, int, float>>(body, source,
+                index).Compile();
+        }
+
+        public static Func<object, int> ArrayLengthGetter(Type type,
+            string arrayFieldName)
+        {
+            var arrayField = Field(type, arrayFieldName);
+            if (!arrayField.FieldType.IsArray)
+                throw new ArgumentException("Expected an array field.", nameof(arrayFieldName));
+            var source = Expression.Parameter(typeof(object), "source");
+            var array = Expression.Field(Expression.Convert(source,
+                arrayField.DeclaringType), arrayField);
+            var body = Expression.ArrayLength(array);
+            return Expression.Lambda<Func<object, int>>(body, source).Compile();
+        }
+
         public static Func<T> StaticGetter<T>(Type type, string name)
         {
             var field = Field(type, name);
@@ -154,6 +193,17 @@ namespace Chaite.Plugin
             var argument = Expression.Parameter(typeof(object), "argument");
             var call = Expression.Call(Expression.Convert(source, method.DeclaringType), method, Expression.Convert(argument, argumentType));
             return Expression.Lambda<Func<object, object, T>>(Expression.Convert(call, typeof(T)), source, argument).Compile();
+        }
+
+        public static Func<object, int, T> MethodGetterWithIntArgument<T>(Type type, string name)
+        {
+            var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, new[] { typeof(int) }, null);
+            if (method == null) throw new MissingMethodException(type.FullName, name);
+            var source = Expression.Parameter(typeof(object), "source");
+            var argument = Expression.Parameter(typeof(int), "argument");
+            var call = Expression.Call(Expression.Convert(source, method.DeclaringType), method, argument);
+            return Expression.Lambda<Func<object, int, T>>(Expression.Convert(call, typeof(T)), source, argument).Compile();
         }
 
         public static Func<int, object> StaticIntDictionaryValueGetter(Type type, string name)

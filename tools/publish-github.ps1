@@ -44,10 +44,20 @@ function Get-PublicSourceManifest {
     # decompiled outputs and live-game test artifacts are intentionally excluded.
     foreach ($name in @('build.ps1', 'verify-api-contract.ps1', 'publish-github.ps1',
         'GameProbe.cs', 'GameProbePatcher.cs', 'prepare-game-probe.ps1', 'Chaite.DesktopHost.cs', 'start-isolated-test.ps1', 'run-boss-validation.ps1', 'test-boss-evidence.ps1',
-        'evaluate-boss-readiness.ps1', 'test-boss-readiness.ps1', 'test-native-motion.ps1', 'test-native-motion-evidence.ps1')) {
+        'evaluate-boss-readiness.ps1', 'test-boss-readiness.ps1', 'test-native-motion.ps1', 'test-native-motion-evidence.ps1',
+        'test-native-flight.ps1', 'test-native-flight-evidence.ps1', 'audit-twins-native.ps1',
+        'test-twins-native-audit.ps1', 'audit-destroyer-native.ps1', 'test-destroyer-native-audit.ps1',
+        'test-priority-phase-fixture-contract.ps1', 'test-priority-boss-probe-schema.ps1',
+        'audit-common-special-ranged-native.ps1', 'test-common-special-ranged-native-audit.ps1',
+        'audit-native-grapple-contract.ps1', 'audit-native-mount-catalog.ps1',
+        'audit-native-dash-sources.ps1', 'audit-native-mount-motion-matrix.ps1')) {
         if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name) -PathType Leaf) { $paths.Add('tools/' + $name) }
     }
-    foreach ($name in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md')) {
+    foreach ($name in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md',
+        'boss-queen-native-policy.md', 'boss-prime-native-policy.md', 'native-flight-policy.md',
+        'native-witch-broom-policy.md', 'weapon-coverage-audit-next.md',
+        'common-special-ranged-native-audit.md', 'native-dash-source-audit.md',
+        'native-mobility-matrix-next.md')) {
         $relative = 'docs/' + $name
         if (Test-Path -LiteralPath (Join-Path $projectRoot $relative) -PathType Leaf) { $paths.Add($relative) }
     }

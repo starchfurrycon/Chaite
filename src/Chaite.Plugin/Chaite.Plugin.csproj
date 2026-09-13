@@ -21,10 +21,14 @@
   <ItemGroup>
     <Compile Include="AudioCuePlayer.cs" />
     <Compile Include="ChaiteConfig.cs" />
+    <Compile Include="DestroyerObservation.cs" />
     <Compile Include="HotkeyPoller.cs" />
     <Compile Include="Log.cs" />
     <Compile Include="MovementActionGate.cs" />
     <Compile Include="NativeJumpReader.cs" />
+    <Compile Include="NativeFlightReader.cs" />
+    <Compile Include="NativeGrappleReader.cs" />
+    <Compile Include="NativeWitchBroomReader.cs" />
     <Compile Include="WeaponActionGate.cs" />
     <Compile Include="ReflectionAccess.cs" />
     <Compile Include="Runtime.cs" />

@@ -13,7 +13,19 @@ namespace Chaite.Tests
         private static int Main(string[] args)
         {
             if (args.Length == 2 && args[0] == "--native-motion-trace") return VerifyNativeMotionTrace(args[1]);
+            if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length != 0) return 2;
+            Run(nameof(GravityDashMotionContracts), GravityDashMotionContracts);
+            Run(nameof(GrappleMotionContracts), GrappleMotionContracts);
+            Run(nameof(GrappleRouteFactoryContracts), GrappleRouteFactoryContracts);
+            Run(nameof(BasicHookRescueControllerContracts), BasicHookRescueControllerContracts);
+            Run(nameof(NativeGrappleReaderContracts), NativeGrappleReaderContracts);
+            Run(nameof(WitchBroomMotionContracts), WitchBroomMotionContracts);
+            Run(nameof(WitchBroomRouteBuilderContracts), WitchBroomRouteBuilderContracts);
+            Run(nameof(WitchBroomRescueTrajectoryContracts), WitchBroomRescueTrajectoryContracts);
+            Run(nameof(ActiveNativeMobilityHandoffContracts), ActiveNativeMobilityHandoffContracts);
+            Run(nameof(CombatWeaponSelectionHandoffContracts), CombatWeaponSelectionHandoffContracts);
+            Run(nameof(NativeWitchBroomReaderContracts), NativeWitchBroomReaderContracts);
             Run(nameof(PlannerRichWorkloadBenchmark), PlannerRichWorkloadBenchmark);
             Run(nameof(RejectsActivationWithoutBossStart), RejectsActivationWithoutBossStart);
             Run(nameof(EventsAreNotAccepted), EventsAreNotAccepted);
@@ -43,24 +55,129 @@ namespace Chaite.Tests
             Run(nameof(RequirementsRejectWeaponWithoutAmmoBeforeSummoning), RequirementsRejectWeaponWithoutAmmoBeforeSummoning);
             Run(nameof(RequirementsRejectPureMeleeDespiteHighDps), RequirementsRejectPureMeleeDespiteHighDps);
             Run(nameof(VariantPhaseIsTagged), VariantPhaseIsTagged);
-            Run(nameof(StuckPlannerUsesRecoveryTools), StuckPlannerUsesRecoveryTools);
+            Run(nameof(StuckPlannerDoesNotInventUnknownRecoveryTool), StuckPlannerDoesNotInventUnknownRecoveryTool);
             Run(nameof(PlannerProducesBoundedPlan), PlannerProducesBoundedPlan);
             RunSafetyRegressions();
             RunBeamRegressions();
+            RunHostileProjectileMotionRegressions();
             RunMobilityRegressions();
             RunJumpMotionRegressions();
+            RunFlightMotionRegressions();
             RunNativeJumpReaderRegressions();
+            RunNativeFlightReaderRegressions();
+            RunNativeBuffIdentityRegressions();
             RunSupportRegressions();
             RunReflectionRegressions();
             RunWeaponProfileRegressions();
+            RunSnowballCannonRegressions();
+            RunDiamondStaffRegressions();
+            RunSimpleMagicPrefixRegressions();
+            RunDemonScytheRegressions();
+            RunUnholyTridentRegressions();
+            RunAquaScepterRegressions();
+            RunNativeTrajectoryGateRegressions();
+            RunOutputRouteRegressions();
+            RunNativeWindEmissionGateRegressions();
+            RunCommonWeaponOutputRegressions();
+            Run(nameof(SummonWhipOutputContracts), SummonWhipOutputContracts);
+            RunSummonWhipProductionRegressions();
             RunWeaponActionGateRegressions();
             RunKingSlimeRegressions();
             RunEyeRegressions();
+            RunPriorityBossActiveRecoveryRegressions();
+            RunPriorityBossNativeStrategyRegressions();
+            RunQueenBeeContactRegressions();
+            RunPriorityEmpressMoonStrategyRegressions();
+            RunPriorityGroundFishronTrajectoryRegressions();
+            RunWallOfFleshRegressions();
+            RunPriorityBossNativeContextRegressions();
+            RunPriorityBossNativeCaptureRegressions();
+            RunTwinsRegressions();
+            RunDestroyerStrategyRegressions();
+            RunDestroyerObservationRegressions();
+            RunQueenSlimeRegressions();
+            RunPrimeRegressions();
             RunTransactionRegressions();
             RunPatcherRegressions();
+            Run(nameof(SpecialRangedContracts), SpecialRangedContracts);
+            Run(nameof(RocketProductionContracts), RocketProductionContracts);
+            RunAudioCueRegressions();
+            RunSupportedBossPolicyRegressions();
+            RunMeleeProjectileRegressions();
 
             Console.WriteLine($"通过 {_passed}，失败 {_failed}");
             return _failed == 0 ? 0 : 1;
+        }
+
+        private static void GravityDashMotionContracts()
+        {
+            Equal(12, GravityDashMotionTests.RunAll());
+        }
+
+        private static void SpecialRangedContracts()
+        {
+            Equal(13, SpecialRangedContractsTests.RunAll());
+        }
+
+        private static void RocketProductionContracts()
+        {
+            Equal(4, RocketProductionTests.RunAll());
+        }
+
+
+        private static void GrappleMotionContracts()
+        {
+            Equal(11, GrappleMotionContractTests.RunAll());
+        }
+
+        private static void GrappleRouteFactoryContracts()
+        {
+            Equal(8, GrappleRouteFactoryTests.RunAll());
+        }
+
+        private static void BasicHookRescueControllerContracts()
+        {
+            Equal(7, BasicHookRescueControllerTests.RunAll());
+        }
+
+        private static void NativeGrappleReaderContracts()
+        {
+            Equal(6, NativeGrappleReaderTests.RunAll());
+        }
+
+        private static void WitchBroomMotionContracts()
+        {
+            Equal(22, WitchBroomMotionTests.RunAll());
+        }
+
+        private static void WitchBroomRouteBuilderContracts()
+        {
+            Equal(3, WitchBroomRouteBuilderTests.RunAll());
+        }
+
+        private static void WitchBroomRescueTrajectoryContracts()
+        {
+            Equal(20, WitchBroomRescueTrajectoryTests.RunAll());
+        }
+
+        private static void ActiveNativeMobilityHandoffContracts()
+        {
+            Equal(6, ActiveNativeMobilityHandoffTests.RunAll());
+        }
+
+        private static void CombatWeaponSelectionHandoffContracts()
+        {
+            Equal(5, CombatWeaponSelectionHandoffTests.RunAll());
+        }
+
+        private static void NativeWitchBroomReaderContracts()
+        {
+            Equal(4, NativeWitchBroomReaderTests.RunAll());
+        }
+
+        private static void SummonWhipOutputContracts()
+        {
+            Equal(22, SummonWhipOutputContractTests.RunAll());
         }
 
         private static void RejectsActivationWithoutBossStart()
@@ -135,6 +252,10 @@ namespace Chaite.Tests
             Equal(AudioCue.Dead, dead.Cue);
             var alive = controller.Update(Observe(bosses: new[] { 4 }));
             Equal(SessionState.EngagedAlive, alive.Current);
+            False(alive.ApplyControls);
+            var settled = controller.Update(Observe(bosses: new[] { 4 }));
+            Equal(SessionState.EngagedAlive, settled.Current);
+            True(settled.ApplyControls);
         }
 
         private static void DeathThenBossDespawnIsFailure()
@@ -216,7 +337,11 @@ namespace Chaite.Tests
                 }
                 context.Time = 0d;
                 context.DayTime = true;
-                True(BossStartPlanner.Select(context) == null);
+                if (item == 4961)
+                    Equal(BossSummonKind.PrismaticLacewing,
+                        BossStartPlanner.Select(context).Kind);
+                else
+                    True(BossStartPlanner.Select(context) == null);
             }
         }
 
@@ -308,9 +433,12 @@ namespace Chaite.Tests
             var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true, Time = 1000d };
             context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 4961, Stack = 1 });
             Equal(BossSummonKind.PrismaticLacewing, BossStartPlanner.Select(context).Kind);
+            context.DayTime = true;
+            Equal(BossSummonKind.PrismaticLacewing,
+                BossStartPlanner.Select(context).Kind);
             context.ZenithWorld = true;
             True(BossStartPlanner.Select(context) == null);
-            context.DayTime = true;
+            context.DayTime = false;
             True(BossStartPlanner.Select(context) == null);
             // Keep the separate, valid Zenith daytime Mechdusa workflow intact.
             context.Hotbar.Add(new HotbarItemSnapshot { Slot = 4, Type = 5334, Stack = 1 });
@@ -349,8 +477,9 @@ namespace Chaite.Tests
             foreach (var pair in cases)
             {
                 var scenario = CombatScenario(pair.Key);
-                var plan = new CombatPlanner(new PlannerSettings()).Plan(scenario);
-                Equal(pair.Value, plan.StrategyId);
+                var decision = new BossStrategyEngine().Evaluate(scenario);
+                True(decision != null, "missing strategy for boss " + pair.Key);
+                Equal(pair.Value, decision.Directive.StrategyId);
             }
         }
 
@@ -382,6 +511,7 @@ namespace Chaite.Tests
         private static void RequirementsRejectWeakWeapon()
         {
             var scenario = CombatScenario(398);
+            ConfigureReviewedFlight(scenario, 1f);
             scenario.Weapon.Damage = 10;
             scenario.Weapon.UseTime = 60;
             string reason;
@@ -407,10 +537,16 @@ namespace Chaite.Tests
         {
             foreach (var boss in new[] { 4, 50, 657, 134, 125, 127 })
             {
-                var scenario = CombatScenario(boss);
+                // Destroyer P1 deliberately requires its exact reviewed native
+                // mobility/branch fixture before any summon can be consumed.
+                var scenario = boss == 134 ? DestroyerP1Snapshot() :
+                    boss == 125 ? TwinsSnapshot() : CombatScenario(boss);
+                if (boss == 127) ConfigureReviewedFlight(scenario, 1f);
+                if (boss == 657) ConfigureReviewedFlight(scenario, 1f);
                 var planner = new CombatPlanner(new PlannerSettings());
                 string reason;
-                True(planner.RequirementsMetForExpected(scenario, "test-direct-summon", boss, out reason));
+                True(planner.RequirementsMetForExpected(scenario, "test-direct-summon", boss, out reason),
+                    "boss " + boss + ": " + reason);
                 scenario.Weapon.Damage = 999;
                 scenario.Weapon.UseTime = 1;
                 scenario.Weapon.IsProjectile = false;
@@ -433,25 +569,32 @@ namespace Chaite.Tests
             True(plan.PhaseId.StartsWith("master-"));
         }
 
-        private static void StuckPlannerUsesRecoveryTools()
+        private static void StuckPlannerDoesNotInventUnknownRecoveryTool()
         {
-            var scenario = CombatScenario(262);
-            scenario.Mobility.FlightResourceFraction = 0f;
+            // Use a fully reviewed Eye fixture. Plantera now correctly
+            // fails closed when its native phase contract is absent, so it
+            // cannot exercise the generic stuck-recovery path at all.
+            var scenario = CombatScenario(4);
             scenario.Arena.GrappleAnchors.Add(new Vec2(1680, 680));
             var planner = new CombatPlanner(new PlannerSettings { EmergencyRiskThreshold = 1000000f });
+            string reason;
+            True(planner.PrepareForExpectedEncounter(scenario, "test-eye",
+                4, out reason), reason);
+            planner.ResetForBossArrival();
+            DepleteReviewedFlight(scenario);
             ControlPlan plan = default(ControlPlan);
-            var hookPulses = 0;
+            var recoveryTrace = new List<string>();
             for (var i = 0; i < 24; i++)
             {
                 plan = planner.Plan(scenario);
-                if (plan.Hook)
-                {
-                    Equal(TacticalMode.RecoverToPattern, plan.TacticalMode);
-                    hookPulses++;
-                }
+                False(plan.Hook);
+                recoveryTrace.Add(i + ":" + plan.TacticalMode + "/" +
+                    plan.StrategyId + "/" + plan.PhaseId + "/h=" +
+                    plan.Horizontal + "/j=" + plan.Jump);
             }
-            Equal(TacticalMode.RecoverToPattern, plan.TacticalMode);
-            Equal(1, hookPulses); // One recovery pulse; the new cooldown must not spam Hook every frame.
+            True(plan.TacticalMode == TacticalMode.RecoverToPattern,
+                "expected recovery without an invented hook; trace=" +
+                string.Join(",", recoveryTrace));
         }
 
         private static void PlannerProducesBoundedPlan()
@@ -492,7 +635,10 @@ namespace Chaite.Tests
                     Slot = 1, Damage = 80, UseTime = 10, ShootSpeed = 14f,
                     IsProjectile = true, HasAmmo = true, IsUsable = true
                 },
-                LineOfSightToPrimary = true
+                LineOfSightToPrimary = true,
+                NativeContextKnown = true,
+                NetMode = 0,
+                LocalPlayerIndex = 0
             };
             for (var i = 0; i < bossTypes.Length; i++)
             {
@@ -500,10 +646,127 @@ namespace Chaite.Tests
                 {
                     Key = i + 3, Type = bossTypes[i], Position = new Vec2(2150 + i * 80, 650),
                     Velocity = new Vec2(-1, 0), Width = 90, Height = 90,
-                    Life = 2000, LifeMax = 3000, Damage = 60, Boss = true, Chaseable = true
+                    Life = 2000, LifeMax = 3000, Damage = 60, Boss = true, Chaseable = true,
+                    Ai0Known = true, Ai1Known = true, Ai2Known = true,
+                    Ai3Known = true,
+                    NativeDirectionKnown = true, NativeDirection = -1,
+                    NativeTimeLeftKnown = true, NativeTimeLeft = 750,
+                    NativeTargetKnown = true, NativeTargetPlayerIndex = 0
                 });
             }
+            if (bossTypes.Length > 1 || Array.Exists(bossTypes, type =>
+                type == 657 || type == 125 || type == 127 || type == 134 || type == 262 ||
+                type == 370 || type == 636 || type == 439 || type == 398))
+                ConfigureReviewedFlight(snapshot, 1f);
+            RefreshPriorityNativeContext(snapshot);
             return snapshot;
+        }
+
+        private static void RefreshPriorityNativeContext(
+            CombatSnapshot snapshot)
+        {
+            var context = snapshot.PriorityBoss;
+            context.Clear();
+            context.WorldGeometryKnown = true;
+            context.WorldSurfaceTiles = 250d;
+            context.WorldWidthTiles = 8400;
+            context.WallOfFleshDrawAreaKnown = true;
+            context.WallOfFleshDrawAreaTopPixels = 400;
+            context.WallOfFleshDrawAreaBottomPixels = 1600;
+            for (var i = 0; i < snapshot.Targets.Count; i++)
+            {
+                var target = snapshot.Targets[i];
+                switch (target.Type)
+                {
+                    case 222:
+                        var queenFactor = snapshot.Difficulty.ForTheWorthy ?
+                            .5f : 0f;
+                        context.QueenBees.Add(
+                            new QueenBeeNativeEnrageObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                GetGoodWorld = snapshot.Difficulty.ForTheWorthy,
+                                NativeEnrageFactor = queenFactor
+                            });
+                        break;
+                    case 113:
+                        context.WallOfFleshTunnels.Add(
+                            new WallOfFleshTunnelObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                NativeDirectionKnown = true,
+                                NativeDirection = target.NativeDirectionKnown ?
+                                    target.NativeDirection : 1,
+                                DrawAreaTopPixels =
+                                    (int)target.Center.Y - 600,
+                                DrawAreaBottomPixels =
+                                    (int)target.Center.Y + 600
+                            });
+                        break;
+                    case 114:
+                        context.WallOfFleshEyes.Add(
+                            new WallOfFleshEyeLaserObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                Ai0EyeSide = target.Ai0 == -1f ? -1f : 1f,
+                                LocalAi1ChargeTimer = target.LocalAi1,
+                                LocalAi2BurstStage = target.LocalAi2,
+                                LineOfSightKnown = target.LineOfSightKnown,
+                                LineOfSight = target.HasLineOfSight
+                            });
+                        break;
+                    case 370:
+                        context.DukeFishrons.Add(
+                            new DukeFishronNativeEnrageObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                NativeEnraged = false
+                            });
+                        break;
+                    case 636:
+                        var empressEnraged = snapshot.Difficulty.Remix ?
+                            false : snapshot.Difficulty.DayTime;
+                        context.Empresses.Add(
+                            new EmpressNativeCombatObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                DayTime = snapshot.Difficulty.DayTime,
+                                RemixWorld = snapshot.Difficulty.Remix,
+                                NativeShouldBeEnraged = empressEnraged,
+                                Ai0AttackState = target.Ai0,
+                                Ai1AttackTimer = target.Ai1,
+                                Ai2AttackIndex = target.Ai2,
+                                Ai3PhaseAndRage = target.Ai3
+                            });
+                        break;
+                    case 668:
+                        context.Deerclopses.Add(
+                            new DeerclopsNativeTimerObservation
+                            {
+                                Known = true,
+                                NpcKey = target.Key,
+                                Ai0State = target.Ai0,
+                                Ai1StateTimer = target.Ai1,
+                                LocalAi1MeleeCounter = target.LocalAi1,
+                                LocalAi2ShadowHandTimer = target.LocalAi2,
+                                LocalAi3DistanceInvulnerabilityTimer =
+                                    target.LocalAi3,
+                                TimeLeft = target.NativeTimeLeftKnown ?
+                                    target.NativeTimeLeft : 750,
+                                HomeTileX = 100f,
+                                HomeTileY = 100f,
+                                NativeDirectionKnown = true,
+                                NativeDirection = target.NativeDirectionKnown ?
+                                    target.NativeDirection : 1
+                            });
+                        break;
+                }
+            }
         }
 
         private static EncounterObservation Observe(EncounterFlags events = EncounterFlags.None, int[] bosses = null,

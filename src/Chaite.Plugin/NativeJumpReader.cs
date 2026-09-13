@@ -5,7 +5,7 @@ using Chaite.Core;
 namespace Chaite.Plugin
 {
     /// <summary>
-    /// Read-only ordinary/cloud profile for the observed pre-update state.
+    /// Read-only ordinary/cloud/feather-fall profile for the observed pre-update state.
     /// Never read the shared static jumpSpeed/jumpHeight: another player's
     /// Update can own them. No native update/refresh method is invoked here.
     /// Known is a restricted local transition model, not exact whole-frame
@@ -15,7 +15,7 @@ namespace Chaite.Plugin
     {
         private readonly Func<object, int> _jump, _wings, _rocketBoots, _rocketDelay, _grapCount, _cartRampTime;
         private readonly Func<object, float> _boost, _gravity, _fallSpeed, _gravityDirection;
-        private readonly Func<object, bool> _release, _cloudAvailable, _cloudEnabled, _autoJump, _stool;
+        private readonly Func<object, bool> _release, _cloudAvailable, _cloudEnabled, _autoJump, _slowFall, _stool;
         private readonly Func<object, bool>[] _unsupported;
 
         public NativeJumpReader(Type playerType)
@@ -25,6 +25,7 @@ namespace Chaite.Plugin
             _cloudAvailable = ReflectionAccess.Getter<bool>(playerType, "canJumpAgain_Cloud");
             _cloudEnabled = ReflectionAccess.Getter<bool>(playerType, "hasJumpOption_Cloud");
             _autoJump = ReflectionAccess.Getter<bool>(playerType, "autoJump");
+            _slowFall = ReflectionAccess.Getter<bool>(playerType, "slowFall");
             _boost = ReflectionAccess.Getter<float>(playerType, "jumpSpeedBoost");
             _gravity = ReflectionAccess.Getter<float>(playerType, "gravity");
             _fallSpeed = ReflectionAccess.Getter<float>(playerType, "maxFallSpeed");
@@ -67,7 +68,10 @@ namespace Chaite.Plugin
                 ReflectionAccess.Getter<bool>(playerType, "carpet"),
                 ReflectionAccess.Getter<bool>(playerType, "sliding"),
                 ReflectionAccess.Getter<bool>(playerType, "pulley"),
-                ReflectionAccess.Getter<bool>(playerType, "slowFall"),
+                // TryingToHoverUp/Down OR these persistent flags with the
+                // current controls. The planner models explicit controls only.
+                ReflectionAccess.Getter<bool>(playerType, "tryKeepingHoveringDown"),
+                ReflectionAccess.Getter<bool>(playerType, "tryKeepingHoveringUp"),
                 ReflectionAccess.Getter<bool>(playerType, "vortexDebuff"),
                 ReflectionAccess.Getter<bool>(playerType, "tongued"),
                 ReflectionAccess.Getter<bool>(playerType, "onTrack"),
@@ -100,22 +104,33 @@ namespace Chaite.Plugin
             };
         }
 
-        public JumpSnapshot Read(object player, bool mountActive)
+        public JumpSnapshot Read(object player, bool mountActive) => ReadCore(player, mountActive, false);
+
+        // The same counter/input snapshot participates in both ordinary jumps
+        // and wing flight. This only relaxes the explicitly reviewed equipment
+        // gate; all environmental/extra-jump restrictions remain shared.
+        internal JumpSnapshot ReadForDemon(object player, bool mountActive) => ReadCore(player, mountActive, true);
+
+        private JumpSnapshot ReadCore(object player, bool mountActive, bool demonFlight)
         {
             if (player == null) return default(JumpSnapshot);
             var state = new JumpSnapshot
             {
                 RemainingTicks = _jump(player), ReleaseReady = _release(player),
                 CloudAvailable = _cloudAvailable(player), CloudEnabled = _cloudEnabled(player),
-                AutoJump = _autoJump(player)
+                AutoJump = _autoJump(player), SlowFall = _slowFall(player)
             };
             var gravity = _gravity(player);
             var fall = _fallSpeed(player);
             var direction = _gravityDirection(player);
+            var wings = _wings(player);
+            var boots = _rocketBoots(player);
+            var equipmentKnown = demonFlight ? wings == 1 && (boots == 0 || boots == 2) && direction == 1f :
+                wings == 0 && boots == 0;
             if (mountActive || state.RemainingTicks < 0 || state.RemainingTicks > 15 ||
                 state.CloudAvailable && !state.CloudEnabled || _boost(player) != 0f ||
                 !(gravity >= 0f) || float.IsInfinity(gravity) || !(fall > 0f) || float.IsInfinity(fall) ||
-                direction != 1f && direction != -1f || _wings(player) != 0 || _rocketBoots(player) != 0 ||
+                direction != 1f && direction != -1f || !equipmentKnown ||
                 _rocketDelay(player) != 0 || _grapCount(player) != 0 || _cartRampTime(player) != 0 || _stool(player))
                 return state;
             for (var index = 0; index < _unsupported.Length; index++)

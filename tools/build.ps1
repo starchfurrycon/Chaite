@@ -3,7 +3,7 @@ param(
     [string]$Configuration = 'Release',
     [switch]$Package,
     [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$')]
-    [string]$PackageVersion = 'v0.6.0-alpha'
+    [string]$PackageVersion = 'v0.7.0-alpha'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,7 +17,10 @@ if (-not $visualStudio) {
     throw 'Visual Studio or Build Tools with MSBuild was not found.'
 }
 $msbuild = Join-Path $visualStudio 'MSBuild\Current\Bin\MSBuild.exe'
-& $msbuild (Join-Path $projectRoot 'Chaite.sln') /restore /m /p:Configuration=$Configuration /verbosity:minimal
+# The API/patch verification scripts load Mono.Cecil from the Patcher output.
+# SDK-style PackageReference projects do not consistently copy that dependency
+# for a plain legacy-net48 build unless CopyLocalLockFileAssemblies is explicit.
+& $msbuild (Join-Path $projectRoot 'Chaite.sln') /restore /m /p:Configuration=$Configuration /p:CopyLocalLockFileAssemblies=true /verbosity:minimal
 if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
 
 if ($Package) {
@@ -41,9 +44,31 @@ if ($Package) {
     & (Join-Path $PSScriptRoot 'test-boss-readiness.ps1') |
         Tee-Object -FilePath (Join-Path $verification 'boss-readiness-tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Offline per-Boss readiness tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-priority-phase-fixture-contract.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'priority-phase-fixture-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Priority Boss phase fixture contract failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-priority-organic-fixture-contract.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'priority-organic-fixture-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Priority Boss organic fixture contract failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-priority-boss-probe-schema.ps1') `
+        -OutputDirectory (Join-Path $verification 'priority-probe-schema') |
+        Tee-Object -FilePath (Join-Path $verification 'priority-probe-schema-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Priority Boss probe schema failed; no package was created.' }
     & (Join-Path $PSScriptRoot 'test-native-motion-evidence.ps1') |
         Tee-Object -FilePath (Join-Path $verification 'motion-evidence-tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Offline motion evidence validation tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-native-flight-evidence.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'flight-evidence-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline flight evidence validation tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-twins-native-audit.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'twins-native-audit-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline Twins native post-audit tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-destroyer-native-audit.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'destroyer-native-audit-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline Destroyer native post-audit tests failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-common-special-ranged-native-audit.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'common-special-ranged-native-audit-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Common special-ranged native metadata audit failed; no package was created.' }
     $uiOutput = Join-Path $verification 'ui'
     $uiCheck = Start-Process -FilePath (Join-Path $managerBin 'Chaite.Manager.exe') `
         -ArgumentList @('--ui-smoke', ('"' + $uiOutput + '"')) -WindowStyle Hidden -PassThru -Wait
@@ -63,7 +88,9 @@ if ($Package) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $release
     $packageDocs = Join-Path $release 'docs'
     New-Item -ItemType Directory -Path $packageDocs | Out-Null
-    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md')) {
+    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md',
+        'boss-queen-native-policy.md', 'boss-prime-native-policy.md', 'native-flight-policy.md',
+        'native-witch-broom-policy.md', 'native-dash-source-audit.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot ('docs\' + $document)) -Destination $packageDocs
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $release

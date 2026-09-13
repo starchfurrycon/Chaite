@@ -12,30 +12,78 @@
     <Deterministic>true</Deterministic>
     <Optimize Condition=" '$(Configuration)' == 'Release' ">true</Optimize>
     <PlatformTarget>x86</PlatformTarget>
+    <RuntimeIdentifiers>win-x86</RuntimeIdentifiers>
     <OutputPath>bin\$(Configuration)\net48\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="AudioCueTests.cs" />
+    <Compile Include="SupportedBossPolicyTests.cs" />
     <Compile Include="SafetyTests.cs" />
     <Compile Include="BeamTests.cs" />
+    <Compile Include="HostileProjectileMotionTests.cs" />
     <Compile Include="MobilityTests.cs" />
     <Compile Include="JumpMotionTests.cs" />
+    <Compile Include="FlightMotionTests.cs" />
+    <Compile Include="GravityDashMotionTests.cs" />
     <Compile Include="NativeMotionTraceTests.cs" />
+    <Compile Include="NativeFlightTraceTests.cs" />
     <Compile Include="NativeJumpReaderTests.cs" />
+    <Compile Include="NativeFlightReaderTests.cs" />
+    <Compile Include="NativeBuffIdentityTests.cs" />
+    <Compile Include="GrappleMotionContractTests.cs" />
+    <Compile Include="GrappleRouteFactoryTests.cs" />
+    <Compile Include="BasicHookRescueControllerTests.cs" />
+    <Compile Include="NativeGrappleReaderTests.cs" />
+    <Compile Include="WitchBroomMotionTests.cs" />
+    <Compile Include="WitchBroomRouteBuilderTests.cs" />
+    <Compile Include="WitchBroomRescueTrajectoryTests.cs" />
+    <Compile Include="ActiveNativeMobilityHandoffTests.cs" />
+    <Compile Include="CombatWeaponSelectionHandoffTests.cs" />
+    <Compile Include="NativeWitchBroomReaderTests.cs" />
     <Compile Include="EyeStrategyTests.cs" />
+    <Compile Include="QueenSlimeStrategyTests.cs" />
+    <Compile Include="PrimeStrategyTests.cs" />
+    <Compile Include="PriorityBossActiveRecoveryTests.cs" />
+    <Compile Include="PriorityBossNativeStrategyTests.cs" />
+    <Compile Include="QueenBeeContactRegressionTests.cs" />
+    <Compile Include="PriorityEmpressMoonStrategyTests.cs" />
+    <Compile Include="PriorityGroundFishronTrajectoryTests.cs" />
+    <Compile Include="WallOfFleshStrategyTests.cs" />
+    <Compile Include="PriorityBossNativeContextTests.cs" />
+    <Compile Include="PriorityBossNativeCaptureTests.cs" />
+    <Compile Include="TwinsStrategyTests.cs" />
+    <Compile Include="DestroyerStrategyTests.cs" />
+    <Compile Include="DestroyerObservationTests.cs" />
     <Compile Include="SupportTests.cs" />
     <Compile Include="PlannerBenchmarks.cs" />
     <Compile Include="ReflectionTests.cs" />
     <Compile Include="WeaponProfileTests.cs" />
+    <Compile Include="DiamondStaffProfileTests.cs" />
+    <Compile Include="SimpleMagicPrefixTests.cs" />
+    <Compile Include="DemonScytheTests.cs" />
+    <Compile Include="UnholyTridentTests.cs" />
+    <Compile Include="AquaScepterTests.cs" />
+    <Compile Include="NativeTrajectoryGateTests.cs" />
+    <Compile Include="OutputRouteTests.cs" />
+    <Compile Include="NativeWindEmissionGateTests.cs" />
+    <Compile Include="CommonWeaponOutputTests.cs" />
+    <Compile Include="SummonWhipOutputContractTests.cs" />
+    <Compile Include="SummonWhipProductionTests.cs" />
     <Compile Include="WeaponActionGateTests.cs" />
     <Compile Include="KingSlimeStrategyTests.cs" />
     <Compile Include="TransactionTests.cs" />
     <Compile Include="PatcherTests.cs" />
+    <Compile Include="SpecialRangedContractsTests.cs" />
+    <Compile Include="SnowballCannonProfileTests.cs" />
+    <Compile Include="RocketProductionTests.cs" />
+    <Compile Include="MeleeProjectileProfileTests.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Chaite.Core\Chaite.Core.csproj">

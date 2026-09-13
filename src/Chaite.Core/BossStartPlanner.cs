@@ -49,6 +49,37 @@ namespace Chaite.Core
             return null;
         }
 
+        /// <summary>
+        /// Production start selector for the current deliberately narrow
+        /// release. The generic selector above remains available to offline
+        /// strategy fixtures, but a live game must skip every earlier hotbar
+        /// summon belonging to an unreviewed Boss rather than accidentally
+        /// selecting it before a valid Fishron/Empress item.
+        /// </summary>
+        public static BossStartPlan SelectProduction(BossStartContext context)
+        {
+            if (context == null || context.ActiveBossTypes == null ||
+                context.ActiveBossTypes.Count != 0)
+                return null;
+
+            for (var slot = 0; slot < 10; slot++)
+            {
+                var item = FindAt(context, slot);
+                if (item == null || item.Stack <= 0)
+                    continue;
+                // Keep the exact biome/time/critters checks in FromItem, but
+                // never even construct a plan for another Boss family.
+                if (item.Type != 2673 && item.Type != 4961)
+                    continue;
+                var plan = FromItem(context, item);
+                string ignored;
+                if (SupportedBossPolicy.TryValidateStartPlan(plan,
+                        out ignored))
+                    return plan;
+            }
+            return null;
+        }
+
         private static BossStartPlan FromItem(BossStartContext c, HotbarItemSnapshot item)
         {
             switch (item.Type)
@@ -60,7 +91,12 @@ namespace Chaite.Core
                 case 544:
                     return HasNightStartWindow(c) ? Direct(item, 125, "mechanical-eye") : null;
                 case 556:
-                    return HasNightStartWindow(c) ? Direct(item, 134, "mechanical-worm") : null;
+                    // The only reviewed Destroyer controller is a single-Boss
+                    // profile.  Do not consume the worm into the generic or
+                    // mechanical multi-Boss controllers while another Boss is
+                    // already alive.
+                    return HasNightStartWindow(c) && c.ActiveBossTypes.Count == 0
+                        ? Direct(item, 134, "mechanical-worm") : null;
                 case 557:
                     return HasNightStartWindow(c) ? Direct(item, 127, "mechanical-skull") : null;
                 case 560:
@@ -85,7 +121,16 @@ namespace Chaite.Core
                     // summons latch rage by HEIGHT, even at night. This surface-only
                     // workflow has no validated enraged/underground start profile;
                     // decline it rather than treating Zenith as a safe day bypass.
-                    return !c.ZenithWorld && c.ZoneHallow && c.ZoneOverworld && HasNightStartWindow(c) && !c.CritterProtection
+                    // Vanilla NPC 661 does not impose a daytime-use ban. Once
+                    // released beside the player in surface Hallow it remains
+                    // damageable while nearby; ExecuteLacewingStart immediately
+                    // uses the already admitted single-slot projectile route.
+                    // Daytime therefore selects the same transaction and lets
+                    // the stricter lethal-day Empress mobility gate decide
+                    // whether taking control is safe.
+                    return !c.ZenithWorld && c.ZoneHallow && c.ZoneOverworld &&
+                           (c.DayTime || HasNightStartWindow(c)) &&
+                           !c.CritterProtection
                         ? Special(BossSummonKind.PrismaticLacewing, item, 636, "prismatic-lacewing", item.Slot, 480, new Vec2()) : null;
                 case 1293:
                     return c.NearLihzahrdAltar
@@ -141,7 +186,7 @@ namespace Chaite.Core
         private static BossStartPlan Special(BossSummonKind kind, HotbarItemSnapshot item, int bossType,
             string id, int actionSlot, int timeout, Vec2 world)
         {
-            return new BossStartPlan
+            var plan = new BossStartPlan
             {
                 Kind = kind,
                 SummonSlot = item.Slot,
@@ -152,17 +197,21 @@ namespace Chaite.Core
                 InteractionWorld = world,
                 Id = id
             };
+            plan.SealPlannerSelection();
+            return plan;
         }
 
         private static BossStartPlan Natural(BossSummonKind kind, int bossType, string id, int timeout)
         {
-            return new BossStartPlan
+            var plan = new BossStartPlan
             {
                 Kind = kind,
                 ExpectedBossType = bossType,
                 TimeoutTicks = timeout,
                 Id = id
             };
+            plan.SealPlannerSelection();
+            return plan;
         }
     }
 }

@@ -57,6 +57,7 @@ namespace Chaite.Core
 
             var previous = State;
             var cue = AudioCue.None;
+            var respawnedThisUpdate = false;
             ObserveBosses(observation);
             // Respawn life is not damage taken relative to pre-death life.
             if (observation.PlayerDead) _lastLife = -1;
@@ -104,6 +105,7 @@ namespace Chaite.Core
             else if (!observation.PlayerDead && State == SessionState.EngagedDeadWaitingRespawn && observation.HasEncounter)
             {
                 State = SessionState.EngagedAlive;
+                respawnedThisUpdate = true;
             }
 
             if (observation.PlayerLife > 0)
@@ -112,7 +114,13 @@ namespace Chaite.Core
             if (observation.HasEncounter)
             {
                 _missingTicks = 0;
-                return Result(previous, cue, State == SessionState.EngagedAlive, false);
+                // Player.Update observes dead/life before vanilla has rebuilt
+                // equipment-derived movement fields for the respawned player.
+                // Reserve this edge as one neutral settle frame so runtime
+                // admission cannot reject a valid loadout from stale defaults.
+                return Result(previous, cue,
+                    State == SessionState.EngagedAlive &&
+                    !respawnedThisUpdate, false);
             }
 
             _missingTicks++;

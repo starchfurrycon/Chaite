@@ -301,8 +301,16 @@ namespace Chaite.Tests
             return snapshot;
         }
 
-        private static void BudgetSupport(CombatPlanner planner, CombatSnapshot snapshot, ref int horizontal, ref int vertical)
+        private static void BudgetSupport(CombatPlanner planner,
+            CombatSnapshot snapshot, ref int horizontal, ref int vertical,
+            bool finiteFlightRoute = true)
         {
+            var locomotion = typeof(CombatPlanner).GetField("_activeLocomotion",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            True(locomotion != null);
+            locomotion.SetValue(planner, finiteFlightRoute
+                ? BossLocomotionBaseline.FinitePlayerFlight
+                : BossLocomotionBaseline.OnFoot);
             var method = typeof(CombatPlanner).GetMethod("BudgetFlight", BindingFlags.Instance | BindingFlags.NonPublic);
             True(method != null);
             var arguments = new object[] { snapshot, horizontal, vertical };
@@ -376,7 +384,8 @@ namespace Chaite.Tests
                 snapshot.Mobility.FlightResourceFraction = 0;
                 var horizontal = horizontalIntent;
                 var vertical = verticalIntent;
-                BudgetSupport(new CombatPlanner(new PlannerSettings()), snapshot, ref horizontal, ref vertical);
+                BudgetSupport(new CombatPlanner(new PlannerSettings()), snapshot,
+                    ref horizontal, ref vertical, false);
                 Equal(horizontalIntent, horizontal);
                 Equal(verticalIntent, vertical);
             }

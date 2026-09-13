@@ -31,6 +31,11 @@ namespace Chaite.Core
 
         public static BeamSample AtTime(in ThreatSnapshot threat, float ticks)
         {
+            if (EmpressLanceGeometry.RequiresSafetyModel(threat))
+                return !Finite(ticks) || ticks < 0f ? default(BeamSample) :
+                    EmpressLanceGeometry.ValidSnapshot(threat) ?
+                        EmpressLanceGeometry.AtTime(threat, ticks) :
+                        InvalidSafetyBeam();
             var age = threat.BeamAge + ticks;
             if (threat.Geometry == ThreatGeometry.Body || age < 0f || age >= 180f ||
                 threat.TimeLeft > 0 && ticks >= threat.TimeLeft) return default(BeamSample);
@@ -49,6 +54,13 @@ namespace Chaite.Core
 
         public static BeamSample Sweep(in ThreatSnapshot threat, float fromTicks, float toTicks)
         {
+            if (EmpressLanceGeometry.RequiresSafetyModel(threat))
+                return !Finite(fromTicks) || !Finite(toTicks) ||
+                    fromTicks < 0f || toTicks < fromTicks ?
+                        default(BeamSample) :
+                    EmpressLanceGeometry.ValidSnapshot(threat) ?
+                        EmpressLanceGeometry.Sweep(threat, fromTicks,
+                            toTicks) : InvalidSafetyBeam();
             var warmup = threat.Geometry == ThreatGeometry.MoonLordDeathray ? 20f : 61f;
             var from = Math.Max(fromTicks, Math.Max(0f, -threat.BeamAge));
             var to = Math.Min(toTicks, 179f - threat.BeamAge);
@@ -86,6 +98,11 @@ namespace Chaite.Core
 
         public static RectF ConservativeBounds(in ThreatSnapshot threat, float horizon)
         {
+            if (EmpressLanceGeometry.RequiresSafetyModel(threat))
+                return !Finite(horizon) || horizon < 0f ? default(RectF) :
+                    EmpressLanceGeometry.ValidSnapshot(threat) ?
+                        EmpressLanceGeometry.ConservativeBounds(threat,
+                            horizon) : InvalidSafetyBeam().Bounds;
             var travel = threat.BeamSourceVelocity * horizon;
             var reach = threat.Geometry == ThreatGeometry.MoonLordDeathray ? 2440f : 840f * Math.Max(1f, threat.BeamScale);
             return new RectF(threat.BeamOrigin.X + Math.Min(0f, travel.X) - reach,
@@ -185,6 +202,28 @@ namespace Chaite.Core
             return new RectF((int)(origin.X - width * .5f), (int)(origin.Y - height * .5f), width, height);
         }
 
+        private static BeamSample InvalidSafetyBeam()
+        {
+            // An explicitly classified native beam whose required state is
+            // malformed must remain dangerous in every safety consumer. Keep
+            // the sentinel finite so scoring and separating-axis math cannot
+            // acquire NaNs while covering every vanilla world coordinate.
+            var lobe = new BeamLobe
+            {
+                Center = new Vec2(0f, 0f),
+                Axis = new Vec2(1f, 0f),
+                HalfLength = 1000000000f,
+                HalfWidth = 1000000000f
+            };
+            return new BeamSample
+            {
+                Count = 1,
+                First = lobe,
+                Bounds = new RectF(-1000000000f, -1000000000f,
+                    2000000000f, 2000000000f)
+            };
+        }
+
         private static BeamLobe Lobe(Vec2 origin, Vec2 axis, float length, float halfWidth,
             float sinHalfAngle, float parallelMotion, float perpendicularMotion)
         {
@@ -236,6 +275,8 @@ namespace Chaite.Core
         }
 
         private static Vec2 SafeDirection(Vec2 direction) => direction.LengthSquared < .00001f ? new Vec2(0, -1) : direction.Normalized();
+        private static bool Finite(float value) => !float.IsNaN(value) &&
+            !float.IsInfinity(value);
         private static float Clamp01(float value) => Math.Max(0f, Math.Min(1f, value));
     }
 }

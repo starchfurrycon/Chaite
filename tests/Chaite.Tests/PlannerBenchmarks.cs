@@ -28,6 +28,7 @@ namespace Chaite.Tests
             MeasureRichScenario("eye + 200 projectiles", RichScenario(4), allocation, allocationScope);
             var fishron = RichScenario(370);
             fishron.Difficulty.Expert = true;
+            AddExactDash(fishron);
             MeasureRichScenario("expert Fishron phases + 200 projectiles", fishron, allocation, allocationScope);
             var mayhem = RichScenario(125, 126, 134, 127);
             mayhem.Difficulty.Master = true;
@@ -35,6 +36,150 @@ namespace Chaite.Tests
             MeasureRichScenario("4 mechanical boss NPCs + 200 projectiles", mayhem, allocation, allocationScope);
             var mixed = RichScenario(50, 4, 370);
             MeasureRichScenario("mixed boss families + 200 projectiles", mixed, allocation, allocationScope);
+            var flight = RichScenario(657);
+            flight.Player.Jump = OrdinaryJump();
+            flight.Player.Flight = DemonFlight();
+            flight.Player.Gravity = .4f;
+            flight.Player.MaxFallSpeed = 10f;
+            flight.Player.BaseRunSpeed = 3.2f;
+            flight.Player.SprintAcceleration = .032f;
+            flight.Player.RunSlowdown = .2f;
+            flight.Player.CanSprintInAir = true;
+            flight.Mobility.HasFiniteFlightResource = true;
+            MeasureRichScenario("Demon native ticks + Queen + 200 projectiles", flight, allocation, allocationScope);
+
+            MeasureDestroyerPressure("Destroyer P1 HeadExit + 80 segments + 200 projectiles",
+                false, allocation, allocationScope, 384, 80, 200);
+            MeasureDestroyerPressure("Destroyer P1 RecoverAnchor + 80 segments + 200 projectiles",
+                true, allocation, allocationScope, 384, 80, 200);
+            MeasureDestroyerPressure("Destroyer P1 HeadExit 1000-threat stress",
+                false, allocation, allocationScope, 128, 80, 920);
+        }
+
+        private static void MeasureDestroyerPressure(string name, bool recovery,
+            Func<long> allocation, string allocationScope, int samples, int segmentCount, int projectileCount)
+        {
+            var warmup = Math.Min(48, Math.Max(16, samples / 4));
+            var snapshot = DestroyerPressureScenario(segmentCount, projectileCount);
+            var planner = new CombatPlanner(new PlannerSettings());
+            for (var i = 0; i < warmup; i++)
+            {
+                PrepareDestroyerPressurePhase(snapshot, planner, recovery);
+                var warm = planner.Plan(snapshot);
+                True(warm.PhaseId.Contains(recovery ? "recover-anchor" : "head-exit"), warm.PhaseId);
+            }
+
+            var timings = new long[samples];
+            double checksum = 0d;
+            long sum = 0;
+            long allocated = 0;
+            var gen0 = 0;
+            var gen1 = 0;
+            var gen2 = 0;
+            for (var i = 0; i < samples; i++)
+            {
+                AdvanceDestroyerPressure(snapshot, i);
+                PrepareDestroyerPressurePhase(snapshot, planner, recovery);
+                var allocatedBefore = allocation == null ? 0 : allocation();
+                var gen0Before = GC.CollectionCount(0);
+                var gen1Before = GC.CollectionCount(1);
+                var gen2Before = GC.CollectionCount(2);
+                var start = Stopwatch.GetTimestamp();
+                var result = planner.Plan(snapshot);
+                var elapsed = Stopwatch.GetTimestamp() - start;
+                gen0 += GC.CollectionCount(0) - gen0Before;
+                gen1 += GC.CollectionCount(1) - gen1Before;
+                gen2 += GC.CollectionCount(2) - gen2Before;
+                if (allocation != null) allocated += allocation() - allocatedBefore;
+                timings[i] = elapsed;
+                sum += elapsed;
+                checksum += result.RiskScore + result.Horizontal;
+                True(result.PhaseId.Contains(recovery ? "recover-anchor" : "head-exit"), result.PhaseId);
+            }
+
+            Array.Sort(timings);
+            var p50 = Milliseconds(timings[(int)Math.Ceiling(samples * .50) - 1]);
+            var p95 = Milliseconds(timings[(int)Math.Ceiling(samples * .95) - 1]);
+            var p99 = Milliseconds(timings[(int)Math.Ceiling(samples * .99) - 1]);
+            var maximum = Milliseconds(timings[samples - 1]);
+            var average = Milliseconds(sum) / samples;
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "BENCH {0}: warm n={1}, p50={2:F3}, p95={3:F3}, p99={4:F3}, max={5:F3}, mean={6:F3} ms; GC={7}/{8}/{9}; {10}",
+                name, samples, p50, p95, p99, maximum, average, gen0, gen1, gen2,
+                allocation == null ? "allocation counter unavailable" :
+                    (allocated / (double)samples).ToString("F1", CultureInfo.InvariantCulture) + " B/plan (" + allocationScope + ")"));
+            True(!double.IsNaN(checksum) && !double.IsInfinity(checksum), name + " returned a non-finite plan");
+            True(p95 < 12d, name + " p95 exceeded 12 ms offline planner regression ceiling: " + p95);
+            True(average < 8d, name + " mean exceeded 8 ms offline planner regression ceiling: " + average);
+        }
+
+        private static CombatSnapshot DestroyerPressureScenario(int segmentCount, int projectileCount)
+        {
+            var snapshot = DestroyerP1Snapshot();
+            for (var i = 0; i < segmentCount; i++)
+            {
+                snapshot.Threats.Add(new ThreatSnapshot
+                {
+                    Kind = ThreatKind.NpcContact,
+                    Geometry = ThreatGeometry.Body,
+                    Type = i == segmentCount - 1 ? 136 : 135,
+                    Position = new Vec2(300f + i * 37 % 1500, 420f + i * 53 % 500),
+                    Velocity = new Vec2((i % 7 - 3) * 1.7f, (i % 5 - 2) * 1.3f),
+                    Width = 34,
+                    Height = 34,
+                    Damage = 80,
+                    TimeLeft = int.MaxValue
+                });
+            }
+            for (var i = 0; i < projectileCount; i++)
+            {
+                snapshot.Threats.Add(new ThreatSnapshot
+                {
+                    Kind = ThreatKind.Projectile,
+                    Geometry = ThreatGeometry.Body,
+                    Type = i % 2 == 0 ? 100 : 101,
+                    Position = new Vec2(350f + i * 83 % 1450, 360f + i * 67 % 570),
+                    Velocity = new Vec2((i % 9 - 4) * 2.3f, (i % 7 - 3) * 1.6f),
+                    Width = 10,
+                    Height = 10,
+                    Damage = 44,
+                    TimeLeft = 240
+                });
+            }
+            return snapshot;
+        }
+
+        private static void PrepareDestroyerPressurePhase(CombatSnapshot snapshot, CombatPlanner planner, bool recovery)
+        {
+            planner.Reset();
+            snapshot.Player.OnGround = true;
+            snapshot.Player.Position = new Vec2(790f, 958f);
+            snapshot.Player.Velocity = new Vec2(0f, 0f);
+            SetDestroyerResource(snapshot, 100f, 7);
+            SetDestroyerHead(snapshot, 2600f, 200f, 0f, 0f);
+            planner.Plan(snapshot); // Acquire the observed support.
+
+            SetDestroyerHead(snapshot, 500f, 1200f, 8f, -12f);
+            if (!recovery) return;
+            planner.Plan(snapshot); // Enter HeadExit.
+            snapshot.Player.OnGround = false;
+            snapshot.Player.Position = new Vec2(100f, 700f);
+            snapshot.Player.Velocity = new Vec2(0f, 0f);
+            SetDestroyerResource(snapshot, 20f, 0);
+            SetDestroyerHead(snapshot, 2600f, 200f, 0f, 0f);
+            planner.Plan(snapshot); // Exhaustion transitions into RecoverAnchor.
+        }
+
+        private static void AdvanceDestroyerPressure(CombatSnapshot snapshot, int tick)
+        {
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                var lane = (i * 29 + tick * 11) % 1600;
+                threat.Position.X = 250f + lane;
+                threat.Position.Y = 330f + (i * 47 + tick * 7) % 620;
+                snapshot.Threats[i] = threat;
+            }
         }
 
         private static void MeasureRichScenario(string name, CombatSnapshot snapshot, Func<long> allocation, string allocationScope)
@@ -118,6 +263,14 @@ namespace Chaite.Tests
             snapshot.Player.Velocity.X = tick % 256 < 128 ? 5f : -5f;
             snapshot.Mobility.FlightResourceFraction = (128 - tick % 128) / 128f;
             snapshot.Player.WingTime = 100 * snapshot.Mobility.FlightResourceFraction;
+            if (snapshot.Player.Flight.Known)
+            {
+                snapshot.Player.Flight.WingTime = 142 - tick % 143;
+                snapshot.Player.Flight.RocketTime = 0;
+                snapshot.Player.WingTime = snapshot.Player.Flight.WingTime;
+                snapshot.Player.RocketTime = snapshot.Player.Flight.RocketTime;
+                snapshot.Mobility.FlightResourceFraction = FlightMotion.ResourceFraction(in snapshot.Player.Flight);
+            }
             for (var i = 0; i < snapshot.Targets.Count; i++)
             {
                 var target = snapshot.Targets[i];

@@ -12,6 +12,7 @@ namespace Chaite.Tests
         {
             Run(nameof(NativeJumpReaderUsesInstanceStateNotSharedStaticParameters), NativeJumpReaderUsesInstanceStateNotSharedStaticParameters);
             Run(nameof(NativeJumpReaderPreservesCloudStateWithoutConsumingIt), NativeJumpReaderPreservesCloudStateWithoutConsumingIt);
+            Run(nameof(NativeJumpReaderCapturesFeatherFallWithoutMutatingIt), NativeJumpReaderCapturesFeatherFallWithoutMutatingIt);
             Run(nameof(NativeJumpReaderRejectsEveryUnsupportedBooleanBranch), NativeJumpReaderRejectsEveryUnsupportedBooleanBranch);
             Run(nameof(NativeJumpReaderRejectsFlightBoostAndInvalidData), NativeJumpReaderRejectsFlightBoostAndInvalidData);
             Run(nameof(NativeJumpReaderNestedStoolIsLiveAndReadOnly), NativeJumpReaderNestedStoolIsLiveAndReadOnly);
@@ -68,13 +69,26 @@ namespace Chaite.Tests
             False(read(player, false).Known);
         }
 
+        private static void NativeJumpReaderCapturesFeatherFallWithoutMutatingIt()
+        {
+            var read = NativeJumpRead();
+            var player = new NativeJumpPlayer { slowFall = true, gravDir = -1f };
+            var state = read(player, false);
+            True(state.Known);
+            True(state.SlowFall);
+            True(player.slowFall);
+            player.slowFall = false;
+            False(read(player, false).SlowFall);
+        }
+
         private static void NativeJumpReaderRejectsEveryUnsupportedBooleanBranch()
         {
             var read = NativeJumpRead();
             foreach (var field in typeof(NativeJumpPlayer).GetFields(BindingFlags.Instance | BindingFlags.Public))
             {
                 if (field.FieldType != typeof(bool) || field.Name == "releaseJump" || field.Name == "autoJump" ||
-                    field.Name == "hasJumpOption_Cloud" || field.Name == "canJumpAgain_Cloud" || field.Name == "isPerformingJump_Cloud")
+                    field.Name == "hasJumpOption_Cloud" || field.Name == "canJumpAgain_Cloud" ||
+                    field.Name == "isPerformingJump_Cloud" || field.Name == "slowFall")
                     continue;
                 var player = new NativeJumpPlayer();
                 field.SetValue(player, true);
@@ -147,6 +161,7 @@ namespace Chaite.Tests
             public bool releaseJump = true, canJumpAgain_Cloud, hasJumpOption_Cloud, isPerformingJump_Cloud, autoJump;
             public bool dead, ghost, wet, shimmerWet, shimmering, jumpBoost, wereWolf, moonLordLegs, empressBrooch, frogLegJumpBoost;
             public bool sticky, dazed, frozen, webbed, stoned, carpet, sliding, pulley, slowFall, vortexDebuff, tongued, onTrack;
+            public bool tryKeepingHoveringDown, tryKeepingHoveringUp;
             public bool hasDeadCellsDownDash, isPerformingJump_DownDash;
             public bool hasJumpOption_Sandstorm, canJumpAgain_Sandstorm, isPerformingJump_Sandstorm;
             public bool hasJumpOption_Blizzard, canJumpAgain_Blizzard, isPerformingJump_Blizzard;

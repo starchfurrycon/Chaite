@@ -12,13 +12,19 @@ namespace Chaite.Tests
     {
         private static void RunPatcherRegressions()
         {
-            Run(nameof(PatcherPlacesFourHooksWithoutModifyingSource), PatcherPlacesFourHooksWithoutModifyingSource);
+            Run(nameof(PatcherPlacesFiveHooksWithoutModifyingSource), PatcherPlacesFiveHooksWithoutModifyingSource);
             Run(nameof(PatcherRejectsMissingOrAmbiguousInputCopy), PatcherRejectsMissingOrAmbiguousInputCopy);
+            Run(nameof(PatcherRejectsMissingOrAmbiguousHorizontalMovement), PatcherRejectsMissingOrAmbiguousHorizontalMovement);
+            Run(nameof(PatcherRejectsUnreviewedNativeInputOrder), PatcherRejectsUnreviewedNativeInputOrder);
             Run(nameof(PatcherRejectsInPlaceTestAndDoubleInjection), PatcherRejectsInPlaceTestAndDoubleInjection);
             Run(nameof(PatcherWidensBranchesWithoutRedirectingBypass), PatcherWidensBranchesWithoutRedirectingBypass);
+            Run(nameof(InstallPayloadRefreshesReadmeAndPreservesUserFiles),
+                InstallPayloadRefreshesReadmeAndPreservesUserFiles);
+            Run(nameof(InstalledUpgradeRepatchesAndPreservesUserFiles),
+                InstalledUpgradeRepatchesAndPreservesUserFiles);
         }
 
-        private static void PatcherPlacesFourHooksWithoutModifyingSource()
+        private static void PatcherPlacesFiveHooksWithoutModifyingSource()
         {
             WithPatchFixture((source, output) =>
             {
@@ -32,16 +38,23 @@ namespace Chaite.Tests
                     var loot = patched.Types.Single(t => t.FullName == "Terraria.NPC").Methods.Single(m => m.Name == "NPCLoot");
                     Equal(1, CountCalls(update, "Chaite.Plugin.Runtime", "Tick"));
                     Equal(1, CountCalls(update, "Chaite.Plugin.Runtime", "ApplyPendingInput"));
+                    Equal(1, CountCalls(update, "Chaite.Plugin.Runtime", "ValidatePendingMobility"));
                     Equal(1, CountCalls(update, "Chaite.Plugin.Runtime", "ApplyPendingSelection"));
                     Equal(1, CountCalls(loot, "Chaite.Plugin.Runtime", "OnNpcKilled"));
                     Equal("Tick", ((MethodReference)update.Body.Instructions[2].Operand).Name);
                     var copy = update.Body.Instructions.Single(i => MethodCall(i, "Terraria.GameInput.TriggersSet", "CopyInto"));
                     Equal(OpCodes.Ldarg_0, copy.Next.OpCode);
                     True(MethodCall(copy.Next.Next, "Chaite.Plugin.Runtime", "ApplyPendingInput"));
+                    var horizontal = update.Body.Instructions.Single(i => MethodCall(i,
+                        "Terraria.Player", "HorizontalMovement"));
+                    True(MethodCall(horizontal.Previous,
+                        "Chaite.Plugin.Runtime", "ValidatePendingMobility"));
+                    Equal(OpCodes.Ldarg_0, horizontal.Previous.Previous.OpCode);
                     var hotbar = update.Body.Instructions.Single(i => MethodCall(i, "Terraria.Player", "HandleHotbarControls"));
                     Equal(OpCodes.Ldarg_0, hotbar.Next.OpCode);
                     True(MethodCall(hotbar.Next.Next, "Chaite.Plugin.Runtime", "ApplyPendingSelection"));
                     True(update.Body.Instructions.IndexOf(copy.Next.Next) < update.Body.Instructions.IndexOf(hotbar));
+                    True(update.Body.Instructions.IndexOf(hotbar.Next.Next) < update.Body.Instructions.IndexOf(horizontal));
                 }
             });
         }
@@ -58,6 +71,35 @@ namespace Chaite.Tests
                     False(File.Exists(output));
                     Equal(before, TestHash(source));
                 });
+        }
+
+        private static void PatcherRejectsMissingOrAmbiguousHorizontalMovement()
+        {
+            foreach (var count in new[] { 0, 2 })
+                WithPatchFixture((source, output) =>
+                {
+                    WriteSyntheticGame(source, 1, false, count);
+                    var before = TestHash(source);
+                    Throws<InvalidDataException>(() => new InstallationService().PatchCopyForTest(source,
+                        typeof(Chaite.Plugin.Runtime).Assembly.Location, output));
+                    False(File.Exists(output));
+                    Equal(before, TestHash(source));
+                });
+        }
+
+        private static void PatcherRejectsUnreviewedNativeInputOrder()
+        {
+            WithPatchFixture((source, output) =>
+            {
+                WriteSyntheticGame(source, 1, false, 1, true);
+                var before = TestHash(source);
+                Throws<InvalidDataException>(() => new InstallationService()
+                    .PatchCopyForTest(source,
+                        typeof(Chaite.Plugin.Runtime).Assembly.Location,
+                        output));
+                False(File.Exists(output));
+                Equal(before, TestHash(source));
+            });
         }
 
         private static void PatcherRejectsInPlaceTestAndDoubleInjection()
@@ -89,14 +131,176 @@ namespace Chaite.Tests
                     var update = patched.Types.Single(t => t.FullName == "Terraria.Player").Methods.Single(m => m.Name == "Update");
                     var branch = update.Body.Instructions.Single(i => i.OpCode == OpCodes.Br);
                     var copy = update.Body.Instructions.Single(i => MethodCall(i, "Terraria.GameInput.TriggersSet", "CopyInto"));
-                    True(ReferenceEquals(copy.Next.Next.Next, branch.Operand),
+                    var hotbar = update.Body.Instructions.Single(i => MethodCall(i,
+                        "Terraria.Player", "HandleHotbarControls"));
+                    True(ReferenceEquals(hotbar.Previous, branch.Operand),
                         "a branch bypassing the original CopyInto must still bypass the replay hook");
                     False(update.Body.Instructions.Any(i => i.OpCode.OperandType == OperandType.ShortInlineBrTarget));
                 }
             });
         }
 
-        private static void WriteSyntheticGame(string path, int copyCount = 1, bool bypassBranch = false)
+        private static void InstallPayloadRefreshesReadmeAndPreservesUserFiles()
+        {
+            var root = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                "patcher-payload-fixture-" + Guid.NewGuid().ToString("N"));
+            var payload = Path.Combine(root, "payload");
+            var payloadAudio = Path.Combine(payload, "Audio");
+            var data = Path.Combine(root, "game-data");
+            var dataAudio = Path.Combine(data, "Audio");
+            Directory.CreateDirectory(payloadAudio);
+            Directory.CreateDirectory(dataAudio);
+            var payloadConfig = Path.Combine(payload, "config.json");
+            var installedConfig = Path.Combine(data, "config.json");
+            var payloadReadme = Path.Combine(payloadAudio, "README.txt");
+            var installedReadme = Path.Combine(dataAudio, "README.txt");
+            var existingWave = Path.Combine(dataAudio, "custom.wav");
+            var extraWave = Path.Combine(dataAudio, "keep.wav");
+            var payloadWave = Path.Combine(payloadAudio, "custom.wav");
+            var createdFiles = new[]
+            {
+                payloadConfig, installedConfig, payloadReadme,
+                installedReadme, existingWave, extraWave, payloadWave
+            };
+            try
+            {
+                File.WriteAllText(payloadConfig, "package-config");
+                File.WriteAllText(installedConfig, "user-config");
+                File.WriteAllText(payloadReadme, "new-slot-contract");
+                File.WriteAllText(installedReadme, "old-slot-contract");
+                File.WriteAllBytes(existingWave, new byte[] { 1, 2, 3 });
+                File.WriteAllBytes(extraWave, new byte[] { 4, 5, 6 });
+                File.WriteAllBytes(payloadWave, new byte[] { 7, 8, 9 });
+
+                var copy = typeof(InstallationService).GetMethod(
+                    "CopyUserDataPayload", System.Reflection.BindingFlags.Static |
+                    System.Reflection.BindingFlags.NonPublic);
+                True(copy != null, "payload copy policy helper missing");
+                copy.Invoke(null, new object[] { payload, data });
+
+                Equal("new-slot-contract", File.ReadAllText(installedReadme));
+                Equal("user-config", File.ReadAllText(installedConfig));
+                Equal("01-02-03", BitConverter.ToString(
+                    File.ReadAllBytes(existingWave)));
+                Equal("04-05-06", BitConverter.ToString(
+                    File.ReadAllBytes(extraWave)));
+                Equal(2, Directory.GetFiles(dataAudio, "*.wav").Length);
+            }
+            finally
+            {
+                foreach (var file in createdFiles)
+                    if (File.Exists(file)) File.Delete(file);
+                if (Directory.Exists(payloadAudio))
+                    Directory.Delete(payloadAudio, false);
+                if (Directory.Exists(payload)) Directory.Delete(payload, false);
+                if (Directory.Exists(dataAudio)) Directory.Delete(dataAudio, false);
+                if (Directory.Exists(data)) Directory.Delete(data, false);
+                if (Directory.Exists(root)) Directory.Delete(root, false);
+            }
+        }
+
+        private static void InstalledUpgradeRepatchesAndPreservesUserFiles()
+        {
+            var root = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                "patcher-upgrade-fixture-" + Guid.NewGuid().ToString("N"));
+            var game = Path.Combine(root, "game");
+            var payload = Path.Combine(root, "payload");
+            var payloadAudio = Path.Combine(payload, "Audio");
+            var data = Path.Combine(game, "Chaite");
+            var installedAudio = Path.Combine(data, "Audio");
+            Directory.CreateDirectory(game);
+            Directory.CreateDirectory(payloadAudio);
+            Directory.CreateDirectory(installedAudio);
+
+            var original = Path.Combine(root, "Terraria.original.exe");
+            var terraria = Path.Combine(game, "Terraria.exe");
+            var backupName = "Terraria.original.backup";
+            var backup = Path.Combine(data, backupName);
+            var pluginSource = Path.Combine(payload, "Chaite.Plugin.dll");
+            var coreSource = Path.Combine(payload, "Chaite.Core.dll");
+            var installedPlugin = Path.Combine(game, "Chaite.Plugin.dll");
+            var installedCore = Path.Combine(game, "Chaite.Core.dll");
+            var userConfig = Path.Combine(data, "config.json");
+            var readme = Path.Combine(installedAudio, "README.txt");
+            var userWave = Path.Combine(installedAudio, "boss_too_hard_for_me.wav");
+            try
+            {
+                WriteSyntheticGame(original);
+                File.Copy(original, backup, false);
+                File.Copy(typeof(Chaite.Plugin.Runtime).Assembly.Location,
+                    pluginSource, false);
+                File.Copy(typeof(Chaite.Core.CombatPlanner).Assembly.Location,
+                    coreSource, false);
+                File.WriteAllText(Path.Combine(payload, "config.json"),
+                    "package-config");
+                File.WriteAllText(Path.Combine(payloadAudio, "README.txt"),
+                    "new-scope-slots");
+                File.WriteAllText(userConfig, "user-config");
+                File.WriteAllText(readme, "old-scope-slots");
+                File.WriteAllBytes(userWave, new byte[] { 9, 8, 7, 6 });
+                File.WriteAllText(installedPlugin, "old-plugin");
+                File.WriteAllText(installedCore, "old-core");
+
+                var service = new InstallationService();
+                service.PatchCopyForTest(original, pluginSource, terraria);
+                var manifest = new InstallManifest
+                {
+                    GameVersion = InstallationService.SupportedVersion,
+                    OriginalSha256 = TestHash(original),
+                    PatchedSha256 = TestHash(terraria),
+                    BackupFile = backupName,
+                    InstalledUtc = DateTime.UtcNow.AddDays(-1),
+                    PatcherVersion = "old"
+                };
+                var serializer = new System.Xml.Serialization.XmlSerializer(
+                    typeof(InstallManifest));
+                using (var stream = File.Create(Path.Combine(data,
+                    "install.xml"))) serializer.Serialize(stream, manifest);
+                Equal(InstallState.Installed,
+                    service.GetStatus(terraria).State);
+
+                var installClosed = typeof(InstallationService).GetMethod(
+                    "InstallWithGameClosed",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                True(installClosed != null,
+                    "closed-game upgrade entry missing");
+                InstallStatus result;
+                try
+                {
+                    result = (InstallStatus)installClosed.Invoke(service,
+                        new object[] { terraria, payload });
+                }
+                catch (System.Reflection.TargetInvocationException ex)
+                {
+                    throw ex.InnerException ?? ex;
+                }
+
+                Equal(InstallState.Installed, result.State);
+                Equal(TestHash(pluginSource), TestHash(installedPlugin));
+                Equal(TestHash(coreSource), TestHash(installedCore));
+                Equal("new-scope-slots", File.ReadAllText(readme));
+                Equal("user-config", File.ReadAllText(userConfig));
+                Equal("09-08-07-06", BitConverter.ToString(
+                    File.ReadAllBytes(userWave)));
+                using (var module = ModuleDefinition.ReadModule(terraria))
+                {
+                    var update = module.Types.Single(t =>
+                        t.FullName == "Terraria.Player").Methods.Single(m =>
+                            m.Name == "Update");
+                    Equal(1, CountCalls(update, "Chaite.Plugin.Runtime",
+                        "ValidatePendingMobility"));
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        }
+
+        private static void WriteSyntheticGame(string path, int copyCount = 1,
+            bool bypassBranch = false, int horizontalCount = 1,
+            bool horizontalBeforeHotbar = false)
         {
             using (var module = ModuleDefinition.CreateModule("Chaite.SyntheticTerraria", ModuleKind.Dll))
             {
@@ -113,6 +317,9 @@ namespace Chaite.Tests
                 var hotbar = new MethodDefinition("HandleHotbarControls", MethodAttributes.Public, module.TypeSystem.Void);
                 hotbar.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
                 player.Methods.Add(hotbar);
+                var horizontal = new MethodDefinition("HorizontalMovement", MethodAttributes.Public, module.TypeSystem.Void);
+                horizontal.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+                player.Methods.Add(horizontal);
                 var update = new MethodDefinition("Update", MethodAttributes.Public, module.TypeSystem.Void);
                 update.Parameters.Add(new ParameterDefinition("index", ParameterAttributes.None, module.TypeSystem.Int32));
                 player.Methods.Add(update);
@@ -124,8 +331,18 @@ namespace Chaite.Tests
                     update.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
                     update.Body.Instructions.Add(Instruction.Create(OpCodes.Callvirt, copy));
                 }
+                Action appendHorizontal = () =>
+                {
+                    for (var i = 0; i < horizontalCount; i++)
+                    {
+                        update.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_0));
+                        update.Body.Instructions.Add(Instruction.Create(OpCodes.Call, horizontal));
+                    }
+                };
+                if (horizontalBeforeHotbar) appendHorizontal();
                 update.Body.Instructions.Add(selectThis);
                 update.Body.Instructions.Add(Instruction.Create(OpCodes.Call, hotbar));
+                if (!horizontalBeforeHotbar) appendHorizontal();
                 update.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
                 var loot = new MethodDefinition("NPCLoot", MethodAttributes.Public, module.TypeSystem.Void);
                 loot.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
@@ -164,7 +381,8 @@ namespace Chaite.Tests
         {
             using (var stream = File.OpenRead(path))
             using (var hash = SHA256.Create())
-                return BitConverter.ToString(hash.ComputeHash(stream));
+                return BitConverter.ToString(hash.ComputeHash(stream))
+                    .Replace("-", string.Empty);
         }
     }
 }

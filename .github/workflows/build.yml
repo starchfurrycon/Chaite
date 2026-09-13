@@ -56,12 +56,55 @@ jobs:
             Tee-Object -FilePath artifacts\ci\boss-readiness-tests.log
           if ($LASTEXITCODE -ne 0) { throw "Readiness regressions failed: $LASTEXITCODE" }
 
+      - name: Check priority Boss phase fixture contract
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-priority-phase-fixture-contract.ps1 |
+            Tee-Object -FilePath artifacts\ci\priority-phase-fixture-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Priority phase fixture contract failed: $LASTEXITCODE" }
+
+      - name: Check priority Boss organic fixture contract
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-priority-organic-fixture-contract.ps1 |
+            Tee-Object -FilePath artifacts\ci\priority-organic-fixture-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Priority organic fixture contract failed: $LASTEXITCODE" }
+
+      - name: Check priority Boss probe schema without launching Terraria
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-priority-boss-probe-schema.ps1 `
+            -OutputDirectory (Join-Path $PWD 'artifacts\ci\priority-probe-schema') |
+            Tee-Object -FilePath artifacts\ci\priority-probe-schema-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Priority Boss probe schema failed: $LASTEXITCODE" }
+
       - name: Check native motion evidence gate without launching Terraria
         run: |
           $ErrorActionPreference = 'Stop'
           & .\tools\test-native-motion-evidence.ps1 |
             Tee-Object -FilePath artifacts\ci\motion-evidence-tests.log
           if ($LASTEXITCODE -ne 0) { throw "Motion evidence regressions failed: $LASTEXITCODE" }
+
+      - name: Check native flight evidence gate without launching Terraria
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-native-flight-evidence.ps1 |
+            Tee-Object -FilePath artifacts\ci\flight-evidence-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Flight evidence regressions failed: $LASTEXITCODE" }
+
+      - name: Check Twins native post-audit gate with synthetic evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-twins-native-audit.ps1 |
+            Tee-Object -FilePath artifacts\ci\twins-native-audit-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Twins native post-audit regressions failed: $LASTEXITCODE" }
+
+      - name: Check Destroyer native post-audit gate with synthetic evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\test-destroyer-native-audit.ps1 |
+            Tee-Object -FilePath artifacts\ci\destroyer-native-audit-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Destroyer native post-audit regressions failed: $LASTEXITCODE" }
 
       - name: Retain offline test evidence
         if: always()
@@ -72,6 +115,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Deliberately do not run verify-api-contract, prepare-game-probe,
+      # Deliberately do not run verify-api-contract, the native special-ranged
+      # metadata audit, prepare-game-probe,
       # start-isolated-test, installation or any actual Terraria process in CI.
       # Those require a locally owned, hash-verified vanilla game installation.

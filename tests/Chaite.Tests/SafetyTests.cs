@@ -7,7 +7,7 @@ namespace Chaite.Tests
     {
         private static void RunSafetyRegressions()
         {
-            Run(nameof(ExistingBossAloneDoesNotAuthorizeActivation), ExistingBossAloneDoesNotAuthorizeActivation);
+            Run(nameof(ControllerRequiresExplicitRuntimeAdmissionForExistingBoss), ControllerRequiresExplicitRuntimeAdmissionForExistingBoss);
             Run(nameof(EveryEventAloneIsRejected), EveryEventAloneIsRejected);
             Run(nameof(CancelImmediatelyReleasesAndStaysTerminal), CancelImmediatelyReleasesAndStaysTerminal);
             Run(nameof(WaitingTimeoutReleasesWithoutVictory), WaitingTimeoutReleasesWithoutVictory);
@@ -20,7 +20,7 @@ namespace Chaite.Tests
             Run(nameof(HotbarOrderingIgnoresEnumerationOrder), HotbarOrderingIgnoresEnumerationOrder);
             Run(nameof(HotbarSummonPrecedesNaturalSchedule), HotbarSummonPrecedesNaturalSchedule);
             Run(nameof(SpecialSummonsRequireTheirInteractions), SpecialSummonsRequireTheirInteractions);
-            Run(nameof(LacewingHonorsBiomeTimeAndCritterProtection), LacewingHonorsBiomeTimeAndCritterProtection);
+            Run(nameof(LacewingHonorsBiomeAndCritterProtectionByDayOrNight), LacewingHonorsBiomeAndCritterProtectionByDayOrNight);
             Run(nameof(EmptyStacksAndNonHotbarSummonsAreIgnored), EmptyStacksAndNonHotbarSummonsAreIgnored);
             Run(nameof(ProjectileOnlyWaitingDoesNotThrowOrFire), ProjectileOnlyWaitingDoesNotThrowOrFire);
             Run(nameof(DeadPlannerNeverAppliesControls), DeadPlannerNeverAppliesControls);
@@ -31,6 +31,7 @@ namespace Chaite.Tests
             Run(nameof(FlightExhaustionStopsSustainedJump), FlightExhaustionStopsSustainedJump);
             Run(nameof(SelectedTargetVisibilityOverridesPrimarySnapshotFlag), SelectedTargetVisibilityOverridesPrimarySnapshotFlag);
             Run(nameof(ExistingBossFamilyBlocksDuplicateSummon), ExistingBossFamilyBlocksDuplicateSummon);
+            Run(nameof(DestroyerSummonRejectsEveryConcurrentBoss), DestroyerSummonRejectsEveryConcurrentBoss);
             Run(nameof(UnrelatedBossDoesNotSkipSummonPreparation), UnrelatedBossDoesNotSkipSummonPreparation);
             Run(nameof(FastCrossingProjectileTriggersEmergency), FastCrossingProjectileTriggersEmergency);
             Run(nameof(ArenaReversalDoesNotImmediatelyOscillateBack), ArenaReversalDoesNotImmediatelyOscillateBack);
@@ -49,9 +50,31 @@ namespace Chaite.Tests
             Run(nameof(DestroyerProbePressureRespectsDistanceAndVisibility), DestroyerProbePressureRespectsDistanceAndVisibility);
             Run(nameof(DestroyerHeadThreatIsIndependentFromDamageTarget), DestroyerHeadThreatIsIndependentFromDamageTarget);
             Run(nameof(DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns), DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns);
+            Run(nameof(RequirementsRejectMalformedArenaAndMotion), RequirementsRejectMalformedArenaAndMotion);
         }
 
-        private static void ExistingBossAloneDoesNotAuthorizeActivation()
+        private static void RequirementsRejectMalformedArenaAndMotion()
+        {
+            var planner = new CombatPlanner(new PlannerSettings());
+            string reason;
+
+            var missingArena = CombatScenario(4);
+            missingArena.Arena = null;
+            False(planner.RequirementsMet(missingArena, out reason));
+            True(!string.IsNullOrEmpty(reason));
+
+            var invalidClearance = CombatScenario(4);
+            invalidClearance.Arena.ClearanceLeft = float.NaN;
+            False(planner.RequirementsMet(invalidClearance, out reason));
+            True(!string.IsNullOrEmpty(reason));
+
+            var invalidRunSpeed = CombatScenario(4);
+            invalidRunSpeed.Player.MaxRunSpeed = float.PositiveInfinity;
+            False(planner.RequirementsMet(invalidRunSpeed, out reason));
+            True(!string.IsNullOrEmpty(reason));
+        }
+
+        private static void ControllerRequiresExplicitRuntimeAdmissionForExistingBoss()
         {
             var controller = new EncounterController(2);
             var result = controller.Activate(Observe(bosses: new[] { 4 }));
@@ -214,7 +237,7 @@ namespace Chaite.Tests
             Equal(null, BossStartPlanner.Select(doll));
         }
 
-        private static void LacewingHonorsBiomeTimeAndCritterProtection()
+        private static void LacewingHonorsBiomeAndCritterProtectionByDayOrNight()
         {
             var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true, DayTime = false };
             context.Hotbar.Add(new HotbarItemSnapshot { Slot = 1, Type = 4961, Stack = 1 });
@@ -223,8 +246,8 @@ namespace Chaite.Tests
             Equal(null, BossStartPlanner.Select(context));
             context.CritterProtection = false;
             context.DayTime = true;
-            Equal(null, BossStartPlanner.Select(context));
-            context.DayTime = false;
+            Equal(BossSummonKind.PrismaticLacewing,
+                BossStartPlanner.Select(context).Kind);
             context.ZoneHallow = false;
             Equal(null, BossStartPlanner.Select(context));
         }
@@ -317,6 +340,8 @@ namespace Chaite.Tests
                 scenario.Difficulty.ForTheWorthy = difficulty == 3;
                 scenario.Difficulty.Zenith = difficulty == 4;
                 scenario.Difficulty.DayTime = difficulty == 5;
+                if (boss == 370 && scenario.Difficulty.Expert)
+                    AddExactDash(scenario);
                 var target = scenario.Targets[0];
                 target.Life = phase == 0 ? 2900 : phase == 1 ? 1200 : 200;
                 target.Ai0 = phase;
@@ -328,7 +353,15 @@ namespace Chaite.Tests
                 var plan = new CombatPlanner(new PlannerSettings()).Plan(scenario);
                 AssertFinitePlan(plan);
                 True(!string.IsNullOrEmpty(plan.StrategyId), "missing strategy for boss " + boss);
-                Equal(target.Key, plan.TargetKey);
+                if (plan.RequestControlReturn)
+                    Equal(-1, plan.TargetKey);
+                else
+                    True(target.Key == plan.TargetKey,
+                        "expected target " + target.Key + ", got " +
+                        plan.TargetKey + "; boss=" + boss +
+                        ", difficulty=" + difficulty + ", phase=" + phase +
+                        ", strategy=" + plan.StrategyId + ", phaseId=" +
+                        plan.PhaseId);
                 checkedCases++;
             }
             Equal(324, checkedCases);
@@ -337,13 +370,15 @@ namespace Chaite.Tests
         private static void FlightExhaustionStopsSustainedJump()
         {
             var scenario = CombatScenario(262);
+            var planner = new CombatPlanner(new PlannerSettings());
+            string reason;
+            True(planner.PrepareForExpectedEncounter(scenario, "test-plantera",
+                262, out reason), reason);
+            planner.ResetForBossArrival();
             scenario.Player.OnGround = false;
-            scenario.Player.WingTime = 0f;
-            scenario.Player.RocketTime = 0f;
-            scenario.Mobility.FlightResourceFraction = 0f;
+            DepleteReviewedFlight(scenario);
             scenario.Mobility.MountCanFly = false;
             scenario.Mobility.CanFlipGravity = false;
-            var planner = new CombatPlanner(new PlannerSettings());
             var plan = planner.Plan(scenario);
             False(plan.Jump, "flight-empty player should establish a landing/recovery path, not hold jump");
         }
@@ -381,6 +416,21 @@ namespace Chaite.Tests
             sigil.ActiveBossTypes.Add(4);
             sigil.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 3601, Stack = 1 });
             Equal(null, BossStartPlanner.Select(sigil));
+        }
+
+        private static void DestroyerSummonRejectsEveryConcurrentBoss()
+        {
+            foreach (var activeType in new[] { 4, 50, 125, 127, 398 })
+            {
+                var context = new BossStartContext { DayTime = false, Time = 1000d };
+                context.ActiveBossTypes.Add(activeType);
+                context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 556, Stack = 1 });
+                Equal(null, BossStartPlanner.Select(context));
+            }
+
+            var clear = new BossStartContext { DayTime = false, Time = 1000d };
+            clear.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 556, Stack = 1 });
+            Equal("mechanical-worm", BossStartPlanner.Select(clear).Id);
         }
 
         private static void UnrelatedBossDoesNotSkipSummonPreparation()
@@ -440,6 +490,9 @@ namespace Chaite.Tests
             var respawned = controller.Update(Observe(bosses: new[] { 4 }, life: 100));
             Equal(SessionState.EngagedAlive, respawned.Current);
             Equal(AudioCue.None, respawned.Cue);
+            False(respawned.ApplyControls);
+            True(controller.Update(Observe(bosses: new[] { 4 }, life: 100)).
+                ApplyControls);
 
             controller.ReturnToIdle();
             controller.Activate(Observe(startAuthorized: true));
@@ -473,26 +526,37 @@ namespace Chaite.Tests
         {
             var scenario = CombatScenario(370);
             scenario.Difficulty.Expert = true;
+            AddExactDash(scenario);
             var target = scenario.Targets[0];
             target.Life = 450;
             target.Velocity = new Vec2(0, 0);
             scenario.Targets[0] = target;
-            True(new CombatPlanner(new PlannerSettings()).Plan(scenario).PhaseId.Contains("expert-teleport"));
+            // The 15% threshold schedules state 9 only when native state 5
+            // next selects an attack.  It does not rewrite an observed phase-1
+            // hover into phase three during a mid-fight admission.
+            False(new CombatPlanner(new PlannerSettings()).Plan(scenario).
+                PhaseId.Contains("phase-3"));
             target.Life = 451;
             scenario.Targets[0] = target;
-            False(new CombatPlanner(new PlannerSettings()).Plan(scenario).PhaseId.Contains("expert-teleport"));
+            False(new CombatPlanner(new PlannerSettings()).Plan(scenario).
+                PhaseId.Contains("phase-3"));
             target.Life = 2800;
             target.Ai0 = 10;
             scenario.Targets[0] = target;
-            True(new CombatPlanner(new PlannerSettings()).Plan(scenario).PhaseId.Contains("expert-teleport"));
+            True(new CombatPlanner(new PlannerSettings()).Plan(scenario).
+                PhaseId.Contains("phase-3-reposition"));
         }
 
         private static void RecoveryDoesNotFireHookAtUnreachableAnchor()
         {
             var scenario = CombatScenario(262);
-            scenario.Mobility.FlightResourceFraction = 0;
             scenario.Arena.GrappleAnchors.Add(new Vec2(600, 300));
             var planner = new CombatPlanner(new PlannerSettings { EmergencyRiskThreshold = 1000000f });
+            string reason;
+            True(planner.PrepareForExpectedEncounter(scenario, "test-plantera",
+                262, out reason), reason);
+            planner.ResetForBossArrival();
+            DepleteReviewedFlight(scenario);
             for (var tick = 0; tick < 24; tick++)
                 False(planner.Plan(scenario).Hook, "a recovery hook must remain within the conservative equipped-hook range");
         }
@@ -706,9 +770,14 @@ namespace Chaite.Tests
             Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
             probe.Position.X -= 1f;
             snapshot.Targets[1] = probe;
-            var decision = new BossStrategyEngine().Evaluate(snapshot);
+            var pressureEngine = new BossStrategyEngine();
+            var decision = pressureEngine.Evaluate(snapshot);
             Equal(2, decision.Target.Key);
-            True(decision.Directive.PhaseId.Contains("probe-clear"));
+            // Target pressure is independent of the bounded movement state. On
+            // the first frame the latter must still acquire real support rather
+            // than claiming the old free-running "probe-clear" phase.
+            True(decision.Directive.PhaseId.Contains("acquire-anchor"));
+            True(decision.Directive.UseExplicitMovement);
             probe.LineOfSightKnown = false;
             snapshot.Targets[1] = probe;
             Equal(1, new BossStrategyEngine().Evaluate(snapshot).Target.Key);
@@ -740,18 +809,30 @@ namespace Chaite.Tests
             head.Velocity = new Vec2(-10f, -10f);
             snapshot.Targets.Add(head);
             snapshot.Targets.Add(DestroyerTestTarget(2, 135, 1400f, 1000f));
-            var decision = new BossStrategyEngine().Evaluate(snapshot);
+            var engine = new BossStrategyEngine();
+            var decision = engine.Evaluate(snapshot);
             Equal(2, decision.Target.Key);
             Equal(1, decision.PatternTarget.Key);
-            True(decision.Directive.PhaseId.Contains("head-emerge"));
-            True(decision.Directive.PreferDash);
-            Equal(320f, decision.Directive.FloorClearance);
+            True(decision.Directive.PhaseId.Contains("acquire-anchor"));
+            decision = engine.Evaluate(snapshot);
+            Equal(2, decision.Target.Key);
+            Equal(1, decision.PatternTarget.Key);
+            True(decision.Directive.PhaseId.Contains("head-exit"));
+            False(decision.Directive.PreferDash);
+            Equal(0f, decision.Directive.FloorClearance);
+            Equal(0f, decision.Directive.VerticalOffset);
+            True(decision.Directive.UseExplicitMovement);
+
+            // A fresh, receding head keeps the same independent pattern target,
+            // but does not authorize a speculative head-exit state.
+            engine = new BossStrategyEngine();
             head.Velocity = new Vec2(10f, 10f);
             snapshot.Targets[0] = head;
-            decision = new BossStrategyEngine().Evaluate(snapshot);
+            engine.Evaluate(snapshot);
+            decision = engine.Evaluate(snapshot);
             Equal(2, decision.Target.Key);
             Equal(1, decision.PatternTarget.Key);
-            False(decision.Directive.PhaseId.Contains("head-emerge"));
+            False(decision.Directive.PhaseId.Contains("head-exit"));
             False(decision.Directive.PreferDash);
             Equal(0f, new BossStrategyEngine().Evaluate(CombatScenario(4)).Directive.FloorClearance);
         }
@@ -759,34 +840,45 @@ namespace Chaite.Tests
         private static void DestroyerCruisingIgnoresBodyVelocityAndHoldsHeadTurns()
         {
             var snapshot = DestroyerTestScene();
-            var head = DestroyerTestTarget(1, 134, 1300f, 1100f);
+            // Keep the head well outside the conservative short-horizon branch
+            // envelope: this section isolates body-segment velocity from cruising.
+            var head = DestroyerTestTarget(1, 134, 1600f, 1100f);
             head.HasLineOfSight = false;
             var body = DestroyerTestTarget(2, 135, 1400f, 1000f);
             snapshot.Targets.AddRange(new[] { head, body });
             var engine = new BossStrategyEngine();
+            var acquire = engine.Evaluate(snapshot).Directive;
+            Equal(0, acquire.HorizontalIntent);
+            True(acquire.PhaseId.Contains("acquire-anchor"));
             for (var tick = 0; tick < 8; tick++)
             {
                 body.Velocity = new Vec2(tick % 2 == 0 ? -20f : 20f, 0f);
                 snapshot.Targets[1] = body;
                 var cruising = engine.Evaluate(snapshot);
                 Equal(2, cruising.Target.Key);
-                Equal(1, cruising.Directive.HorizontalIntent);
+                True(cruising.Directive.HorizontalIntent == 1,
+                    "body-velocity cruise tick " + tick + " expected 1, got " +
+                    cruising.Directive.HorizontalIntent + " in " + cruising.Directive.PhaseId);
+                Equal(0, cruising.Directive.VerticalIntent);
+                Equal(JumpAction.Release, cruising.Directive.JumpAction);
                 False(cruising.Directive.PreferDash);
             }
+            // Restore the reviewed near-head fixture for the committed turn tests.
+            head.Position.X = 1280f;
             head.Velocity = new Vec2(-10f, -10f);
             snapshot.Targets[0] = head;
             Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
             head.Position.X = 680f;
             head.Velocity = new Vec2(10f, -10f);
             snapshot.Targets[0] = head;
-            for (var tick = 1; tick < 40; tick++)
+            for (var tick = 1; tick < 8; tick++)
                 Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
-            Equal(1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
             engine.Reset();
             head.Position.X = 1280f;
             head.Velocity = new Vec2(-10f, -10f);
             snapshot.Targets[0] = head;
-            Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent); // Reset removed the previous turn hold.
+            Equal(0, engine.Evaluate(snapshot).Directive.HorizontalIntent); // Reset requires a fresh real anchor.
+            Equal(-1, engine.Evaluate(snapshot).Directive.HorizontalIntent);
         }
 
         private static CombatSnapshot DestroyerTestScene()
@@ -794,6 +886,39 @@ namespace Chaite.Tests
             var snapshot = CombatScenario(134);
             snapshot.Player.Position = new Vec2(990f, 979f);
             snapshot.Player.Velocity = new Vec2(0f, 0f);
+            snapshot.Player.BaseRunSpeed = 3f;
+            snapshot.Player.MaxRunSpeed = 8f;
+            snapshot.Player.RunAcceleration = .2f;
+            snapshot.Player.SprintAcceleration = .08f;
+            snapshot.Player.RunSlowdown = .3f;
+            snapshot.Player.CanSprintInAir = true;
+            snapshot.Player.Jump = new JumpSnapshot
+            {
+                Known = true, Speed = 7f, Height = 15, ReleaseReady = true
+            };
+            snapshot.Player.Flight = new FlightSnapshot
+            {
+                Known = true, WingsLogic = 1, RocketBoots = 2,
+                WingTime = 100f, WingTimeMax = 100,
+                RocketTime = 7, RocketTimeMax = 7
+            };
+            snapshot.Player.WingTime = 100f;
+            snapshot.Player.RocketTime = 7f;
+            snapshot.Player.FunctionalEquipmentIdentityKnown = true;
+            snapshot.Player.WingAccessoryItemType = 492;
+            snapshot.Player.RocketBootAccessoryItemType = 898;
+            snapshot.Mobility.HasFiniteFlightResource = true;
+            snapshot.Mobility.FlightResourceFraction = 1f;
+            snapshot.Mobility.MountActive = false;
+            snapshot.Mobility.MountCanFly = false;
+            snapshot.Mobility.Grappling = false;
+            snapshot.Arena.FloorSupport = new SupportSpan
+            {
+                Valid = true, OneWay = true, Left = 0f, Right = 2200f, SurfaceY = 1021f
+            };
+            snapshot.Arena.RecoverySupport = snapshot.Arena.FloorSupport;
+            snapshot.Difficulty.GameModeKnown = true;
+            snapshot.Difficulty.GameMode = 0;
             snapshot.Targets.Clear();
             return snapshot;
         }
@@ -804,7 +929,9 @@ namespace Chaite.Tests
             {
                 Key = key, Type = type, Position = new Vec2(centerX - 20f, centerY - 20f), Width = 40, Height = 40,
                 Life = 1000, LifeMax = 1000, Boss = type == 134, Chaseable = true,
-                LineOfSightKnown = true, HasLineOfSight = true
+                LineOfSightKnown = true, HasLineOfSight = true,
+                NativeTargetKnown = true, NativeTargetPlayerIndex = 0,
+                DestroyerBranchKnown = type == 134
             };
         }
 
@@ -820,13 +947,18 @@ namespace Chaite.Tests
         private static void AssertPlansIdentical(ControlPlan expected, ControlPlan actual, int scene, int frame)
         {
             var mismatch = expected.Horizontal != actual.Horizontal || expected.Jump != actual.Jump || expected.Drop != actual.Drop ||
+                expected.JumpAction != actual.JumpAction ||
                 expected.Fire != actual.Fire || expected.QuickHeal != actual.QuickHeal || expected.QuickMana != actual.QuickMana ||
                 expected.Dash != actual.Dash || expected.Hook != actual.Hook || expected.ToggleMount != actual.ToggleMount ||
-                expected.GravityControl != actual.GravityControl || expected.AimWorld.X != actual.AimWorld.X ||
+                expected.GravityControl != actual.GravityControl || expected.FeatherFallUp != actual.FeatherFallUp ||
+                expected.AimWorld.X != actual.AimWorld.X ||
                 expected.AimWorld.Y != actual.AimWorld.Y || expected.HookWorld.X != actual.HookWorld.X ||
                 expected.HookWorld.Y != actual.HookWorld.Y || expected.TargetKey != actual.TargetKey ||
                 expected.PreferredWeaponSlot != actual.PreferredWeaponSlot || expected.TacticalMode != actual.TacticalMode ||
-                expected.StrategyId != actual.StrategyId || expected.PhaseId != actual.PhaseId || expected.RiskScore != actual.RiskScore;
+                expected.StrategyId != actual.StrategyId || expected.PhaseId != actual.PhaseId || expected.RiskScore != actual.RiskScore ||
+                expected.WeaponIssue != actual.WeaponIssue ||
+                expected.RequestControlReturn != actual.RequestControlReturn ||
+                expected.ControlReturnReason != actual.ControlReturnReason;
             False(mismatch, "optimized/reference divergence at scene " + scene + ", frame " + frame +
                 "; scores " + expected.RiskScore + " / " + actual.RiskScore);
         }
@@ -845,7 +977,7 @@ namespace Chaite.Tests
         {
             Equal(0, plan.Horizontal);
             False(plan.Jump || plan.Drop || plan.Fire || plan.QuickHeal || plan.QuickMana || plan.Dash ||
-                plan.Hook || plan.ToggleMount || plan.GravityControl != 0);
+                plan.Hook || plan.ToggleMount || plan.GravityControl != 0 || plan.FeatherFallUp);
         }
     }
 }

@@ -4,6 +4,8 @@ namespace Chaite.Core
 {
     public enum JumpAction { Default, Hold, Release, Cloud }
 
+    public enum GravityPhase { Unsupported, Ballistic, FeatherFall, FeatherFallUp }
+
     // Known is an explicit, restricted native profile, not a promise that every
     // mount, liquid, wing, balloon or extra-jump accessory has been modeled.
     public struct JumpSnapshot
@@ -16,6 +18,7 @@ namespace Chaite.Core
         public bool CloudAvailable;
         public bool CloudEnabled;
         public bool AutoJump;
+        public bool SlowFall;
     }
 
     /// <summary>Allocation-free ordinary/cloud jump state and input transitions.</summary>
@@ -76,13 +79,50 @@ namespace Chaite.Core
             state.ReleaseReady = false;
         }
 
-        public static float ApplyGravity(float velocityY, float gravity, float maxFallSpeed, bool inverted)
+        public static GravityPhase ApplyGravityChecked(ref float velocityY, float gravity, float maxFallSpeed,
+            bool inverted, bool slowFall, bool controlUp, bool controlDown)
         {
+            // A caller must not turn a corrupt observation into a plausible
+            // trajectory. Preserve the sampled velocity and explicitly report
+            // unsupported whenever a required native scalar is not finite.
+            if (!IsFinite(velocityY) || !IsFinite(gravity) || gravity < 0f ||
+                !IsFinite(maxFallSpeed) || maxFallSpeed <= 0f)
+                return GravityPhase.Unsupported;
+
             // The native cap only limits falling. Symmetric +/-maxFallSpeed
             // clamping incorrectly reduces strong upward jumps/knockback.
             var direction = inverted ? -1f : 1f;
-            var fallingSpeed = velocityY * direction + gravity;
-            return Math.Min(maxFallSpeed, fallingSpeed) * direction;
+            var featherFall = slowFall && !controlDown;
+            var divisor = featherFall ? (controlUp ? 10f : 3f) : 1f;
+            var fallingSpeed = velocityY * direction + gravity / divisor;
+            fallingSpeed = Math.Min(maxFallSpeed, fallingSpeed);
+            if (featherFall && fallingSpeed > maxFallSpeed / 3f)
+                fallingSpeed = maxFallSpeed / 3f;
+            // Native 1.4.5.8 deliberately uses max/5 as the trigger and
+            // max/10 as the replacement. This produces a small saw-tooth band;
+            // treating max/10 as an unconditional cap is observably different.
+            if (featherFall && controlUp && fallingSpeed > maxFallSpeed / 5f)
+                fallingSpeed = maxFallSpeed / 10f;
+            velocityY = fallingSpeed * direction;
+            return featherFall ? (controlUp ? GravityPhase.FeatherFallUp : GravityPhase.FeatherFall) :
+                GravityPhase.Ballistic;
         }
+
+        public static float ApplyGravity(float velocityY, float gravity, float maxFallSpeed, bool inverted)
+            => ApplyGravity(velocityY, gravity, maxFallSpeed, inverted, false, false, false);
+
+        // Exact feather-fall overload. Down bypasses feather fall completely;
+        // Up selects the native one-tenth branch only while feather fall is in
+        // force. Invalid inputs remain invalid/unchanged rather than being
+        // coerced into an apparently safe prediction.
+        public static float ApplyGravity(float velocityY, float gravity, float maxFallSpeed, bool inverted,
+            bool slowFall, bool controlUp, bool controlDown)
+        {
+            var result = velocityY;
+            ApplyGravityChecked(ref result, gravity, maxFallSpeed, inverted, slowFall, controlUp, controlDown);
+            return result;
+        }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     }
 }
