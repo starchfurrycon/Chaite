@@ -134,6 +134,7 @@ namespace Chaite.Core
         private SummonWhipOutputController _summonWhipOutputController;
         private float _latchedMinimumOutputDps;
         private FormulaRoute _formulaRoute;
+        private readonly FishronWingScript _fishronWingScript = new FishronWingScript();
         private BossLocomotionBaseline _activeLocomotion =
             BossLocomotionBaseline.Unspecified;
         private bool _restoringFlight;
@@ -749,7 +750,10 @@ namespace Chaite.Core
             FormulaScriptInput input;
             if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
-            var script = FormulaScriptController.Tick(in input);
+            var script = target.Type == 370 &&
+                (_formulaRoute == FormulaRoute.FishronFairyWingsDash || _formulaRoute == FormulaRoute.FishronStrongWingsDash)
+                ? _fishronWingScript.Tick(in input, snapshot.Player, in target, snapshot.Arena)
+                : FormulaScriptController.Tick(in input);
             if (!script.Accepted)
                 return UnsupportedMobilityRoutePlan(plan, "未识别的公式 Boss 阶段");
             string reason;
@@ -956,6 +960,7 @@ namespace Chaite.Core
             _summonWhipOutputController = null;
             _latchedMinimumOutputDps = 0f;
             _formulaRoute = FormulaRoute.None;
+            _fishronWingScript.Reset();
             _activeLocomotion = BossLocomotionBaseline.Unspecified;
             _relevantThreats.Clear();
             _relevantBeams.Clear();

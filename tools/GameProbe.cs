@@ -1306,18 +1306,16 @@ public static class ChaiteGameProbe
                 Game.tile[x,y].active(true);
                 Game.tile[x,y].type = groundType;
             }
-            if (scenario.Ocean)
+            if (scenario.Ocean && !IsMonitorFixture)
             {
-                // Native BossStartPlanner requires a real liquid scan, not
-                // merely ZoneBeach. Fill a shallow water basin above the
-                // shoreline inside the isolated in-memory fixture.
+                // Legacy fishing fixture only. The monitor combat fixture
+                // models a dry coastal runway above the ocean, not a player
+                // submerged in 18 tiles of water (which halves motion speed).
                 for (int x = groundLeft; x < groundRight; x++)
                 for (int y = arenaGroundY - 18; y < arenaGroundY; y++)
                 {
                     if (Game.tile[x,y] == null) Game.tile[x,y] = new Tile();
-                    // Liquid tiles must remain inactive in vanilla's Tile
-                    // representation; an active tile with liquid is treated
-                    // as a solid block and Tile.water() returns false.
+                    // Keep the legacy basin free of solid blocks.
                     Game.tile[x,y].active(false);
                     Game.tile[x,y].liquid = 255;
                     Game.tile[x,y].liquidType(0);
@@ -3344,7 +3342,8 @@ public static class ChaiteGameProbe
             {"arena",new Dictionary<string,object>
                 {
                     {"kind","in-memory hand-built fixture; not a generated/saved user world"},
-                    {"worldWidthTiles",4200},{"worldHeightTiles",1200},{"groundLeft",scenario!=null && scenario.Ocean?80:800},{"groundRightExclusive",scenario!=null && scenario.Ocean?1900:3400},
+                    {"worldWidthTiles",4200},{"worldHeightTiles",1200},{"groundLeft",scenario!=null && scenario.Ocean?1:800},{"groundRightExclusive",scenario!=null && scenario.Ocean?400:3400},
+                    {"oceanBasinFilled",scenario!=null && scenario.Ocean && !IsMonitorFixture},
                     {"groundTop",scenario!=null && scenario.Underworld?Game.maxTilesY-140:scenario!=null && scenario.Jungle?700:500},{"groundThickness",scenario!=null && scenario.Snow?12:6},
                     {"groundTile",scenario!=null && scenario.Hallow?"Pearlstone":scenario!=null && scenario.Jungle?"JungleGrass":scenario!=null && scenario.Snow?"IceBlock":"GrayBrick"},
                     {"platformRows",scenario!=null && (scenario.HardMode || scenario.PriorityArena || scenario.DirectSpawn) && !scenario.Underworld?

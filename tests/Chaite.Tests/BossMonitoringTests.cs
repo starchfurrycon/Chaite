@@ -7,6 +7,36 @@ namespace Chaite.Tests
 {
     internal static partial class Program
     {
+        private static void FishronWingCircuitKeepsDashDirectionAndLands()
+        {
+            var controller = new FishronWingScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000), Width = 20, Height = 40,
+                WorldLeft = 0, WorldRight = 5000, WingTime = 130, OnGround = true };
+            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2600, 800), Width = 150, Height = 100 };
+            var arena = new ArenaSnapshot();
+            var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash, NativeState = 0 };
+            var opening = controller.Tick(in input, player, in boss, arena);
+            Equal(-1, opening.Horizontal); // Move away from the emerging Boss.
+            input.NativeState = 1; input.NativeTimer = 1;
+            player.OnGround = false; player.Velocity = new Vec2(-6, -5);
+            var escape = controller.Tick(in input, player, in boss, arena);
+            Equal(-1, escape.Vertical); False(escape.Dash);
+            boss.Position = new Vec2(1500, 1200);
+            player.Velocity = new Vec2(-6, 2); input.NativeTimer = 15;
+            var crossed = controller.Tick(in input, player, in boss, arena);
+            Equal(escape.Horizontal, crossed.Horizontal); Equal(escape.Vertical, crossed.Vertical);
+            input.NativeState = 0;
+            player.Position = new Vec2(1200, 500);
+            var landing = controller.Tick(in input, player, in boss, arena);
+            Equal(1, landing.Vertical); False(landing.Jump);
+            player.Position = new Vec2(1000, 1000); player.OnGround = true; player.WingTime = 130;
+            var launched = controller.Tick(in input, player, in boss, arena);
+            Equal(1, launched.Horizontal); Equal(-1, launched.Vertical);
+            controller.Reset();
+            var reset = controller.Tick(in input, player, in boss, arena);
+            Equal(-1, reset.Horizontal);
+        }
+
         private static void BossMonitoringDoesNotOwnControls()
         {
             var controller = new EncounterController(3);

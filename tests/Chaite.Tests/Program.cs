@@ -16,6 +16,7 @@ namespace Chaite.Tests
             if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length != 0) return 2;
             Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
+            Run(nameof(FishronWingCircuitKeepsDashDirectionAndLands), FishronWingCircuitKeepsDashDirectionAndLands);
             Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);

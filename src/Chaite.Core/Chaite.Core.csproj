@@ -54,6 +54,7 @@
     <Compile Include="FormulaMobilityContract.cs" />
     <Compile Include="FormulaRouteCatalog.cs" />
     <Compile Include="FormulaScriptController.cs" />
+    <Compile Include="FishronWingScript.cs" />
     <Compile Include="ClassicSecondaryBossContract.cs" />
     <Compile Include="OrdinarySecondaryBossContracts.cs" />
     <Compile Include="BossStrategyCatalog.cs" />
