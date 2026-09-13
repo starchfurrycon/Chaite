@@ -1616,6 +1616,15 @@ public static class ChaiteGameProbe
                 player.armor[8].SetDefaults(ItemID.EoCShield);
             }
             scenario.Equipment="early-Hardmode adamantite-ranger+lightning+demon-wings+charm+obsidian-shield+ranger-emblem+clockwork-rifle+ichor-bullets; greater-healing x20";
+            if (scenario.Id=="duke-fishron")
+            {
+                // Fishron's reviewed minimum route requires Fairy Wings (or
+                // equivalent) plus a reliable dash/evade source; the generic
+                // early-Hardmode fixture's Demon Wings alone is insufficient.
+                player.armor[4].SetDefaults(ItemID.FairyWings);
+                player.armor[8].SetDefaults(ItemID.EoCShield);
+                scenario.Equipment="Fishron formula fixture: Fairy Wings+Shield of Cthulhu";
+            }
         }
         else if(scenario.EquipmentTier=="post-plantera")
         {
