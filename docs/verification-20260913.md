@@ -84,6 +84,11 @@ made.
 - The single deterministic daytime seed still ends in one death. The remaining
   work is still the exact daytime-Empress dodge timing/envelope, not a proven
   win-rate claim.
+- Even after the headless fixture explicitly publishes the Shield-of-Cthulhu
+  dash state, the native `Player.dashType` reads zero during the battle. The
+  headless probe therefore still does not produce a real dash edge, so the
+  daytime-Empress dash-dependent formula cannot be validated there yet. This
+  is the next concrete blocker for the daytime-Empress lower-bound route.
 
 ## Git
 
