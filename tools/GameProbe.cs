@@ -815,11 +815,11 @@ public static class ChaiteGameProbe
                 DirectScenario(113,new[]{113,114},false,new[]{"runway","accelerating","low-health","critical","eye-laser"});
                 scenario.Underworld=true; break;
             case "duke-fishron":
-                DirectScenario(370,new[]{370},true,new[]{"spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; break;
+                DirectScenario(370,new[]{370},true,new[]{"summon","spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; if(requestedPhase=="summon") scenario.Summon=2673; break;
             case "empress-night":
-                DirectScenario(636,new[]{636},true,new[]{"p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"}); scenario.Hallow=true; break;
+                DirectScenario(636,new[]{636},true,new[]{"summon","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"}); scenario.Hallow=true; if(requestedPhase=="summon") scenario.Summon=4961; break;
             case "empress-day":
-                DirectScenario(636,new[]{636},true,new[]{"p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"});
+                DirectScenario(636,new[]{636},true,new[]{"summon","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"});
                 scenario.Daytime=true; scenario.Hallow=true; break;
             case "moon-lord":
                 DirectScenario(398,new[]{396,397,398},true,new[]{"intro","synchronize-eyes","head-bolts","head-tongue","head-deathray-telegraph","left-sphere-release","right-sphere-release"});
@@ -886,7 +886,7 @@ public static class ChaiteGameProbe
 
     static void DirectScenario(int spawnType,int[] bossTypes,bool hardMode,string[] phases)
     {
-        scenario.DirectSpawn=true;
+        scenario.DirectSpawn=requestedPhase!="summon";
         scenario.DirectSpawnType=spawnType;
         scenario.BossTypes=bossTypes;
         scenario.HardMode=hardMode;
@@ -1547,6 +1547,13 @@ public static class ChaiteGameProbe
         player.inventory[0].SetDefaults(weaponType);
         player.inventory[1].SetDefaults(scenario.Summon);
         player.inventory[1].stack=scenario.Summon==0?0:1;
+        if (scenario.Id=="duke-fishron" && scenario.Summon==2673)
+        {
+            // Golden Fishing Rod is a fully native rod identity; the fixture
+            // keeps it in the hotbar so the real Truffle Worm path can select
+            // it before the special bait is consumed.
+            player.inventory[2].SetDefaults(229);
+        }
         player.inventory[54].SetDefaults(ammoType);
         player.inventory[54].stack=9999;
         player.miscEquips[4].SetDefaults(ItemID.GrapplingHook);
