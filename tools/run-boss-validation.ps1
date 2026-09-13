@@ -44,7 +44,7 @@ $expectedBossTypes = @{
 }
 $expectedSummonTypes = @{
     'eye'=43; 'king-slime'=560; 'queen-slime'=4988; 'destroyer'=556; 'twins'=544; 'prime'=557
-    'deerclops'=5120; 'queen-bee'=1133
+    'deerclops'=5120; 'queen-bee'=1133; 'duke-fishron'=2673; 'empress-night'=4961; 'empress-day'=4961
 }
 $scenarioVariants = @{
     'eye'='standard'; 'king-slime'='standard'; 'queen-slime'='standard'; 'destroyer'='standard'; 'twins'='standard'; 'prime'='standard'
@@ -557,7 +557,7 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
         'phaseStage', 'takeoverNativeSnapshot', 'encounterFixtureReady', 'summonConsumed'
     ) 'result'
     $directSpawn = Require-Boolean (Read-Field $Result 'directSpawn') 'result directSpawn'
-    $organicPriority = $Case.Scenario -cin @('deerclops','queen-bee') -and $Case.Phase -ceq 'summon'
+    $organicPriority = $Case.Scenario -cin @('deerclops','queen-bee','duke-fishron','empress-night','empress-day') -and $Case.Phase -ceq 'summon'
     $expectedDirectSpawn = $Case.Scenario -cin $priorityScenarios -and -not $organicPriority
     if ($directSpawn -ne $expectedDirectSpawn) { throw 'Result direct-spawn mode disagrees with the reviewed scenario catalog.' }
     $variant = Assert-VariantEvidence $Result $Case $validBattle

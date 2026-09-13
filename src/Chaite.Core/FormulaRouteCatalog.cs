@@ -45,7 +45,7 @@ namespace Chaite.Core
                 if (mountType == 65) return FormulaRoute.FishronTrustyChilletIgnis;
                 if (mountType >= 0) return FormulaRoute.None;
                 if (dash && wingItem == 761) return FormulaRoute.FishronFairyWingsDash;
-                if (dash && wingItem == 2609) return FormulaRoute.FishronStrongWingsDash;
+                if (dash && (wingItem == 2609 || wingItem == 492)) return FormulaRoute.FishronStrongWingsDash;
             }
             else if (bossType == 636)
             {
