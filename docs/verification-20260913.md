@@ -158,6 +158,11 @@ made.
   planner step. The three expert night seeds still report 3/1/1 hits, so the
   remaining grazes are not a simple sub-step interpolation gap; they need the
   actual native homing weight/timing checked against the captured 873 state.
+- A temporary probe confirmed the 873 targeted state is created tens of
+  thousands of times by native tick 378, so the night hits are not a fallback
+  to the broad envelope. The remaining grazes come from the planner choosing a
+  path that the correct homing model still intersects; the next work is scoring
+  / candidate diversity for the 873 homing cone, not the motion model itself.
 
 ## Git
 
