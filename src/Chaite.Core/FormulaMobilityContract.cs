@@ -22,9 +22,11 @@ namespace Chaite.Core
             var fishronMount = boss == 370 &&
                 (mount == 50 || mount == 64 || mount == 65);
             var empressMount = boss == 636 && mount == 23;
-            if (!fishronMount && !empressMount &&
-                (s.Player.WingAccessoryItemType != DemonWingsItem ||
-                 s.Player.RocketBootAccessoryItemType != LightningBootsItem))
+            var wingRoute = IsStrongWing(s.Player.WingAccessoryItemType) &&
+                s.Player.RocketBootAccessoryItemType == LightningBootsItem &&
+                s.Mobility.EyeShieldDash.EquipmentIdentity ==
+                    DashEquipmentIdentity.ShieldOfCthulhuItem3097;
+            if (!fishronMount && !empressMount && !wingRoute)
             { reason = "公式机动套装必须是恶魔之翼和闪电靴"; return false; }
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.MountActive || s.Mobility.Grappling ||
@@ -32,5 +34,10 @@ namespace Chaite.Core
             { reason = "检测到公式外机动状态"; return false; }
             reason = null; return true;
         }
+
+        private static bool IsStrongWing(int type) =>
+            type == 761 || type == 2280 || type == 2609 || type == 3468 ||
+            type == 3469 || type == 3470 || type == 3471 || type == 3883 ||
+            type == 4823 || type == 492 || type == 493;
     }
 }
