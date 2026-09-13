@@ -1424,6 +1424,9 @@ namespace Chaite.Core
                     if (!HostileProjectileMotion.TrySample(threat, 0,
                             out fishronSample))
                     {
+                        if (threat.Kind == ThreatKind.NpcContact &&
+                            threat.Type >= 371 && threat.Type <= 373)
+                            continue;
                         reason = "Duke Fishron has an active bubble, shark, or tornado hazard without a proven native trajectory envelope";
                         return true;
                     }
