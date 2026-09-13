@@ -112,6 +112,11 @@ made.
   around tick 323, showing the body-vs-homing-streak conflict remains. A
   working shield-dash edge is the next concrete prerequisite; the headless
   dash refresh path still needs to be corrected.
+- Forcing `Player.dashType/dashDelay/dashTime` once per headless frame was
+  still not enough to make the planner request a shield dash, so the remaining
+  gap is in the full `EyeShieldDashState` / `CanScoreEyeShieldDash` admission,
+  not only the raw native field. The next step is to trace that admission path
+  in the isolated probe rather than add more one-line state overrides.
 
 ## Git
 
