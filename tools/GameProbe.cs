@@ -632,6 +632,8 @@ public static class ChaiteGameProbe
                      {"life",p.statLife},{"dead",p.dead},{"wingTime",p.wingTime},{"wingTimeMax",p.wingTimeMax},
                      {"poisoned",p.poisoned},
                      {"wingsLogic",p.wingsLogic},{"grapCount",p.grapCount},{"controlUseItem",p.controlUseItem},
+                     {"dashType",p.dashType},{"dashDelay",p.dashDelay},{"eocDash",p.eocDash},
+                     {"eocHit",p.eocHit},{"immuneTime",p.immuneTime},{"controlDash",p.controlDash},
                      {"controlJump",p.controlJump},{"controlHook",p.controlHook},{"selectedItem",p.selectedItem},
                      {"selectedItemType",p.HeldItem.type},{"selectedItemStack",p.HeldItem.stack},
                      {"itemAnimation",p.itemAnimation},{"itemAnimationMax",p.itemAnimationMax},

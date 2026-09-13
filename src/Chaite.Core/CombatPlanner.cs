@@ -752,7 +752,8 @@ namespace Chaite.Core
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
             var script = target.Type == 370 &&
                 (_formulaRoute == FormulaRoute.FishronFairyWingsDash || _formulaRoute == FormulaRoute.FishronStrongWingsDash)
-                ? _fishronWingScript.Tick(in input, snapshot.Player, in target, snapshot.Arena)
+                ? _fishronWingScript.Tick(in input, snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility.CanDash && snapshot.Mobility.DashReady)
                 : FormulaScriptController.Tick(in input);
             if (!script.Accepted)
                 return UnsupportedMobilityRoutePlan(plan, "未识别的公式 Boss 阶段");

@@ -37,6 +37,28 @@ namespace Chaite.Tests
             Equal(-1, reset.Horizontal);
         }
 
+        private static void FishronShieldCounterIsAlignedAndSingleEdge()
+        {
+            var controller = new FishronWingScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000), Width = 20, Height = 40,
+                WorldLeft = 0, WorldRight = 5000, WingTime = 130 };
+            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2090, 970), Width = 150,
+                Height = 100, Velocity = new Vec2(-17, 0) };
+            var arena = new ArenaSnapshot();
+            var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash,
+                NativeState = 1, NativeTimer = 1 };
+            var counter = controller.Tick(in input, player, in boss, arena, true);
+            True(counter.Dash); Equal(1, counter.Horizontal);
+            input.NativeTimer++;
+            False(controller.Tick(in input, player, in boss, arena, true).Dash);
+            controller.Reset();
+            False(controller.Tick(in input, player, in boss, arena, false).Dash);
+            controller.Reset(); boss.Position.Y -= 200;
+            False(controller.Tick(in input, player, in boss, arena, true).Dash);
+            controller.Reset(); boss.Position.Y += 200; boss.Velocity.X = 17;
+            False(controller.Tick(in input, player, in boss, arena, true).Dash);
+        }
+
         private static void BossMonitoringDoesNotOwnControls()
         {
             var controller = new EncounterController(3);

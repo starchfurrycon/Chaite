@@ -6,19 +6,21 @@ namespace Chaite.Core
     /// escape axis; no threat scoring, candidate search or equipment switching.</summary>
     public sealed class FishronWingScript
     {
-        private bool _initialized, _ascending;
+        private bool _initialized, _ascending, _counterDashIssued;
         private int _direction, _dashVertical, _previousState = -99, _previousTimer;
         private float _left, _right, _top;
 
         public void Reset()
         {
             _initialized = false;
+            _counterDashIssued = false;
             _previousState = -99;
             _previousTimer = 0;
         }
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
-            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena)
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            bool shieldReady = false)
         {
             var output = new FormulaScriptOutput();
             if (input.BossType != 370 || player == null || arena == null ||
@@ -54,6 +56,7 @@ namespace Chaite.Core
             }
             if (dashEdge)
             {
+                _counterDashIssued = false;
                 // Preserve existing vertical momentum to leave a committed
                 // charge line. Reversing after the Boss crosses us is too late.
                 _dashVertical = player.Velocity.Y < -1f ? -1 : player.Velocity.Y > 1f ? 1 :
@@ -69,7 +72,29 @@ namespace Chaite.Core
             // A shield collision needs its own timed, aligned counter-dash.
             // Do not press it continuously or with no explicit direction.
             output.Dash = false;
-            output.Phase = dash ? "fishron-wing-committed-escape" :
+            if (dash && shieldReady && !_counterDashIssued && !boss.Invulnerable)
+            {
+                var dx = boss.Center.X - player.Center.X;
+                var towardBoss = dx < 0f ? -1 : 1;
+                var closingSpeed = 14.5f - boss.Velocity.X * towardBoss;
+                var gap = Math.Abs(dx) - (boss.Width + player.Width) * .5f;
+                // Native type-2 dash has a 15-tick contact window. Only
+                // request the single edge for an incoming, aligned body;
+                // never dash toward a receding Boss or a distant diagonal.
+                var contactTicks = closingSpeed > 0f ? Math.Max(0f, gap) / closingSpeed : 99f;
+                var contactDy = boss.Center.Y - player.Center.Y +
+                    (boss.Velocity.Y - player.Velocity.Y) * contactTicks;
+                if (boss.Velocity.X * towardBoss < -1f && gap >= -12f &&
+                    contactTicks <= 4f &&
+                    Math.Abs(contactDy) < (boss.Height + player.Height) * .5f - 8f)
+                {
+                    output.Horizontal = towardBoss;
+                    output.Dash = true;
+                    _counterDashIssued = true;
+                    output.Phase = "fishron-wing-shield-contact";
+                }
+            }
+            if (!output.Dash) output.Phase = dash ? "fishron-wing-committed-escape" :
                 _ascending ? "fishron-wing-ascent" : "fishron-wing-landing";
             return output;
         }

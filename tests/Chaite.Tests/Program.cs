@@ -17,6 +17,7 @@ namespace Chaite.Tests
             if (args.Length != 0) return 2;
             Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
             Run(nameof(FishronWingCircuitKeepsDashDirectionAndLands), FishronWingCircuitKeepsDashDirectionAndLands);
+            Run(nameof(FishronShieldCounterIsAlignedAndSingleEdge), FishronShieldCounterIsAlignedAndSingleEdge);
             Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);
