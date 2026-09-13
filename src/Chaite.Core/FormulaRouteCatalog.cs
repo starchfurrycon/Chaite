@@ -10,7 +10,7 @@ namespace Chaite.Core
     /// <summary>Route selection only. Matching equipment is not a no-hit proof.</summary>
     public static class FormulaRouteCatalog
     {
-        public const string Refusal = "这个波斯，用这个武器来打，从来没试过哦";
+        public const string Refusal = "\u8FD9\u4E2A\u6CE2\u65AF\uFF0C\u7528\u8FD9\u4E2A\u6B66\u5668\u6765\u6253\uFF0C\u4ECE\u6765\u6CA1\u8BD5\u8FC7\u54E6";
         public static bool IsSupportedBoss(int bossType) =>
             bossType == 370 || bossType == 636;
 
