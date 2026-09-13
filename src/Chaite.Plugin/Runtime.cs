@@ -241,9 +241,12 @@ namespace Chaite.Plugin
                             return;
                         }
                         if (!joiningActiveBoss &&
-                            !_planner.PrepareForSupportedFormulaEncounter(
-                                preflight, _startPlan,
-                                out reason))
+                            (SupportedBossPolicy.IsSupportedBossType(
+                                _startPlan.ExpectedBossType)
+                                ? !_planner.PrepareForSupportedFormulaEncounter(
+                                    preflight, _startPlan, out reason)
+                                : !_planner.PrepareForSupportedExpectedEncounter(
+                                    preflight, _startPlan, out reason)))
                         {
                             HandleCue(AudioCue.NoSlimeAng);
                             _game.Chat("未通过该 Boss 的基础开战检查：" + reason, 255, 155, 110);
