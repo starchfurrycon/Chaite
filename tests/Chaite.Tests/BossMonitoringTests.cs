@@ -57,6 +57,13 @@ namespace Chaite.Tests
             False(controller.Tick(in input, player, in boss, arena, true).Dash);
             controller.Reset(); boss.Position.Y += 200; boss.Velocity.X = 17;
             False(controller.Tick(in input, player, in boss, arena, true).Dash);
+            controller.Reset();
+            boss.Position = new Vec2(1940, 1040); boss.Velocity = new Vec2(-13, -10);
+            // X has passed, but the diagonal body still approaches from below.
+            var diagonal = controller.Tick(in input, player, in boss, arena, true);
+            True(diagonal.Dash); Equal(1, diagonal.Horizontal);
+            controller.Reset(); boss.Velocity.Y = 10;
+            False(controller.Tick(in input, player, in boss, arena, true).Dash);
         }
 
         private static void BossMonitoringDoesNotOwnControls()

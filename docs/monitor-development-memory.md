@@ -80,4 +80,10 @@ counter-b 增加只读 dashType/dashDelay/eocDash/eocHit/immuneTime/controlDash
 证明。tick828抽样eocHit=0且immuneTime=0，抽样不足以证明命中猪鲨或连续无伤。
 应补精确反弹事件／NPC身份观测及Boss斜冲对齐；不要把克盾起动当作公式反冲成功。
 counter-b生产循环2129帧平均0.058ms、最大16.725ms（含首用/JIT，非端到端延迟）。
+shield-diagonal-a 新原版测试（seed20260914）：克盾事件完整记录了 476/479、586/590、
+875/876、1315/1318、1409/1413 等“启动 eocDash=15 -> 实际命中 NPC -> eocDash=9、
+dashDelay=29、immuneTime=4”的序列，证明单次冲刺请求和原版反冲链路确实生效；
+但该次仍死亡（2101帧，7次受击，Boss剩余73439，伤害4561）。这不是胜率证据。
+斜向重叠条件已补入 FishronWingScript；下一步应减少泡泡／Sharkron 危险区，改善
+跑道端部后的回程和输出路线，不能继续只重复同一种子。
 回归732项通过；四次隔离桌面均无前台抢占。所有试验仍死亡，不可宣布目标完成。

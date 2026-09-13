@@ -26,6 +26,10 @@ public static class ChaiteGameProbe
     static int seed = 20260910, difficultyCode, tickLimit = 24000, wallLimitSeconds = 90;
     static int takeoverTick = 120, directSpawnTick = -1;
     static int monitorArmedTick = -1, monitorCombatTick = -1, monitorPassiveFrames;
+    static int shieldBeforeHit, shieldBeforeDelay, shieldBeforeLife;
+    static bool shieldBeforeRequested;
+    static int shieldTraceRows, shieldTraceDropped;
+    static Dictionary<string,object> pendingShieldTrace;
     static bool IsMonitorFixture { get { return requestedPhase == "monitor"; } }
     static string difficulty = "classic";
     static string requestedPhase = "summon";
@@ -1120,17 +1124,6 @@ public static class ChaiteGameProbe
     public static void PlayerReturned(Player player,string location)
     {
         if(booted && player.whoAmI==0) playerReturnedTick=ticks;
-        if(booted && player.whoAmI==0 && scenario!=null && scenario.Id=="empress-day")
-        {
-            // Player.Update has already run its accessory functional pass and
-            // reset the dash fields in the dedicated-server headless path.
-            // Re-publish the reviewed Shield-of-Cthulhu edge before ApplyPlan
-            // captures the mobility snapshot, so the dash controller has a
-            // real native state to score this frame.
-            player.dashType=2;
-            player.dashDelay=0;
-            player.dashTime=0;
-        }
         if(IsMotion && motionFrame!=null && player.whoAmI==0)
         {
             if(motionFrame.ContainsKey("postPlayer")) throw new InvalidOperationException("Multiple native Player.Update returns in one motion frame");
@@ -2444,11 +2437,47 @@ public static class ChaiteGameProbe
         catch(Exception e) { Fail(e); }
     }
 
+    public static void BeforeShieldDash(Player player)
+    {
+        if (!booted || !IsMonitorFixture || player.whoAmI != 0) return;
+        shieldBeforeHit=player.eocHit;
+        shieldBeforeDelay=player.dashDelay;
+        shieldBeforeLife=player.statLife;
+        shieldBeforeRequested=player.controlDash;
+    }
+
+    public static void AfterShieldDash(Player player)
+    {
+        if (!booted || !IsMonitorFixture || player.whoAmI != 0 || player.dashType != 2) return;
+        var contact=player.eocHit>=0 && player.eocHit!=shieldBeforeHit;
+        var started=shieldBeforeDelay==0 && player.dashDelay==-1;
+        if (!contact && !started && !shieldBeforeRequested) return;
+        if (shieldTraceRows >= 1024) { shieldTraceDropped++; return; }
+        var npc=contact && player.eocHit<Game.npc.Length ? Game.npc[player.eocHit] : null;
+        pendingShieldTrace=new Dictionary<string,object>
+        {
+            {"tick",ticks},{"requested",shieldBeforeRequested},{"started",started},{"contact",contact},
+            {"npcSlot",contact?player.eocHit:-1},{"npcType",npc==null?0:npc.type},
+            {"npcActive",npc!=null && npc.active},{"eocDash",player.eocDash},
+            {"dashDelay",player.dashDelay},{"immuneTime",player.immuneTime},
+            {"hurtCooldowns",(int[])player.hurtCooldowns.Clone()},
+            {"vx",player.velocity.X},{"vy",player.velocity.Y},
+            {"lifeBefore",shieldBeforeLife},{"lifeAfterDash",player.statLife}
+        };
+        shieldTraceRows++;
+    }
+
     static void AfterNativeUpdate()
     {
         var p=Game.player[0];
         if(playerReturnedTick!=ticks) throw new InvalidOperationException("Native Player.Update did not return at tick "+ticks);
         nativeFrames++;
+        if (pendingShieldTrace != null)
+        {
+            pendingShieldTrace["lifeAfterFrame"]=p.statLife;
+            File.AppendAllText(Path.Combine(Root,"shield-events.jsonl"),Json(pendingShieldTrace)+Environment.NewLine,new UTF8Encoding(false));
+            pendingShieldTrace=null;
+        }
         if (IsMonitorFixture)
         {
             var monitorState = SessionState();
@@ -3314,6 +3343,7 @@ public static class ChaiteGameProbe
             {"directSpawn",scenario!=null && scenario.DirectSpawn},{"directSpawnTick",directSpawnTick},
             {"directSpawnAttempted",directSpawnAttempted},{"directSpawnCompleted",directSpawnCompleted},
             {"monitorArmedTick",monitorArmedTick},{"monitorCombatTick",monitorCombatTick},{"monitorPassiveFrames",monitorPassiveFrames},
+            {"shieldTraceRows",shieldTraceRows},{"shieldTraceDropped",shieldTraceDropped},
             {"phaseStageAttempted",phaseStageAttempted},{"phaseStaged",phaseStaged},
             {"phaseVerifiedAtTakeover",phaseVerifiedAtTakeover},{"phaseStage",phaseStageReport},
             {"takeoverNativeSnapshot",takeoverNativeSnapshot},{"encounterFixtureReady",EncounterFixtureReady()},

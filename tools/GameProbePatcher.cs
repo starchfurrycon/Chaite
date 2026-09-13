@@ -51,6 +51,9 @@ static class GameProbePatcher
             var wingMovement=module.GetType("Terraria.Player").Methods.Single(m=>m.Name=="WingMovement" && m.Parameters.Count==0);
             PrefixPlayer(wingMovement,method("FlightBeforeWing"));
             SuffixPlayer(wingMovement,method("FlightAfterWing"));
+            var dashMovement=module.GetType("Terraria.Player").Methods.Single(m=>m.Name=="DashMovement" && m.Parameters.Count==0);
+            PrefixPlayer(dashMovement,method("BeforeShieldDash"));
+            SuffixPlayer(dashMovement,method("AfterShieldDash"));
             var shotUpdate=module.GetType("Terraria.Projectile").Methods.Single(m=>m.Name=="Update" && m.Parameters.Count==1);
             var shotKill=module.GetType("Terraria.Projectile").Methods.Single(m=>m.Name=="Kill" && m.Parameters.Count==0);
             var ski=shotKill.Body.GetILProcessor();var skfirst=shotKill.Body.Instructions[0];

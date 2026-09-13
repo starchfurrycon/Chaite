@@ -84,7 +84,14 @@ namespace Chaite.Core
                 var contactTicks = closingSpeed > 0f ? Math.Max(0f, gap) / closingSpeed : 99f;
                 var contactDy = boss.Center.Y - player.Center.Y +
                     (boss.Velocity.Y - player.Velocity.Y) * contactTicks;
-                if (boss.Velocity.X * towardBoss < -1f && gap >= -12f &&
+                var dy = boss.Center.Y - player.Center.Y;
+                var verticalClosing = dy * (boss.Velocity.Y - player.Velocity.Y) < 0f;
+                // Diagonal charges can overlap X before Y. The old gap>=-12
+                // test rejected the entire remaining contact window as though
+                // horizontal passage meant the body could no longer hit us.
+                var overlappingDiagonal = gap < 0f && verticalClosing &&
+                    Math.Abs(dy) <= (boss.Height + player.Height) * .5f + 20f;
+                if (overlappingDiagonal || boss.Velocity.X * towardBoss < -1f && gap >= -12f &&
                     contactTicks <= 4f &&
                     Math.Abs(contactDy) < (boss.Height + player.Height) * .5f - 8f)
                 {
