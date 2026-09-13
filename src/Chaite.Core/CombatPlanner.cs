@@ -1987,7 +1987,8 @@ namespace Chaite.Core
                     if (!beam.Shape.Active) continue;
                     // All three tapered Sun Dance lobes belong to one projectile;
                     // overlapping lobes never triple-count its damage.
-                    if (BeamGeometry.Intersects(playerSweep, beam.Shape, _settings.ProjectileSafetyMargin))
+                    if (BeamGeometry.Intersects(playerSweep, beam.Shape,
+                            BeamSafetyMargin(_relevantBeams[i])))
                         risk += beam.DamageRisk;
                     else
                     {
@@ -2494,7 +2495,7 @@ namespace Chaite.Core
                     var beam = BeamGeometry.Sweep(threat, beforeTick, elapsedTick);
                     var sweep = BeamGeometry.Union(playerBefore, playerAfter);
                     if (beam.Active && BeamGeometry.Intersects(sweep, beam,
-                        _settings.ProjectileSafetyMargin)) return false;
+                        BeamSafetyMargin(threat))) return false;
                     continue;
                 }
                 if (threat.TimeLeft > 0 && threat.TimeLeft <= beforeTick) continue;
@@ -3075,7 +3076,8 @@ namespace Chaite.Core
             {
                 var threat = _relevantBeams[i];
                 var beam = BeamGeometry.Sweep(threat, 0, ticks);
-                if (BeamGeometry.Intersects(playerSweep, beam, _settings.ProjectileSafetyMargin))
+                if (BeamGeometry.Intersects(playerSweep, beam,
+                        BeamSafetyMargin(threat)))
                     risk += _settings.DamagePenalty + threat.Damage * 90f;
             }
             return risk;
@@ -3084,6 +3086,18 @@ namespace Chaite.Core
         private static RectF InvalidThreatBounds() =>
             new RectF(-1000000000f, -1000000000f,
                 2000000000f, 2000000000f);
+
+        private float BeamSafetyMargin(in ThreatSnapshot threat)
+        {
+            // The Empress sun-dance beam sweeps three tapered lobes through a
+            // wide rotating arc; its native scale/age transition leaves less
+            // room for interpolation error than a stationary line. Add a
+            // conservative extra cushion so a grazing rotation cannot clip the
+            // player body between two sampled steps.
+            return threat.Geometry == ThreatGeometry.EmpressSunDance
+                ? _settings.ProjectileSafetyMargin + 24f
+                : _settings.ProjectileSafetyMargin;
+        }
 
         private static bool HasRainbowStreakThreat(CombatSnapshot snapshot)
         {

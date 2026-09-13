@@ -130,6 +130,10 @@ made.
 - Night-Empress hit sources in that batch were hostile projectile 873 (rainbow
   streak) and 923 (sun dance), not body contact. The next no-hit pass should
   tighten those projectile envelopes rather than change the body-dodge route.
+- Added a +24px safety cushion for `EmpressSunDance` beams. The same three
+  expert night seeds reran with hits 2/4/1 (previously 3/4/1), still zero
+  deaths. The sun-dance grazing is reduced but not eliminated; the 873 streak
+  remains the other hit source to tighten.
 
 ## Git
 
