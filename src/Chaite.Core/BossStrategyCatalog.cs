@@ -7809,9 +7809,14 @@ namespace Chaite.Core
                 lethalDayContract ? 520f : 340f);
             var strictHorizontal = 0;
             var strictVertical = 0;
-            if (lethalDayContract)
-                OrbitIntents(s, t, loop, out strictHorizontal,
-                    out strictVertical);
+            // Tutorials describe every Empress pattern as a large, continuously
+            // moving loop. Keep that baseline for both the lethal daytime form
+            // and the ordinary night form instead of only giving the explicit
+            // controller movement when day-lethal is observed. Several night
+            // states previously emitted two zero intents, which let the player
+            // coast through a bullet curtain.
+            OrbitIntents(s, t, loop, out strictHorizontal,
+                out strictVertical);
             switch (state)
             {
                 case 0:
@@ -7858,11 +7863,12 @@ namespace Chaite.Core
                     break;
                 case 2:
                     phase = "prismatic-bolt-stream-" + tick;
-                    pattern = lethalDayContract ? BossPattern.CircleOrbit :
-                        BossPattern.ProjectileLanes;
-                    horizontal = lethalDayContract ? strictHorizontal :
-                        AwayX(s.Player, t);
-                    vertical = lethalDayContract ? strictVertical : 0;
+                    // Prismatic Bolts home and overshoot. The standard guide
+                    // response is a wide circle, never stopping and never
+                    // reversing straight back into the curved bolt path.
+                    pattern = BossPattern.CircleOrbit;
+                    horizontal = strictHorizontal;
+                    vertical = strictVertical;
                     break;
                 case 4:
                     phase = "ethereal-lance-telegraph-" + tick;
@@ -7892,8 +7898,16 @@ namespace Chaite.Core
                     }
                     else
                     {
-                        horizontal = strictHorizontal;
-                        vertical = lethalDayContract ? strictVertical : 1;
+                        // Sun Dance beams rotate from the Empress's body. The
+                        // lowest tangential speed is near the pivot, so the
+                        // deterministic guide response is vertical motion
+                        // toward that pivot line, not an orbiting tangent that
+                        // can carry the player through a faster outer sweep.
+                        // PerpendicularY returns the upward/downward intent
+                        // that closes the world-space gap toward the Empress
+                        // center: below -> up, above -> down.
+                        horizontal = 0;
+                        vertical = PerpendicularY(s.Player, t);
                     }
                     break;
                 case 7:

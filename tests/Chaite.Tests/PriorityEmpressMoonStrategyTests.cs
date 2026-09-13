@@ -38,6 +38,8 @@ namespace Chaite.Tests
                 EmpressHandlesClassicDayNightScheduleTransitions);
             Run(nameof(EmpressMidFightTakeoverKeepsOneExplicitLoop),
                 EmpressMidFightTakeoverKeepsOneExplicitLoop);
+            Run(nameof(EmpressSunDanceMovesTowardPivotLine),
+                EmpressSunDanceMovesTowardPivotLine);
             Run(nameof(MoonLordAcceptsEveryHeadHandAndTrueEyeClockSegment),
                 MoonLordAcceptsEveryHeadHandAndTrueEyeClockSegment);
             Run(nameof(MoonLordRejectsImpossibleSourceIdentityAndClocks),
@@ -188,6 +190,30 @@ namespace Chaite.Tests
                         frame);
                 }
             }
+        }
+
+        private static void EmpressSunDanceMovesTowardPivotLine()
+        {
+            // Sun Dance's slowest region is the rotating pivot near the
+            // Empress body, so the tutorial response is vertical motion
+            // toward that line: below the body means up (-1), above it means
+            // down (+1). This assertion pins the sign convention rather than
+            // accepting any non-zero input.
+            var below = EmpressScene(E("sun-below", 6, 100, 3, 0));
+            below.Player.Position = new Vec2(1500f, 900f);
+            var belowPlan = new BossStrategyEngine().Evaluate(below).
+                Directive;
+            False(belowPlan.RequestControlReturn, belowPlan.ControlReturnReason);
+            Equal(0, belowPlan.HorizontalIntent);
+            Equal(-1, belowPlan.VerticalIntent);
+
+            var above = EmpressScene(E("sun-above", 6, 100, 3, 0));
+            above.Player.Position = new Vec2(1500f, 300f);
+            var abovePlan = new BossStrategyEngine().Evaluate(above).
+                Directive;
+            False(abovePlan.RequestControlReturn, abovePlan.ControlReturnReason);
+            Equal(0, abovePlan.HorizontalIntent);
+            Equal(1, abovePlan.VerticalIntent);
         }
 
         private static void MoonLordAcceptsEveryHeadHandAndTrueEyeClockSegment()
