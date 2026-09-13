@@ -1276,7 +1276,7 @@ public static class ChaiteGameProbe
                 if(Game.tile[x,y]==null) Game.tile[x,y]=new Tile();
             Game.worldSurface = 500;
             Game.rockLayer = 750;
-            int arenaCenterX=scenario.Ocean?300:2100;
+            int arenaCenterX=scenario.Ocean?200:2100;
             int arenaGroundY=scenario.Underworld?Game.maxTilesY-140:scenario.Jungle?700:500;
             Game.spawnTileX = arenaCenterX;
             Game.spawnTileY = arenaGroundY-2;
@@ -1287,8 +1287,13 @@ public static class ChaiteGameProbe
             Game.wofNPCIndex = -1;
             Game.netMode = 0;
             Game.myPlayer = 0;
-            int groundLeft=scenario.Ocean?80:800;
-            int groundRight=scenario.Ocean?1900:3400;
+            // AI_069 defines the ocean band as the first/last 400 tiles. Keep
+            // the entire Fishron fixture inside that band and give it a real
+            // shoreline floor all the way to the world edge. The old 80-tile
+            // empty gap let the player fall below worldSurface and activated
+            // native enrage for a reason unrelated to the strategy.
+            int groundLeft=scenario.Ocean?1:800;
+            int groundRight=scenario.Ocean?400:3400;
             int groundThickness=scenario.Snow?12:6;
             ushort groundType=scenario.Hallow?TileID.Pearlstone:scenario.Jungle?TileID.JungleGrass:
                 scenario.Snow?TileID.IceBlock:TileID.GrayBrick;
@@ -1305,7 +1310,8 @@ public static class ChaiteGameProbe
             // retain their historical geometry.
             if((scenario.HardMode || scenario.PriorityArena || scenario.DirectSpawn) && !scenario.Underworld)
                 foreach(int y in new[]{arenaGroundY-40,arenaGroundY-80})
-                    for(int x=arenaCenterX-250;x<arenaCenterX+250;x++)
+                    for(int x=scenario.Ocean?1:arenaCenterX-250;
+                        x<(scenario.Ocean?400:arenaCenterX+250);x++)
                     {
                         Game.tile[x,y].active(true);
                         Game.tile[x,y].type=TileID.Platforms;

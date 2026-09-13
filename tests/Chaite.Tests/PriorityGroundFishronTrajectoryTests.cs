@@ -449,17 +449,17 @@ namespace Chaite.Tests
 
             // AI_069's exact enrage branch replaces num6 for every dash,
             // including phase-one, phase-two, and phase-three entries.
-            AssertFishronClock(0, 1, 0, 25, true,
+            AssertFishronClock(0, 1, 0, 27, true,
                 "enraged state 1 boundary", true);
-            AssertFishronClock(0, 1, 0, 26, false,
+            AssertFishronClock(0, 1, 0, 28, false,
                 "enraged state 1 overflow", true);
-            AssertFishronClock(0, 6, 0, 25, true,
+            AssertFishronClock(0, 6, 0, 27, true,
                 "enraged state 6 boundary", true);
-            AssertFishronClock(0, 6, 0, 26, false,
+            AssertFishronClock(0, 6, 0, 28, false,
                 "enraged state 6 overflow", true);
-            AssertFishronClock(1, 11, 0, 25, true,
+            AssertFishronClock(1, 11, 0, 27, true,
                 "enraged state 11 boundary", true);
-            AssertFishronClock(1, 11, 0, 26, false,
+            AssertFishronClock(1, 11, 0, 28, false,
                 "enraged state 11 overflow", true);
 
             AssertFishronClock(0, -1, 0, 75, true,

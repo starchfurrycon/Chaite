@@ -364,7 +364,25 @@ namespace Chaite.Core
         /// dash edge.
         /// </summary>
         public static bool IsSupportedState(in EyeShieldDashState state) =>
-            IsValid(state) && !state.MountActive;
+            // Route admission is a liveness check, not a collision-free dash
+            // proof. After a legitimate Shield dash vanilla keeps the same
+            // equipment identity while DashDelay/EocDash are in cooldown and
+            // EocHit may contain the NPC just contacted. IsValid deliberately
+            // rejects those states for trajectory rollout, so using it here
+            // incorrectly ended an otherwise valid Fishron takeover.
+            state.Known && state.NormalPlayerUpdatePath &&
+            state.EquipmentIdentity ==
+                DashEquipmentIdentity.ShieldOfCthulhuItem3097 &&
+            state.DashType == 2 && state.Dash == 2 && !state.MountActive &&
+            !state.Pulley && !state.Grappling && !state.Tongued &&
+            !state.OldStyleParkour && state.DashDelay >= -1 &&
+            state.DashDelay <= CooldownTicks && state.DashTime >= -15 &&
+            state.DashTime <= 15 && state.TimeSinceLastDashStarted >= 0 &&
+            state.TimeSinceLastDashStarted <= 300 && state.EocDash >= 0 &&
+            state.EocDash <= ContactWindowTicks && state.EocHit >= -1 &&
+            IsFinite(state.VelocityX) && IsFinite(state.VelocityY) &&
+            IsFinite(state.AccRunSpeed) && IsFinite(state.MaxRunSpeed) &&
+            state.AccRunSpeed > 0f && state.MaxRunSpeed > 0f;
 
         private static int ResolveDedicatedDirection(int facing, bool left, bool right)
         {

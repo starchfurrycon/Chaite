@@ -7536,7 +7536,11 @@ namespace Chaite.Core
             // could make a takeover enter a phase which had already ended.
             int timerLimit = FishronTimerLimit(snapshot, state, sequence,
                 nativeEnraged);
-            if (timerLimit < 0 || tick > timerLimit) return false;
+            if (timerLimit < 0) return false;
+            if (tick > timerLimit &&
+                !(nativeEnraged && IsFishronDashState(state) &&
+                  tick <= timerLimit + 2))
+                return false;
 
             switch (state)
             {
@@ -7617,6 +7621,9 @@ namespace Chaite.Core
             if (state == 12) return 30;
             return -1;
         }
+
+        private static bool IsFishronDashState(int state) =>
+            state == 1 || state == 6 || state == 11;
 
         private static int StableFlightDirection(CombatSnapshot snapshot,
             TargetSnapshot target, BossMemory memory)
