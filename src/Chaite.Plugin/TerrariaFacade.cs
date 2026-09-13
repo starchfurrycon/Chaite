@@ -2843,7 +2843,9 @@ namespace Chaite.Plugin
             // One cast only: after the first bobber appears, wait for the
             // native catch. Recasting would consume additional bait and could
             // turn a non-Fishron catch into an unintended second attempt.
-            var pulse = ready && !bobber && tick % 12 == 0;
+            // Keep the cast button down for a short native input window; a
+            // single edge can be lost while Terraria switches to the rod.
+            var pulse = ready && !bobber && tick % 60 >= 1 && tick % 60 <= 8;
             SetControl(player, "controlUseItem", pulse);
             return new BossStartTick
             {
