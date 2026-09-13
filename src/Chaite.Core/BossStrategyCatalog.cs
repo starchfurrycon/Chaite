@@ -7884,8 +7884,9 @@ namespace Chaite.Core
                     // response is a wide circle, never stopping and never
                     // reversing straight back into the curved bolt path.
                     pattern = BossPattern.CircleOrbit;
-                    horizontal = strictHorizontal;
-                    vertical = strictVertical;
+                    var boltLoop = FreshPrismaticLoopDirection(s, t, loop);
+                    OrbitIntents(s, t, boltLoop, out horizontal,
+                        out vertical);
                     break;
                 case 4:
                     phase = "ethereal-lance-telegraph-" + tick;
@@ -8074,6 +8075,41 @@ namespace Chaite.Core
             // The unmodified OrbitIntent moves in player-gravity input
             // coordinates. Convert its vertical component back to native world
             // Y (positive down) before dotting against the trail vector.
+            var desiredX = loop;
+            var verticalIntent = playerX >= target.Center.X ? loop : -loop;
+            var desiredWorldY = -verticalIntent;
+            var dot = nearestX * desiredX + nearestY * desiredWorldY;
+            return dot > 0f ? -loop : loop;
+        }
+
+        private static int FreshPrismaticLoopDirection(CombatSnapshot snapshot,
+            TargetSnapshot target, int currentLoop)
+        {
+            if (!HasRainbowStreakThreat(snapshot)) return currentLoop;
+            var loop = currentLoop == 0 ? 1 : currentLoop;
+            var playerX = snapshot.Player.Center.X;
+            var playerY = snapshot.Player.Center.Y;
+            var nearestSquared = float.MaxValue;
+            var nearestX = 0f;
+            var nearestY = 0f;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind != ThreatKind.Projectile ||
+                    threat.Trajectory != ThreatTrajectory.EmpressRainbowStreak)
+                    continue;
+                var centerX = threat.Position.X + threat.Width * .5f;
+                var centerY = threat.Position.Y + threat.Height * .5f;
+                var deltaX = centerX - playerX;
+                var deltaY = centerY - playerY;
+                var distanceSquared = deltaX * deltaX + deltaY * deltaY;
+                if (distanceSquared >= nearestSquared) continue;
+                nearestSquared = distanceSquared;
+                nearestX = deltaX;
+                nearestY = deltaY;
+            }
+            if (nearestSquared > 900f * 900f || nearestSquared <= 0f)
+                return loop;
             var desiredX = loop;
             var verticalIntent = playerX >= target.Center.X ? loop : -loop;
             var desiredWorldY = -verticalIntent;
