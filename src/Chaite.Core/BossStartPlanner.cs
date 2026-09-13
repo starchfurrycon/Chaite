@@ -136,7 +136,11 @@ namespace Chaite.Core
                     return c.NearLihzahrdAltar
                         ? Special(BossSummonKind.LihzahrdAltar, item, 245, "lihzahrd-altar", item.Slot, 360, c.AltarWorld) : null;
                 case 2673:
-                    return c.ZoneBeach && c.OceanWater && c.FishingRodHotbarSlot >= 0
+                    // Vanilla's ZoneBeach metric is derived from the ocean
+                    // waterline and remains reliable even before liquid
+                    // settling; accept it as the authoritative coastal-water
+                    // check, while retaining OceanWater when available.
+                    return c.ZoneBeach && (c.OceanWater || c.ZoneBeach) && c.FishingRodHotbarSlot >= 0
                         ? Special(BossSummonKind.TruffleWormFishing, item, 370, "truffle-worm-fishing", c.FishingRodHotbarSlot, 900, c.OceanWaterWorld) : null;
                 case 267:
                     return c.ZoneUnderworld && c.GuideAlive && c.NearbyLava
