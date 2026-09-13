@@ -3095,7 +3095,7 @@ namespace Chaite.Core
             // conservative extra cushion so a grazing rotation cannot clip the
             // player body between two sampled steps.
             return threat.Geometry == ThreatGeometry.EmpressSunDance
-                ? _settings.ProjectileSafetyMargin + 24f
+                ? _settings.ProjectileSafetyMargin + 40f
                 : _settings.ProjectileSafetyMargin;
         }
 
@@ -3106,7 +3106,7 @@ namespace Chaite.Core
             // Keep a small extra cushion for interpolation between the coarse
             // rollout steps without inflating unrelated projectiles.
             return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
-                ? _settings.ProjectileSafetyMargin + 18f
+                ? _settings.ProjectileSafetyMargin + 28f
                 : _settings.ProjectileSafetyMargin;
         }
 

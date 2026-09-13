@@ -138,6 +138,11 @@ made.
   same three expert night seeds now report hits 2/2/1 (previously 2/4/1),
   still zero deaths. The remaining night hits are still projectile grazes, not
   body contact.
+- Raised the sun-dance cushion to +40px and the 873 streak cushion to +28px.
+  The three expert night seeds then reported 3/1/1 hits (still zero deaths),
+  so the remaining grazes are near the sampling/noise boundary rather than a
+  single missing margin. Further no-hit work should target the native 873/923
+  age/scale capture rather than blindly increasing the safety cushion.
 
 ## Git
 
