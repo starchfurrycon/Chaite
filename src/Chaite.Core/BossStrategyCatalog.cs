@@ -7848,9 +7848,13 @@ namespace Chaite.Core
                     }
                     else if (lethalDayContract)
                     {
-                        pattern = BossPattern.CircleOrbit;
-                        horizontal = strictHorizontal;
-                        vertical = strictVertical;
+                        // Every daytime inter-attack move is lethal on contact,
+                        // not only the 8/9 charge.  Keep the player stepping
+                        // away from the Empress body while the next fixed table
+                        // entry is selected.
+                        pattern = BossPattern.EllipseOrbit;
+                        horizontal = AwayX(s.Player, t);
+                        vertical = PerpendicularY(s.Player, t);
                     }
                     break;
                 case 2:

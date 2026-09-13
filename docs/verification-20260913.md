@@ -106,6 +106,12 @@ made.
   Duke Fishron. The Witch's Broom model is currently only kinematic and is
   still marked `ProductionClosureCertified=false`, so it cannot yet authorize
   production input; this is the next route to complete.
+- The daytime Empress inter-attack move now always steps away from the body,
+  not only when the next table entry is the 8/9 dash. The same expert seed
+  then avoided the earlier NPC contact death, but now dies to projectile 873
+  around tick 323, showing the body-vs-homing-streak conflict remains. A
+  working shield-dash edge is the next concrete prerequisite; the headless
+  dash refresh path still needs to be corrected.
 
 ## Git
 
