@@ -1769,6 +1769,14 @@ namespace Chaite.Plugin
                         owner < npcs.Length && npcs[owner] != null &&
                         _npcActive(npcs[owner]))
                     {
+                        if (projectileType == 923)
+                        {
+                            threat.BeamOrigin = new Vec2(
+                                _positionX(npcs[owner]),
+                                _positionY(npcs[owner])) +
+                                new Vec2(_width(npcs[owner]) * .5f,
+                                    _height(npcs[owner]) * .5f);
+                        }
                         threat.BeamSourceVelocity = new Vec2(_velocityX(npcs[owner]),_velocityY(npcs[owner]));
                         if (projectileType == 455 && _npcTypeId(npcs[owner]) == 400) threat.BeamScaleLimit = .4f;
                     }

@@ -149,6 +149,11 @@ made.
   snapshot uses the projectile position captured at one frame, so the next
   correction is to couple the 923 beam origin to the Empress body in the
   candidate rollout rather than enlarge the margin further.
+- Captured the 923 beam origin and source velocity from the live Empress NPC.
+  The three expert night seeds still report 3/1/1 hits (zero deaths), so the
+  remaining grazes are dominated by the 873 streak path rather than the 923
+  origin alone. The next step is a native-equivalent 873 homing envelope under
+  the player's coarse rollout step.
 
 ## Git
 
