@@ -17,8 +17,14 @@ namespace Chaite.Core
             { reason = "无法读取公式机动饰品"; return false; }
             if (boss != 370 && boss != 636)
             { reason = FormulaRouteCatalog.Refusal; return false; }
-            if (s.Player.WingAccessoryItemType != DemonWingsItem ||
-                s.Player.RocketBootAccessoryItemType != LightningBootsItem)
+            var mount = s.Mobility.SelectedMountIdentityKnown
+                ? s.Mobility.SelectedMountType : -1;
+            var fishronMount = boss == 370 &&
+                (mount == 50 || mount == 64 || mount == 65);
+            var empressMount = boss == 636 && mount == 23;
+            if (!fishronMount && !empressMount &&
+                (s.Player.WingAccessoryItemType != DemonWingsItem ||
+                 s.Player.RocketBootAccessoryItemType != LightningBootsItem))
             { reason = "公式机动套装必须是恶魔之翼和闪电靴"; return false; }
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.MountActive || s.Mobility.Grappling ||
