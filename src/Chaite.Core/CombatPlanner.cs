@@ -2823,7 +2823,47 @@ namespace Chaite.Core
             BossDirective directive, int cacheIndex)
         {
             ProjectileMotionSweep motion;
-            if (!HostileProjectileMotion.TryAdvanceTargetedSweep(
+            if (threat.Type == 873)
+            {
+                // The 873 homing branch is coupled to the candidate player
+                // centre. Advance it once per native tick over the coarse
+                // planner step so the homing turn cannot slip between two
+                // interpolated endpoints and graze the player body.
+                var substepTargetBefore = playerCenterBefore;
+                motion = default(ProjectileMotionSweep);
+                for (var substep = 1; substep <= _stepTicks; substep++)
+                {
+                    var substepTargetAfter = playerCenterBefore +
+                        (playerCenterAfter - playerCenterBefore) *
+                        (substep / (float)_stepTicks);
+                    ProjectileMotionSweep substepSweep;
+                    if (!HostileProjectileMotion.TryAdvanceTargetedSweep(
+                            ref _targetedThreatStates[threatIndex],
+                            substepTargetBefore, substepTargetAfter, 1,
+                            out substepSweep) || !substepSweep.Active)
+                        break;
+                    if (!motion.Active)
+                    {
+                        motion.Active = true;
+                        motion.Bounds = substepSweep.Bounds;
+                    }
+                    else
+                    {
+                        var left = Math.Min(motion.Bounds.X,
+                            substepSweep.Bounds.X);
+                        var top = Math.Min(motion.Bounds.Y,
+                            substepSweep.Bounds.Y);
+                        var right = Math.Max(motion.Bounds.Right,
+                            substepSweep.Bounds.Right);
+                        var bottom = Math.Max(motion.Bounds.Bottom,
+                            substepSweep.Bounds.Bottom);
+                        motion.Bounds = new RectF(left, top,
+                            right - left, bottom - top);
+                    }
+                    substepTargetBefore = substepTargetAfter;
+                }
+            }
+            else if (!HostileProjectileMotion.TryAdvanceTargetedSweep(
                     ref _targetedThreatStates[threatIndex],
                     playerCenterBefore, playerCenterAfter, _stepTicks,
                     out motion))

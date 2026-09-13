@@ -154,6 +154,10 @@ made.
   remaining grazes are dominated by the 873 streak path rather than the 923
   origin alone. The next step is a native-equivalent 873 homing envelope under
   the player's coarse rollout step.
+- Advanced the 873 targeted state once per native tick inside the coarse
+  planner step. The three expert night seeds still report 3/1/1 hits, so the
+  remaining grazes are not a simple sub-step interpolation gap; they need the
+  actual native homing weight/timing checked against the captured 873 state.
 
 ## Git
 
