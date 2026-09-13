@@ -89,6 +89,12 @@ made.
   headless probe therefore still does not produce a real dash edge, so the
   daytime-Empress dash-dependent formula cannot be validated there yet. This
   is the next concrete blocker for the daytime-Empress lower-bound route.
+- Confirmed with a same-frame probe log that `extraAccessory=True` and
+  `armor[8].type=3097` while `dashType` remains zero. The dedicated-server
+  headless path does not run the client accessory functional pass that derives
+  `dashType`, so the reviewed shield-dash route has no native edge in this
+  fixture. Fixing that refresh path is required before the daytime-Empress
+  formula can be exercised end to end.
 
 ## Git
 
