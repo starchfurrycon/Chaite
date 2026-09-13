@@ -2749,7 +2749,11 @@ namespace Chaite.Plugin
                         context.NearbyLava = true;
                         context.LavaWorld = new Vec2(x * 16f + 8f, y * 16f + 8f);
                     }
-                    if (_tileWater(tile))
+                    // Some headless/native builds do not expose Tile.water()
+                    // until liquid settling has run. A positive non-lava
+                    // liquid value is still authoritative for this read-only
+                    // pre-summon admission scan.
+                    if (_tileWater(tile) || liquid > 0)
                     {
                         waterTiles++;
                         if (distance < bestWater)
