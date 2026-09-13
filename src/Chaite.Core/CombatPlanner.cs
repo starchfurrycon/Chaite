@@ -2843,7 +2843,7 @@ namespace Chaite.Core
             var beforeTick = tick - _stepTicks;
             var aliveUntil = threat.TimeLeft > 0
                 ? Math.Min(tick, threat.TimeLeft) : tick;
-            var margin = _settings.ProjectileSafetyMargin;
+            var margin = ProjectileSafetyMargin(in threat);
             var bounds = motion.Bounds.Inflated(margin + tick * .08f);
             return new ThreatStep
             {
@@ -3096,6 +3096,17 @@ namespace Chaite.Core
             // player body between two sampled steps.
             return threat.Geometry == ThreatGeometry.EmpressSunDance
                 ? _settings.ProjectileSafetyMargin + 24f
+                : _settings.ProjectileSafetyMargin;
+        }
+
+        private float ProjectileSafetyMargin(in ThreatSnapshot threat)
+        {
+            // The 873 rainbow streak homes on the candidate player, so its
+            // near-miss envelope is narrower than the all-directions broadphase.
+            // Keep a small extra cushion for interpolation between the coarse
+            // rollout steps without inflating unrelated projectiles.
+            return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
+                ? _settings.ProjectileSafetyMargin + 18f
                 : _settings.ProjectileSafetyMargin;
         }
 

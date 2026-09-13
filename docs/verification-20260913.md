@@ -134,6 +134,10 @@ made.
   expert night seeds reran with hits 2/4/1 (previously 3/4/1), still zero
   deaths. The sun-dance grazing is reduced but not eliminated; the 873 streak
   remains the other hit source to tighten.
+- Added a +18px candidate-step cushion for the homing 873 rainbow streak. The
+  same three expert night seeds now report hits 2/2/1 (previously 2/4/1),
+  still zero deaths. The remaining night hits are still projectile grazes, not
+  body contact.
 
 ## Git
 
