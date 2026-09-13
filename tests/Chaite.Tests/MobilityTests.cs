@@ -40,6 +40,8 @@ namespace Chaite.Tests
             Run(nameof(OnFootRouteRejectsUnmodelledFlightEquipment), OnFootRouteRejectsUnmodelledFlightEquipment);
             Run(nameof(PreflightRouteReservationSurvivesBossArrivalReset), PreflightRouteReservationSurvivesBossArrivalReset);
             Run(nameof(RequiredDashBaselineDrivesReviewedBossPhase), RequiredDashBaselineDrivesReviewedBossPhase);
+            Run(nameof(WitchBroomCapabilityRemainsNotProductionCertified),
+                WitchBroomCapabilityRemainsNotProductionCertified);
             Run(nameof(LateOptionalEdgeUsesOnlyCertifiedFallback), LateOptionalEdgeUsesOnlyCertifiedFallback);
             Run(nameof(LateFeatherFallExpiryNeutralizesEveryInput), LateFeatherFallExpiryNeutralizesEveryInput);
             Run(nameof(DashCandidateRequiresBrakingRoomAndSafeReturn), DashCandidateRequiresBrakingRoomAndSafeReturn);
@@ -1780,6 +1782,51 @@ namespace Chaite.Tests
                 PatternSafeRiskThreshold = float.MaxValue
             }).Plan(scene);
             False(plan.Dash);
+        }
+
+        private static void WitchBroomCapabilityRemainsNotProductionCertified()
+        {
+            var scene = OptionalMotionScene(false);
+            scene.Mobility.MountActive = true;
+            scene.Mobility.WitchBroomMotion = new WitchBroomMotionSnapshot
+            {
+                Known = true,
+                MountActive = true,
+                MountType = WitchBroomMotion.WitchBroomMountType,
+                FrameState = 0,
+                PositionX = 100f,
+                PositionY = 200f,
+                VelocityX = 0f,
+                VelocityY = 0f,
+                Gravity = .3f,
+                ReleaseUp = true,
+                SlowFall = false,
+                NormalGravity = true,
+                Dry = true,
+                OpenDryPath = true,
+                PortalPhysicsDisabled = true,
+                Grappling = false,
+                HookInFlight = false,
+                DashInProgress = false,
+                CrowdControlled = false,
+                Tongued = false,
+                Dead = false,
+                Pulley = false,
+                Sliding = false,
+                WindPushed = false,
+                ForcedMotion = false
+            };
+            BossMobilityCapabilityEnvelope capability;
+            string reason;
+            True(BossMobilityCapabilityEvaluator.TryMeasure(scene,
+                    new BossMobilityBaseline
+                    {
+                        Locomotion = BossLocomotionBaseline.ActiveWitchBroom,
+                        Dash = BossDashBaseline.None
+                    }, true, out capability, out reason),
+                "Witch's Broom should be measurable but not yet production-certified: " + reason);
+            False(capability.ProductionClosureCertified,
+                "Witch's Broom must not authorize production input before its live closure exists");
         }
 
         private static void LateOptionalEdgeUsesOnlyCertifiedFallback()
