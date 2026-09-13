@@ -1497,6 +1497,10 @@ namespace Chaite.Core
                 directive.PhaseId != null &&
                 directive.PhaseId.Contains("day-rage-") &&
                 directive.PhaseId.Contains("horizontal-dash");
+            var empressPreDashWithStreak = directive.PhaseId != null &&
+                directive.PhaseId.Contains("day-rage-") &&
+                directive.PhaseId.Contains("reposition-before-horizontal-dash") &&
+                HasRainbowStreakThreat(snapshot);
             var preferRequiredShieldDash = directive.PreferDash &&
                 (requiredDash == BossDashBaseline.ShieldOfCthulhu ||
                  empressDayDash) &&
@@ -1576,7 +1580,7 @@ namespace Chaite.Core
             // ownership temporarily released while retaining the explicit
             // controller's pattern and late-fallback certificate.
             if (!directive.OwnsMovementClosure && !directive.OwnsHorizontalClosure ||
-                preferRequiredShieldDash)
+                preferRequiredShieldDash || empressPreDashWithStreak)
             {
                 if (CanScoreEyeShieldDash(snapshot))
                 {
@@ -3080,6 +3084,20 @@ namespace Chaite.Core
         private static RectF InvalidThreatBounds() =>
             new RectF(-1000000000f, -1000000000f,
                 2000000000f, 2000000000f);
+
+        private static bool HasRainbowStreakThreat(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.Threats == null)
+                return false;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind == ThreatKind.Projectile &&
+                    threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak)
+                    return true;
+            }
+            return false;
+        }
 
         private void ApplyScoredMobility(CombatSnapshot snapshot, Candidate candidate,
             ref ControlPlan plan)

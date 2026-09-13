@@ -75,6 +75,15 @@ made.
   tick 340; the day-Empress lower-bound route is not yet closed. The next
   follow-up should verify the native dash angle and exact contact envelope
   rather than claim a no-hit result.
+- The headless probe does not run the full client accessory-refresh pass, so
+  `Player.dashType` stayed zero even with the Shield-of-Cthulhu item equipped.
+  The probe fixture now publishes the reviewed dash state explicitly for the
+  post-Plantera loadout. The daytime pre-dash route also permits the reviewed
+  shield dash when a live 873 streak is present, instead of locking both axes
+  and forcing the player into the homing path.
+- The single deterministic daytime seed still ends in one death. The remaining
+  work is still the exact daytime-Empress dodge timing/envelope, not a proven
+  win-rate claim.
 
 ## Git
 

@@ -1594,6 +1594,12 @@ public static class ChaiteGameProbe
             // classic fixture from being denied that same baseline mobility.
             player.extraAccessory=true;
             player.armor[8].SetDefaults(ItemID.EoCShield);
+            // The headless fixture does not run the full vanity/functional
+            // accessory refresh that a rendered client applies every frame, so
+            // expose the reviewed Shield-of-Cthulhu dash state explicitly.
+            player.dashType=2;
+            player.dashDelay=0;
+            player.dashTime=0;
             scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+cross-necklace+charm+ranger-emblem+chain-gun+crystal-bullets; greater-healing x20";
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
