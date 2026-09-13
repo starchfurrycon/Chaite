@@ -127,6 +127,9 @@ made.
   intended tick-bound timeout). Night Empress still took 1-4 hits, so this is
   not a no-hit claim, but it is reproducible survival evidence for the current
   finite-flight route. Daytime Empress remains the open cell.
+- Night-Empress hit sources in that batch were hostile projectile 873 (rainbow
+  streak) and 923 (sun dance), not body contact. The next no-hit pass should
+  tighten those projectile envelopes rather than change the body-dodge route.
 
 ## Git
 
