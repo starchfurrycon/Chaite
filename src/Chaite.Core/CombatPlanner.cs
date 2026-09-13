@@ -224,7 +224,7 @@ namespace Chaite.Core
             }
             if (!FormulaMobilityContract.TryValidate(snapshot,
                     startPlan.ExpectedBossType, out reason)) return false;
-            _formulaRoute = FormulaRouteCatalog.Select(
+            var selectedFormulaRoute = FormulaRouteCatalog.Select(
                 startPlan.ExpectedBossType,
                 snapshot.Player.WingAccessoryItemType,
                 snapshot.Mobility.EyeShieldDash.EquipmentIdentity ==
@@ -233,13 +233,15 @@ namespace Chaite.Core
                 snapshot.Mobility.SelectedMountIdentityKnown ?
                     snapshot.Mobility.SelectedMountType : -1,
                 false);
-            if (_formulaRoute == FormulaRoute.None)
+            if (selectedFormulaRoute == FormulaRoute.None)
             {
                 reason = FormulaRouteCatalog.Refusal;
                 return false;
             }
-            return PrepareForExpectedEncounter(snapshot, startPlan.Id,
-                startPlan.ExpectedBossType, out reason);
+            if (!PrepareForExpectedEncounter(snapshot, startPlan.Id,
+                startPlan.ExpectedBossType, out reason)) return false;
+            _formulaRoute = selectedFormulaRoute;
+            return true;
         }
 
         /// <summary>
