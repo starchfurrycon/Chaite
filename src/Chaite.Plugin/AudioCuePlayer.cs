@@ -20,7 +20,8 @@ namespace Chaite.Plugin
             { AudioCue.MambaOut, "mamba_out.wav" },
             { AudioCue.FailedBossDesign, "failed_boss_design.wav" },
             { AudioCue.LowLevelChaite, "low_level_chaite.wav" },
-            { AudioCue.UnsupportedBoss, "boss_too_hard_for_me.wav" }
+            { AudioCue.UnsupportedBoss, "boss_too_hard_for_me.wav" },
+            { AudioCue.UntestedLoadout, "never_tried_this_loadout.wav" }
         };
         private readonly HashSet<string> _reportedMissing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<AudioCue> _pending = new HashSet<AudioCue>();

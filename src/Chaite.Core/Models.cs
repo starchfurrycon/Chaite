@@ -50,7 +50,8 @@ namespace Chaite.Core
         // slots remain stable for existing configs/adapters.
         // The audio slot is user-supplied; Chaite never generates or
         // downloads the meme clip.
-        UnsupportedBoss
+        UnsupportedBoss,
+        UntestedLoadout
     }
 
     public enum ThreatKind

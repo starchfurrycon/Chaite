@@ -189,7 +189,7 @@ namespace Chaite.Manager
             controls.Margin = new Padding(0, 0, 7, 0);
             var left = UiTheme.Table(1);
             left.Controls.Add(UiTheme.Section("02", "游戏内操作", "装好后进入游戏，管理器可直接关闭。"));
-            left.Controls.Add(Hotkey("F8", "尝试接管", "仅接管猪鲨公爵与昼间/夜间光之女皇；其他 Boss 直接拒绝。", UiTheme.Accent));
+            left.Controls.Add(Hotkey("F8", "来吧，试一下米妮", "仅接管猪鲨公爵与昼间/夜间光之女皇；其他 Boss 直接拒绝。召唤前启动，不接半场。", UiTheme.Accent));
             left.Controls.Add(Hotkey("F9", "立即归还操作", "停止自动输入；任何接管状态下都可使用。", UiTheme.Mint));
             controls.Controls.Add(left);
             grid.Controls.Add(controls, 0, 0);
@@ -199,7 +199,8 @@ namespace Chaite.Manager
             right.Controls.Add(UiTheme.Section("03", "战斗准备", "生产白名单仅猪鲨与昼/夜光女；其他 Boss 一律拒绝。"));
             right.Controls.Add(GuideLine("猪鲨召唤", "用松露虫在海洋水体钓鱼，快捷栏还需钓竿。"));
             right.Controls.Add(GuideLine("光女召唤", "七彩草蛉可在昼夜自动释放并击杀；白天按致命光女门槛预检，夜间需留足时间。"));
-            right.Controls.Add(GuideLine("启动检查", "输出、场地与机动性仍须通过检查；不保证通关或无伤。"));
+            right.Controls.Add(GuideLine("公式重做中", "猪鲨：翅膀＋冲刺、史莱姆女士、可靠旋鼬。光女：强翼＋冲刺、扫帚、雨天虾松露。各路线尚待实战验收。"));
+            right.Controls.Add(GuideLine("拆特的原则", "配装不对：从来没试过哦。其他波斯：超囊的对我来说。F9 随时下班。"));
             strategy.Controls.Add(right);
             grid.Controls.Add(strategy, 1, 0);
             return grid;
@@ -209,7 +210,7 @@ namespace Chaite.Manager
         {
             var card = UiTheme.Card();
             var stack = UiTheme.Table(1);
-            stack.Controls.Add(UiTheme.Section("04", "设置与梗音频", "梗是调味，功能是正事。"));
+            stack.Controls.Add(UiTheme.Section("04", "拆特语音席", "开场米妮 · 挨打 MAN · 亡了亡了 · 胜利 MANBA OUT"));
             var row = UiTheme.Table(3);
             row.ColumnStyles.Clear();
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));

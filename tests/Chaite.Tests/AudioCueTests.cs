@@ -15,6 +15,7 @@ namespace Chaite.Tests
     {
         private static void RunAudioCueRegressions()
         {
+            Run(nameof(FormulaRoutesKeepBossAndWeatherBoundaries), FormulaRoutesKeepBossAndWeatherBoundaries);
             Run(nameof(UnsupportedBossCueRemainsDistinct), UnsupportedBossCueRemainsDistinct);
             Run(nameof(LegacyAudioCueOrdinalsRemainStable),
                 LegacyAudioCueOrdinalsRemainStable);
@@ -33,6 +34,23 @@ namespace Chaite.Tests
             True(AudioCue.UnsupportedBoss != AudioCue.NoSlimeAng);
             True(AudioCue.UnsupportedBoss != AudioCue.LowLevelChaite);
             Equal("UnsupportedBoss", AudioCue.UnsupportedBoss.ToString());
+        }
+
+        private static void FormulaRoutesKeepBossAndWeatherBoundaries()
+        {
+            Equal(FormulaRoute.FishronFairyWingsDash, FormulaRouteCatalog.Select(370, 761, 3097, false, -1, false));
+            Equal(FormulaRoute.FishronStrongWingsDash, FormulaRouteCatalog.Select(370, 2609, 984, false, -1, false));
+            Equal(FormulaRoute.EmpressStrongWingsDash, FormulaRouteCatalog.Select(636, 2609, 0, true, -1, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 761, 3097, false, -1, false));
+            Equal(FormulaRoute.FishronQueenSlime, FormulaRouteCatalog.Select(370, 0, 0, false, 50, false));
+            Equal(FormulaRoute.FishronTrustyChillet, FormulaRouteCatalog.Select(370, 0, 0, false, 64, false));
+            Equal(FormulaRoute.FishronTrustyChilletIgnis, FormulaRouteCatalog.Select(370, 0, 0, false, 65, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, 62, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, 63, false));
+            Equal(FormulaRoute.EmpressBroom, FormulaRouteCatalog.Select(636, 0, 0, false, 23, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 0, 0, false, 12, false));
+            Equal(FormulaRoute.EmpressRainFishron, FormulaRouteCatalog.Select(636, 0, 0, false, 12, true));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(4, 2609, 3097, false, -1, true));
         }
 
         private static void LegacyAudioCueOrdinalsRemainStable()
@@ -72,6 +90,7 @@ namespace Chaite.Tests
                     "unsupported Boss cue is not registered");
                 Equal("boss_too_hard_for_me.wav",
                     (string)map[AudioCue.UnsupportedBoss]);
+                Equal("never_tried_this_loadout.wav", (string)map[AudioCue.UntestedLoadout]);
                 Equal("no_slime_ang.wav", (string)map[AudioCue.NoSlimeAng]);
                 Equal("try_minnie.wav", (string)map[AudioCue.TryMinnie]);
                 Equal("man.wav", (string)map[AudioCue.Man]);

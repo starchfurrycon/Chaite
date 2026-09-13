@@ -156,6 +156,13 @@ namespace Chaite.Plugin
                     // starts from a recovery state; it never consumes another
                     // summon item just because F9 was pressed mid-fight.
                     var joiningActiveBoss = observation.HasEncounter;
+                    if (joiningActiveBoss)
+                    {
+                        HandleCue(AudioCue.UntestedLoadout);
+                        _game.Chat("这个波斯，用这个武器来打，从来没试过哦。请在召唤前启动，拆特不再中途接管。", 255, 155, 110);
+                        ResetSessionAutomation();
+                        return;
+                    }
                     // The production surface is deliberately narrower than
                     // the offline strategy catalog. Reject an active,
                     // unreviewed Boss before preflight can latch a route or
