@@ -306,6 +306,7 @@ namespace Chaite.Tests
             Equal(4, plan.ActionSlot);
             Equal(370, plan.ExpectedBossType);
             context.OceanWater = false;
+            context.ZoneBeach = false;
             Equal(null, BossStartPlanner.Select(context));
         }
 
