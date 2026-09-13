@@ -7754,6 +7754,8 @@ namespace Chaite.Core
         public override BossDecision Evaluate(CombatSnapshot s, BossMemory m)
         {
             var t = Pick(s, 636);
+            EmpressNativeCombatObservation native =
+                default(EmpressNativeCombatObservation);
             if (m.PreviousTargetKey != t.Key)
             {
                 m.HasPreviousEmpressNative = false;
@@ -7767,17 +7769,12 @@ namespace Chaite.Core
             var lethalDayContract = s.Difficulty.DayTime;
             if (s.NativeContextKnown)
             {
-                EmpressNativeCombatObservation native;
                 if (!t.Ai0Known || !t.Ai1Known || !t.Ai2Known ||
                     !t.Ai3Known || !TryGetNativeCombat(s, t.Key, out native) ||
                     !EmpressTargetMatchesNativeOrPrevious(in native,
                         t.Ai0, t.Ai1, t.Ai2, t.Ai3, m))
                     return UnknownNativeState(s, t,
                         "missing-or-inconsistent-native-combat-state");
-                nativeAi0 = native.Ai0AttackState;
-                nativeAi1 = native.Ai1AttackTimer;
-                nativeAi2 = native.Ai2AttackIndex;
-                nativeAi3 = native.Ai3PhaseAndRage;
                 m.PreviousEmpressNative = native;
                 m.HasPreviousEmpressNative = true;
                 // AI_120 uses ShouldEmpressBeEnraged every tick for 9999
@@ -7786,14 +7783,20 @@ namespace Chaite.Core
                 // day transition in an encounter already under way.
                 lethalDayContract = native.NativeShouldBeEnraged;
             }
-            var state = NativeIntegerState(nativeAi0, 0, 13);
-            var tick = NativeNonnegativeInteger(nativeAi1);
-            var nextIndex = NativeNonnegativeInteger(nativeAi2);
-            var form = NativeIntegerState(nativeAi3, 0, 3);
-            if (state == int.MinValue || tick == int.MinValue ||
-                nextIndex == int.MinValue || form == int.MinValue)
+            int state;
+            int tick;
+            int nextIndex;
+            int form;
+            string selectedStateFailure;
+            if (!TrySelectValidEmpressState(in native,
+                t.Ai0, t.Ai1, t.Ai2, t.Ai3,
+                lethalDayContract, s.Difficulty.Expert ||
+                s.Difficulty.Master, s.Difficulty.ForTheWorthy,
+                out state, out tick, out nextIndex, out form,
+                out selectedStateFailure))
                 return UnknownNativeState(s, t,
-                    "invalid-native-state-or-clock");
+                    "invalid-native-state-or-clock:" +
+                    selectedStateFailure);
 
             // ai3 is the authoritative rage/phase latch.  Main.dayTime is not
             // equivalent in Remix worlds and Life<50% is only a pending phase
@@ -7802,11 +7805,6 @@ namespace Chaite.Core
             var second = form == 1 || form == 3;
             var expertSchedule = lethalDayContract || s.Difficulty.Expert ||
                 s.Difficulty.Master;
-            if (!ValidNativeAttack(state, tick, nextIndex, second,
-                    expertSchedule, s.Difficulty.Expert ||
-                    s.Difficulty.Master, s.Difficulty.ForTheWorthy))
-                return UnknownNativeState(s, t,
-                    "state-clock-or-phase-violates-ai-120");
             string threatHoldReason;
             if (PriorityBossThreatGate.TryGetNeutralHoldReason(s,
                     PriorityBossThreatGate.EmpressType,
@@ -7814,6 +7812,9 @@ namespace Chaite.Core
                 return UnmodeledThreatSafetyHold(s, t, threatHoldReason);
             var dash = state == 8 || state == 9;
             var ownsDashClosure = dash;
+            var ownsPrismaticClosure = state == 2;
+            var ownsMovementClosure = ownsDashClosure ||
+                ownsPrismaticClosure;
             var ownsHorizontalClosure = false;
             string phase;
             BossPattern pattern;
@@ -7986,9 +7987,11 @@ namespace Chaite.Core
             phase = (genuinelyEnraged ? "day-rage-" :
                 lethalDayContract ? "day-lethal-" : "night-") +
                 (second ? "p2-" : "p1-") + phase;
+            var preferDash = dash || state == 2 &&
+                HasRainbowStreakThreat(s);
             var result = Decision(s, t, phase, pattern, distance,
                 lethalDayContract ? -40 : -190, horizontal, vertical,
-                dash, true, true, margin);
+                preferDash, true, true, margin);
             // Every admitted AI_120 state above supplies a phase-specific
             // movement intent.  Active takeover must therefore join that
             // explicit controller, rather than chase a target-relative ring
@@ -7998,7 +8001,7 @@ namespace Chaite.Core
             // the inter-attack reposition the vertical axis may still move to
             // avoid a homing streak, but horizontal must never turn back into
             // the Empress's approaching body.
-            result.Directive.OwnsMovementClosure = ownsDashClosure;
+            result.Directive.OwnsMovementClosure = ownsMovementClosure;
             result.Directive.OwnsHorizontalClosure = ownsHorizontalClosure;
             if (lethalDayContract || dash)
             {
@@ -8088,7 +8091,7 @@ namespace Chaite.Core
                     (state == 7 || state == 11 || state == 12)) ||
                 second && state == 0 ||
                 state == 10 && (attackIndex <= 0 ||
-                    (second ? tick < 90 : tick >= 90)))
+                    (second ? tick < 90 : tick > 90)))
                 return false;
             // State 13 resets ai[1] to zero when selected and never advances
             // that clock. Any other value is not produced by AI_120.
@@ -8219,6 +8222,74 @@ namespace Chaite.Core
                 previous.Ai3PhaseAndRage == ai3;
         }
 
+        private static bool TrySelectValidEmpressState(
+            in EmpressNativeCombatObservation native,
+            float targetAi0, float targetAi1, float targetAi2,
+            float targetAi3, bool lethalDayContract,
+            bool fixedExpertDifficulty, bool forTheWorthy,
+            out int state, out int tick, out int nextIndex,
+            out int form, out string reason)
+        {
+            state = tick = nextIndex = form = int.MinValue;
+            reason = null;
+            var expertSchedule = lethalDayContract ||
+                fixedExpertDifficulty;
+            if (native.Known)
+            {
+                var nativeState = NativeIntegerState(native.Ai0AttackState,
+                    0, 13);
+                var nativeTick = NativeNonnegativeInteger(
+                    native.Ai1AttackTimer);
+                var nativeIndex = NativeNonnegativeInteger(
+                    native.Ai2AttackIndex);
+                var nativeForm = NativeIntegerState(native.Ai3PhaseAndRage,
+                    0, 3);
+                var nativeSecond = nativeForm == 1 || nativeForm == 3;
+                if (nativeState != int.MinValue && nativeTick != int.MinValue &&
+                    nativeIndex != int.MinValue && nativeForm != int.MinValue &&
+                    ValidNativeAttack(nativeState, nativeTick, nativeIndex,
+                        nativeSecond, expertSchedule, fixedExpertDifficulty,
+                        forTheWorthy))
+                {
+                    state = nativeState;
+                    tick = nativeTick;
+                    nextIndex = nativeIndex;
+                    form = nativeForm;
+                    return true;
+                }
+                reason = "native:" + nativeState + "/" + nativeTick + "/" +
+                    nativeIndex + "/" + nativeForm + " second=" +
+                    nativeSecond;
+            }
+
+            var targetState = NativeIntegerState(targetAi0, 0, 13);
+            var targetTick = NativeNonnegativeInteger(targetAi1);
+            var targetIndex = NativeNonnegativeInteger(targetAi2);
+            var targetForm = NativeIntegerState(targetAi3, 0, 3);
+            var targetSecond = targetForm == 1 || targetForm == 3;
+            if (targetState == int.MinValue || targetTick == int.MinValue ||
+                targetIndex == int.MinValue || targetForm == int.MinValue)
+            {
+                reason += " target:malformed:" + targetState + "/" +
+                    targetTick + "/" + targetIndex + "/" + targetForm;
+                return false;
+            }
+            if (!ValidNativeAttack(targetState, targetTick, targetIndex,
+                    targetSecond, expertSchedule, fixedExpertDifficulty,
+                    forTheWorthy))
+            {
+                reason += " target:" + targetState + "/" + targetTick + "/" +
+                    targetIndex + "/" + targetForm + " second=" +
+                    targetSecond;
+                return false;
+            }
+            state = targetState;
+            tick = targetTick;
+            nextIndex = targetIndex;
+            form = targetForm;
+            return true;
+        }
+
         private static int NextAttack(bool second, bool expertSchedule,
             int index)
         {
@@ -8286,7 +8357,7 @@ namespace Chaite.Core
             result.Directive.ForceContinuousMovement = false;
             result.Directive.RequestControlReturn = true;
             result.Directive.ControlReturnReason =
-                "Empress of Light exposed an unreviewed native AI state";
+                "Empress native state rejected: " + phase;
             return result;
         }
 

@@ -65,6 +65,7 @@ namespace Chaite.Tests
                 E("p1-left-dash", 8, 50, 2, 0),
                 E("p1-right-dash", 9, 50, 2, 0),
                 E("p1-transition-before-latch", 10, 89, 1, 0),
+                E("p1-transition-boundary", 10, 90, 1, 0),
                 E("p2-transition-after-latch", 10, 90, 1, 1),
                 E("p2-reposition", 1, 10, 0, 1),
                 E("p2-lance-wall", 7, 80, 1, 1),
@@ -113,7 +114,7 @@ namespace Chaite.Tests
             AssertEmpressRejected(E("p2-cannot-use-intro", 0, 0, 0, 1));
             AssertEmpressRejected(E("transition-latch-too-early", 10, 89,
                 1, 1));
-            AssertEmpressRejected(E("transition-latch-too-late", 10, 90,
+            AssertEmpressRejected(E("transition-latch-too-late", 10, 91,
                 1, 0));
             AssertEmpressRejected(E("departure-clock-never-advances", 13,
                 1, 1, 0));

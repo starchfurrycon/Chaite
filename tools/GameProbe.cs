@@ -1577,7 +1577,7 @@ public static class ChaiteGameProbe
             player.armor[4].SetDefaults(ItemID.DemonWings);
             player.armor[5].SetDefaults(ItemID.CharmofMyths);
             player.armor[6].SetDefaults(ItemID.ObsidianShield);
-            player.armor[7].SetDefaults(ItemID.RangerEmblem);
+            player.armor[7].SetDefaults(ItemID.SorcererEmblem);
             if(difficultyCode>0)
             {
                 // A Demon Heart is available after the Wall of Flesh, before these
@@ -1597,7 +1597,7 @@ public static class ChaiteGameProbe
             // items, but do not yet have this probe's exact production closure.
             player.armor[3].SetDefaults(ItemID.LightningBoots);
             player.armor[4].SetDefaults(ItemID.DemonWings);
-            player.armor[5].SetDefaults(ItemID.CrossNecklace);
+            player.armor[5].SetDefaults(ItemID.FrozenTurtleShell);
             player.armor[6].SetDefaults(ItemID.CharmofMyths);
             player.armor[7].SetDefaults(ItemID.RangerEmblem);
             // The reviewed Shield-of-Cthulhu dash is the minimum defensive
@@ -1611,7 +1611,7 @@ public static class ChaiteGameProbe
             player.dashType=2;
             player.dashDelay=0;
             player.dashTime=0;
-            scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+cross-necklace+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
+            scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+frozen-turtle-shell+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
         {
@@ -1648,6 +1648,21 @@ public static class ChaiteGameProbe
         {
             player.inventory[10].SetDefaults(healingType);
             player.inventory[10].stack=20;
+        }
+        if(scenario.EquipmentTier=="early-hardmode" ||
+           scenario.EquipmentTier=="post-plantera" ||
+           scenario.EquipmentTier=="pre-moon-lord")
+        {
+            // Standard pre-boss buffs reviewed by every common hardmode guide.
+            // They are a preparation baseline, not a build-specific cheese.
+            player.AddBuff(BuffID.Ironskin, 36000);
+            player.AddBuff(BuffID.Regeneration, 36000);
+            player.AddBuff(BuffID.Swiftness, 36000);
+            player.AddBuff(BuffID.Endurance, 36000);
+            player.AddBuff(BuffID.Lifeforce, 36000);
+            player.AddBuff(BuffID.WellFed, 36000);
+            player.AddBuff(BuffID.Wrath, 36000);
+            player.AddBuff(BuffID.Rage, 36000);
         }
         var armor=new int[10];
         for(int i=0;i<armor.Length;i++) armor[i]=player.armor[i].type;
