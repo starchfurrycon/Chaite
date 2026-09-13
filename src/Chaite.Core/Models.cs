@@ -692,6 +692,7 @@ namespace Chaite.Core
         public TacticalMode TacticalMode;
         public string StrategyId;
         public string PhaseId;
+        public FormulaRoute FormulaRoute;
         public string WeaponIssue;
         // Exact output-route certificate consumed by the late native input gate.
         // Unspecified is retained only for synthetic adapters and tests.

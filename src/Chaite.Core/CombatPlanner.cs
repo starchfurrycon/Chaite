@@ -133,6 +133,7 @@ namespace Chaite.Core
         private OutputRouteProfile _latchedOutputRoute;
         private SummonWhipOutputController _summonWhipOutputController;
         private float _latchedMinimumOutputDps;
+        private FormulaRoute _formulaRoute;
         private BossLocomotionBaseline _activeLocomotion =
             BossLocomotionBaseline.Unspecified;
         private bool _restoringFlight;
@@ -223,6 +224,20 @@ namespace Chaite.Core
             }
             if (!FormulaMobilityContract.TryValidate(snapshot,
                     startPlan.ExpectedBossType, out reason)) return false;
+            _formulaRoute = FormulaRouteCatalog.Select(
+                startPlan.ExpectedBossType,
+                snapshot.Player.WingAccessoryItemType,
+                snapshot.Mobility.EyeShieldDash.EquipmentIdentity ==
+                    DashEquipmentIdentity.ShieldOfCthulhuItem3097 ? 3097 : 0,
+                false,
+                snapshot.Mobility.SelectedMountIdentityKnown ?
+                    snapshot.Mobility.SelectedMountType : -1,
+                false);
+            if (_formulaRoute == FormulaRoute.None)
+            {
+                reason = FormulaRouteCatalog.Refusal;
+                return false;
+            }
             return PrepareForExpectedEncounter(snapshot, startPlan.Id,
                 startPlan.ExpectedBossType, out reason);
         }
@@ -625,6 +640,7 @@ namespace Chaite.Core
             plan.TacticalMode = mode;
             plan.StrategyId = directive.StrategyId;
             plan.PhaseId = directive.PhaseId;
+            plan.FormulaRoute = _formulaRoute;
 
             // Source-specific controllers (e.g. a committed King run-under)
             // must keep the scored escape, not receive an unscored reversal/jump
@@ -833,6 +849,7 @@ namespace Chaite.Core
             _latchedOutputRoute = default(OutputRouteProfile);
             _summonWhipOutputController = null;
             _latchedMinimumOutputDps = 0f;
+            _formulaRoute = FormulaRoute.None;
             _activeLocomotion = BossLocomotionBaseline.Unspecified;
             _relevantThreats.Clear();
             _relevantBeams.Clear();
