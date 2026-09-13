@@ -645,16 +645,11 @@ namespace Chaite.Core
             plan.FormulaRoute = _formulaRoute;
             if (_formulaRoute != FormulaRoute.None)
             {
-                var scriptInput = new FormulaScriptInput
-                {
-                    BossType = target.Type,
-                    Route = _formulaRoute,
-                    NativeState = (int)target.Ai0,
-                    NativeTimer = (int)target.Ai2,
-                    NativeSequence = (int)target.Ai3,
-                    PlayerBelowBoss = snapshot.Player.Center.Y >= target.Center.Y,
-                    PlayerRightOfBoss = snapshot.Player.Center.X >= target.Center.X
-                };
+                FormulaScriptInput scriptInput;
+                if (!FormulaScriptController.TryReadInput(in target, _formulaRoute,
+                        snapshot.Player, out scriptInput))
+                    return UnsupportedMobilityRoutePlan(NewPlan(snapshot),
+                        "Formula script requires matching Boss identity and native clocks");
                 var script = FormulaScriptController.Tick(in scriptInput);
                 if (script.Accepted)
                 {

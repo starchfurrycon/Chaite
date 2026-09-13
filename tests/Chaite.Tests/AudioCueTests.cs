@@ -17,6 +17,7 @@ namespace Chaite.Tests
         {
             Run(nameof(FormulaRoutesKeepBossAndWeatherBoundaries), FormulaRoutesKeepBossAndWeatherBoundaries);
             Run(nameof(FormulaScriptIsDeterministic), FormulaScriptIsDeterministic);
+            Run(nameof(FormulaScriptReadsBossSpecificClocks), FormulaScriptReadsBossSpecificClocks);
             Run(nameof(UnsupportedBossCueRemainsDistinct), UnsupportedBossCueRemainsDistinct);
             Run(nameof(LegacyAudioCueOrdinalsRemainStable),
                 LegacyAudioCueOrdinalsRemainStable);
@@ -68,6 +69,40 @@ namespace Chaite.Tests
             Equal(a.Horizontal, b.Horizontal); Equal(a.Vertical, b.Vertical);
             Equal(a.Phase, b.Phase);
             input.BossType = 4;
+            False(FormulaScriptController.Tick(in input).Accepted);
+        }
+
+        private static void FormulaScriptReadsBossSpecificClocks()
+        {
+            var target = new TargetSnapshot { Type = 636, Ai0 = 8, Ai1 = 39,
+                Ai2 = 2, Ai3 = 0, Ai0Known = true, Ai1Known = true,
+                Ai2Known = true, Ai3Known = true };
+            var player = new PlayerSnapshot();
+            FormulaScriptInput input;
+            True(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.EmpressBroom, player, out input));
+            Equal(39, input.NativeTimer); Equal(2, input.NativeSequence);
+            False(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.FishronQueenSlime, player, out input));
+            target.Type = 370; target.Ai0 = 1; target.Ai2 = 27; target.Ai3 = 6;
+            True(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.FishronQueenSlime, player, out input));
+            Equal(27, input.NativeTimer); Equal(6, input.NativeSequence);
+            target.Ai2 = float.NaN;
+            False(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.FishronQueenSlime, player, out input));
+            target.Ai2 = 1.5f;
+            False(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.FishronQueenSlime, player, out input));
+            target.Ai2 = 1; target.Ai3Known = false;
+            False(FormulaScriptController.TryReadInput(in target,
+                FormulaRoute.FishronQueenSlime, player, out input));
+            input = new FormulaScriptInput { BossType = 636,
+                Route = FormulaRoute.FishronQueenSlime, NativeState = 2 };
+            False(FormulaScriptController.Tick(in input).Accepted);
+            input.Route = FormulaRoute.EmpressBroom; input.NativeState = 13;
+            False(FormulaScriptController.Tick(in input).Accepted);
+            input.NativeState = 3;
             False(FormulaScriptController.Tick(in input).Accepted);
         }
 

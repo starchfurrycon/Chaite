@@ -14,6 +14,24 @@ namespace Chaite.Core
         public static bool IsSupportedBoss(int bossType) =>
             bossType == 370 || bossType == 636;
 
+        public static bool BelongsToBoss(FormulaRoute route, int bossType)
+        {
+            switch (route)
+            {
+                case FormulaRoute.FishronFairyWingsDash:
+                case FormulaRoute.FishronStrongWingsDash:
+                case FormulaRoute.FishronQueenSlime:
+                case FormulaRoute.FishronTrustyChillet:
+                case FormulaRoute.FishronTrustyChilletIgnis:
+                    return bossType == 370;
+                case FormulaRoute.EmpressStrongWingsDash:
+                case FormulaRoute.EmpressBroom:
+                case FormulaRoute.EmpressRainFishron:
+                    return bossType == 636;
+                default: return false;
+            }
+        }
+
         public static FormulaRoute Select(int bossType, int wingItem,
             int dashItem, bool crystalAssassinSet, int mountType,
             bool raining)

@@ -28,11 +28,42 @@ namespace Chaite.Core
     /// </summary>
     public static class FormulaScriptController
     {
+        public static bool TryReadInput(in TargetSnapshot target,
+            FormulaRoute route, PlayerSnapshot player,
+            out FormulaScriptInput input)
+        {
+            input = default(FormulaScriptInput);
+            if (player == null || !FormulaRouteCatalog.BelongsToBoss(route, target.Type) ||
+                !target.Ai0Known || !target.Ai2Known ||
+                (target.Type == 370 ? !target.Ai3Known : !target.Ai1Known))
+                return false;
+            var timer = target.Type == 370 ? target.Ai2 : target.Ai1;
+            var sequence = target.Type == 370 ? target.Ai3 : target.Ai2;
+            if (!Integer(target.Ai0, -1, 13) || !Integer(timer, 0, int.MaxValue) ||
+                !Integer(sequence, 0, int.MaxValue)) return false;
+            input = new FormulaScriptInput
+            {
+                BossType = target.Type, Route = route,
+                NativeState = (int)target.Ai0, NativeTimer = (int)timer,
+                NativeSequence = (int)sequence,
+                PlayerBelowBoss = player.Center.Y >= target.Center.Y,
+                PlayerRightOfBoss = player.Center.X >= target.Center.X
+            };
+            return true;
+        }
+
+        private static bool Integer(float value, int min, int max) =>
+            !float.IsNaN(value) && !float.IsInfinity(value) &&
+            (double)value >= min && (double)value <= max &&
+            value == System.Math.Floor(value);
+
         public static FormulaScriptOutput Tick(in FormulaScriptInput input)
         {
             var output = new FormulaScriptOutput { Accepted = false };
-            if (!FormulaRouteCatalog.IsSupportedBoss(input.BossType) ||
-                input.Route == FormulaRoute.None || input.NativeTimer < 0)
+            if (!FormulaRouteCatalog.BelongsToBoss(input.Route, input.BossType) ||
+                input.NativeTimer < 0 || input.NativeSequence < 0 ||
+                (input.BossType == 370 ? input.NativeState < -1 || input.NativeState > 12 :
+                    input.NativeState < 0 || input.NativeState > 12 || input.NativeState == 3))
                 return output;
             output.Accepted = true;
             output.Fire = true;
