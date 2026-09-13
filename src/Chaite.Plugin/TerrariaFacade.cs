@@ -2832,10 +2832,18 @@ namespace Chaite.Plugin
 
             SetSelectedItem(player, plan.ActionSlot);
             ClearCombatControls(player);
-            AimAt(player, plan.InteractionWorld);
+            // Cast straight at the player's feet.  Vanilla's fishing check
+            // evaluates the bobber's actual liquid contact, so aiming at the
+            // preflight sample point can miss shallow or shifted water.
+            var foot = new Vec2(_positionX(player) + _width(player) * .5f,
+                _positionY(player) + _height(player) + 8f);
+            AimAt(player, foot);
             var bobber = HasOwnedBobber();
             var ready = GetSelectedItem(player) == plan.ActionSlot && SummonAnimationReady(player) && _releaseUseItem(player);
-            var pulse = ready && (bobber ? tick % 12 == 0 : tick % 60 >= 1 && tick % 60 <= 5);
+            // One cast only: after the first bobber appears, wait for the
+            // native catch. Recasting would consume additional bait and could
+            // turn a non-Fishron catch into an unintended second attempt.
+            var pulse = ready && !bobber && tick % 12 == 0;
             SetControl(player, "controlUseItem", pulse);
             return new BossStartTick
             {
