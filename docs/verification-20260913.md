@@ -122,6 +122,11 @@ made.
   873 streak instead of being forced downward into it. The same expert seed
   still dies once in the isolated smoke, so this is a necessary but not
   sufficient part of the daytime-Empress lower-bound route.
+- Three fresh expert seeds each for Duke Fishron and night Empress survived the
+  first 900 native ticks with zero deaths (`valid=true`, all classified as the
+  intended tick-bound timeout). Night Empress still took 1-4 hits, so this is
+  not a no-hit claim, but it is reproducible survival evidence for the current
+  finite-flight route. Daytime Empress remains the open cell.
 
 ## Git
 
