@@ -559,6 +559,38 @@ namespace Chaite.Tests
             True(dayDecision.OwnsMovementClosure,
                 "daytime pre-dash let the generic scorer re-enter the charge lane");
 
+            var withStreak = CombatScenario(636);
+            withStreak.Difficulty.DayTime = true;
+            var streakTarget = withStreak.Targets[0];
+            streakTarget.Ai0 = 1f;
+            streakTarget.Ai1 = 4f;
+            streakTarget.Ai2 = 1f;
+            streakTarget.Ai3 = 2f;
+            withStreak.Targets[0] = streakTarget;
+            withStreak.Threats.Add(new ThreatSnapshot
+            {
+                Kind = ThreatKind.Projectile,
+                Geometry = ThreatGeometry.Body,
+                Trajectory = ThreatTrajectory.EmpressRainbowStreak,
+                Type = 873,
+                NativeIdentity = 17,
+                TrajectoryAi0Known = true,
+                TrajectoryAi0 = 0f,
+                NativeTargetPlayerKnown = true,
+                NativeTargetPlayerIndex = 0,
+                Position = new Vec2(34000f, 7600f),
+                Velocity = new Vec2(0f, -5f),
+                Width = 30,
+                Height = 30,
+                TimeLeft = 190,
+                Damage = 120
+            });
+            RefreshPriorityNativeContext(withStreak);
+            var withStreakDecision =
+                new BossStrategyEngine().Evaluate(withStreak).Directive;
+            False(withStreakDecision.OwnsMovementClosure,
+                "daytime pre-dash locked the vertical lane despite a homing rainbow streak");
+
             var night = CombatScenario(636);
             night.Difficulty.DayTime = false;
             var nightTarget = night.Targets[0];

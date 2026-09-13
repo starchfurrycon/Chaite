@@ -46,6 +46,23 @@ This is a single-seed staged fixture, not a general win rate. The daytime
 Empress one-shot path still needs work before any "near-certain" claim can be
 made.
 
+## Follow-up (same date)
+
+- Confirmed from Terraria 1.4.5.8 `Projectile.AI_171_HallowBossRainbowStreak`
+  that hostile type 873 stores the target player index in `ai[0]`, so the
+  existing targeted capture and `TryCreateTargetedState` contract are correct.
+  The native smoothing constants also match the Core model.
+- The pre-dash route was locking a pure vertical dodge into the 873 homing
+  lane. The state-1 route now releases movement closure when a live 873 streak
+  is present, allowing the scorer to step around the streak.
+- After that change the same deterministic daytime fixture no longer dies to
+  873, but still dies to NPC 636 contact during the later reposition/dash
+  window. A post-Plantera fixture probe was also given the reviewed
+  Shield-of-Cthulhu dash accessory, but the daytime Empress contact death
+  remains in this single seed.
+- Daytime Empress is therefore still not verified as a high-reliability win.
+  This remains an active follow-up, not a completed acceptance claim.
+
 ## Git
 
 - GitHub remote: `https://github.com/starchfurrycon/Chaite.git`

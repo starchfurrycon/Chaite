@@ -7957,7 +7957,12 @@ namespace Chaite.Core
             // reserve that perpendicular lane even when a generic scorer sees
             // a slightly lower short-term hazard on the opposite side. The
             // immediate-risk layer still vetoes a genuinely unsafe closure.
-            result.Directive.OwnsMovementClosure = ownsDashClosure;
+            // The 8/9 body charge needs a locked perpendicular escape, but the
+            // inter-attack reposition (state 1) must remain free to step around
+            // the homing rainbow streak.  A pure vertical dodge can otherwise
+            // walk straight into the streak's path while it tracks the player.
+            result.Directive.OwnsMovementClosure = ownsDashClosure &&
+                !(state == 1 && HasRainbowStreakThreat(s));
             if (lethalDayContract || dash)
             {
                 // This bypasses generic direction hysteresis. Threat scoring is
@@ -7966,6 +7971,20 @@ namespace Chaite.Core
                 result.Directive.ForceContinuousMovement = true;
             }
             return result;
+        }
+
+        private static bool HasRainbowStreakThreat(CombatSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.Threats == null)
+                return false;
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind == ThreatKind.Projectile &&
+                    threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak)
+                    return true;
+            }
+            return false;
         }
 
         private static bool ValidNativeAttack(int state, int tick,

@@ -1589,11 +1589,11 @@ public static class ChaiteGameProbe
             player.armor[5].SetDefaults(ItemID.CrossNecklace);
             player.armor[6].SetDefaults(ItemID.CharmofMyths);
             player.armor[7].SetDefaults(ItemID.RangerEmblem);
-            if(difficultyCode>0)
-            {
-                player.extraAccessory=true;
-                player.armor[8].SetDefaults(ItemID.AnkhShield);
-            }
+            // The reviewed Shield-of-Cthulhu dash is the minimum defensive
+            // edge used by the daytime Empress formulaic dodge.  Keep the
+            // classic fixture from being denied that same baseline mobility.
+            player.extraAccessory=true;
+            player.armor[8].SetDefaults(ItemID.EoCShield);
             scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+cross-necklace+charm+ranger-emblem+chain-gun+crystal-bullets; greater-healing x20";
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
