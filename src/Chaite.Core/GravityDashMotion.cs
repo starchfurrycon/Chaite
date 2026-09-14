@@ -159,7 +159,17 @@ namespace Chaite.Core
     public enum DashEquipmentIdentity
     {
         Unknown = 0,
-        ShieldOfCthulhuItem3097 = 1
+        ShieldOfCthulhuItem3097 = 1,
+        MasterNinjaGearItem984 = 2,
+        CrystalAssassinArmorSet = 3
+    }
+
+    public static class ReviewedDashIdentity
+    {
+        public static bool IsSupported(DashEquipmentIdentity identity) =>
+            identity == DashEquipmentIdentity.ShieldOfCthulhuItem3097 ||
+            identity == DashEquipmentIdentity.MasterNinjaGearItem984 ||
+            identity == DashEquipmentIdentity.CrystalAssassinArmorSet;
     }
 
     public enum EyeShieldDashPhase
@@ -371,8 +381,7 @@ namespace Chaite.Core
             // rejects those states for trajectory rollout, so using it here
             // incorrectly ended an otherwise valid Fishron takeover.
             state.Known && state.NormalPlayerUpdatePath &&
-            state.EquipmentIdentity ==
-                DashEquipmentIdentity.ShieldOfCthulhuItem3097 &&
+            ReviewedDashIdentity.IsSupported(state.EquipmentIdentity) &&
             state.DashType == 2 && state.Dash == 2 && !state.MountActive &&
             !state.Pulley && !state.Grappling && !state.Tongued &&
             !state.OldStyleParkour && state.DashDelay >= -1 &&
@@ -393,7 +402,7 @@ namespace Chaite.Core
         private static bool IsValid(in EyeShieldDashState state)
         {
             if (!state.Known || !state.NormalPlayerUpdatePath ||
-                state.EquipmentIdentity != DashEquipmentIdentity.ShieldOfCthulhuItem3097 ||
+                !ReviewedDashIdentity.IsSupported(state.EquipmentIdentity) ||
                 state.DashType != 2 || state.Dash != 2 ||
                 state.DashDelay < -1 || state.DashDelay > CooldownTicks ||
                 state.DashTime < -15 || state.DashTime > 15 ||

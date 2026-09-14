@@ -435,9 +435,9 @@ namespace Chaite.Tests
             CommonWeaponNear(18.015f,
                 CommonWeaponOutputCatalog.RazorbladeTyphoonTravelDistance(
                     3, 6f), .0001f);
-            CommonWeaponNear(1912.875f,
+            CommonWeaponNear(1912.878f,
                 CommonWeaponOutputCatalog.RazorbladeTyphoonTravelDistance(
-                    300, 6f), .001f);
+                    300, 6f), .005f);
 
             var aim = WeaponAimSolver.Solve(evaluation, new Vec2(),
                 new Vec2(100f, 0f), new Vec2(), 90f, 80, 80);

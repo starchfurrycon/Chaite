@@ -55,6 +55,9 @@
     <Compile Include="FormulaRouteCatalog.cs" />
     <Compile Include="FormulaScriptController.cs" />
     <Compile Include="FishronWingScript.cs" />
+    <Compile Include="FishronChilletScript.cs" />
+    <Compile Include="FishronQueenSlimeScript.cs" />
+    <Compile Include="EmpressFlightScript.cs" />
     <Compile Include="ClassicSecondaryBossContract.cs" />
     <Compile Include="OrdinarySecondaryBossContracts.cs" />
     <Compile Include="BossStrategyCatalog.cs" />

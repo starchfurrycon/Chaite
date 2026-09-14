@@ -31,6 +31,7 @@ namespace Chaite.Plugin
         private readonly Func<int> _wofDrawAreaTop;
         private readonly Func<int> _wofDrawAreaBottom;
         private readonly Func<bool> _dayTime;
+        private readonly Func<bool> _raining;
         private readonly Func<double> _time;
         private readonly Func<bool> _hardMode;
         private readonly Func<int> _gameMode;
@@ -322,6 +323,8 @@ namespace Chaite.Plugin
         private int _fishingSwapSlot = -1;
         private bool _validatePendingGravity;
         private bool _validatePendingDash;
+        private bool _validatePendingFormulaMountDash;
+        private int _pendingFormulaMountType = -1;
         private bool _validatePendingFeatherFall;
         private bool _pendingFeatherFallRequiresPotionUp;
         private bool _pendingFallbackKnown;
@@ -369,6 +372,7 @@ namespace Chaite.Plugin
             _wofDrawAreaTop = ReflectionAccess.StaticGetter<int>(_mainType, "wofDrawAreaTop");
             _wofDrawAreaBottom = ReflectionAccess.StaticGetter<int>(_mainType, "wofDrawAreaBottom");
             _dayTime = ReflectionAccess.StaticGetter<bool>(_mainType, "dayTime");
+            _raining = ReflectionAccess.StaticGetter<bool>(_mainType, "raining");
             _time = ReflectionAccess.StaticGetter<double>(_mainType, "time");
             _hardMode = ReflectionAccess.StaticGetter<bool>(_mainType, "hardMode");
             _gameMode = ReflectionAccess.StaticPropertyGetter<int>(_mainType, "GameMode");
@@ -981,6 +985,9 @@ namespace Chaite.Plugin
             mobility.FormulaAccessoryScanKnown = true;
             mobility.UnexpectedFormulaMobilityItemType =
                 functionalIdentity.UnexpectedFormulaMobilityItemType;
+            mobility.FrogLegAccessoryKnown = true;
+            mobility.FrogLegAccessoryPresent =
+                functionalIdentity.FrogLegSources == 1;
             PublishMountIdentities(mobility, mountActive,
                 mountActive ? _mountTypeId(mount) : -1, hasMount,
                 selectedMountItemType, selectedMountType);
@@ -1024,8 +1031,9 @@ namespace Chaite.Plugin
                 out mobility.DashLeftProbeKnown, out mobility.DashLeftProbeBlocked);
             ReadDashForwardProbe(player, tilesForDashProbe, 1,
                 out mobility.DashRightProbeKnown, out mobility.DashRightProbeBlocked);
-            mobility.CanDash = mobility.EyeShieldDash.EquipmentIdentity ==
-                DashEquipmentIdentity.ShieldOfCthulhuItem3097 && mobility.EyeShieldDash.DashType == 2;
+            mobility.CanDash = ReviewedDashIdentity.IsSupported(
+                mobility.EyeShieldDash.EquipmentIdentity) &&
+                mobility.EyeShieldDash.DashType == 2;
             // Vanilla copies dashType into dash only when delay is exactly zero.
             // -1 is the active dash phase, never a second ready edge.
             mobility.DashReady = mobility.EyeShieldDash.DashDelay == 0;
@@ -1053,6 +1061,8 @@ namespace Chaite.Plugin
             difficulty.NoTraps = _noTrapsWorld();
             difficulty.Skyblock = _skyblockWorld();
             difficulty.DayTime = _dayTime();
+            difficulty.RainKnown = true;
+            difficulty.Rain = _raining();
 
             snapshot.SummonWhipOutput = ReadSummonWhipOutput(player, items);
             // Target evidence has to be captured before automatic weapon
@@ -1227,7 +1237,10 @@ namespace Chaite.Plugin
             var rocketSources = 0;
             var gravityGlobeSources = 0;
             var shieldSources = 0;
-            var conflictingDashSources = 0;
+            var masterNinjaGearSources = 0;
+            var tabiSources = 0;
+            var frogLegSources = 0;
+            var crystalAssassinSet = ReadCrystalAssassinSet(player);
             var unexpectedFormulaMobilityItemType = 0;
             // Player.UpdateEquips applies functional accessories from slots
             // 3..9 after IsItemSlotUnlockedAndUsable and GetEffectiveArmor.
@@ -1251,12 +1264,17 @@ namespace Chaite.Plugin
                 }
                 if (type == 1131) gravityGlobeSources++;
                 if (type == 3097) shieldSources++;
-                else if (type == 977 || type == 984) conflictingDashSources++;
+                else if (type == 984) masterNinjaGearSources++;
+                else if (type == 977) tabiSources++;
+                if (type == FormulaMobilityContract.FrogLegItem)
+                    frogLegSources++;
                 if (FormulaMobilityContract.IsMobilityAccessory(type) &&
                     type != FormulaMobilityContract.DemonWingsItem &&
                     type != 761 && type != 2609 &&
                     type != FormulaMobilityContract.LightningBootsItem &&
                     type != FormulaMobilityContract.ShieldOfCthulhuItem &&
+                    type != FormulaMobilityContract.MasterNinjaGearItem &&
+                    type != FormulaMobilityContract.FrogLegItem &&
                     unexpectedFormulaMobilityItemType == 0)
                     unexpectedFormulaMobilityItemType = type;
             }
@@ -1276,16 +1294,46 @@ namespace Chaite.Plugin
                 else if (gravityGlobeSources == 1)
                     gravity = GravityControlIdentity.GravityGlobeItem1131;
             }
-            var dash = shieldSources == 1 && conflictingDashSources == 0
-                ? DashEquipmentIdentity.ShieldOfCthulhuItem3097
+            var accessoryDashSources = 0;
+            if (shieldSources > 0) accessoryDashSources++;
+            if (masterNinjaGearSources > 0) accessoryDashSources++;
+            if (tabiSources > 0) accessoryDashSources++;
+            if (crystalAssassinSet) accessoryDashSources++;
+            var dash = accessoryDashSources == 1
+                ? crystalAssassinSet
+                    ? DashEquipmentIdentity.CrystalAssassinArmorSet
+                    : shieldSources == 1
+                        ? DashEquipmentIdentity.ShieldOfCthulhuItem3097
+                        : masterNinjaGearSources == 1
+                            ? DashEquipmentIdentity.MasterNinjaGearItem984
+                            : DashEquipmentIdentity.Unknown
                 : DashEquipmentIdentity.Unknown;
             return new FunctionalMobilityIdentity
             {
                 Gravity = gravity,
                 Dash = dash,
+                FrogLegSources = frogLegSources,
                 UnexpectedFormulaMobilityItemType =
                     unexpectedFormulaMobilityItemType
             };
+        }
+
+        private bool ReadCrystalAssassinSet(object player)
+        {
+            if (player == null) return false;
+            bool hood = false;
+            bool shirt = false;
+            bool pants = false;
+            for (var slot = 0; slot < 3; slot++)
+            {
+                var item = _getEffectiveArmor(player, slot);
+                if (item == null) return false;
+                var type = _itemTypeId(item);
+                if (type == 4982) hood = true;
+                else if (type == 4983) shirt = true;
+                else if (type == 4984) pants = true;
+            }
+            return hood && shirt && pants;
         }
 
         private bool TryReadActiveGravitationBuff(object player, out bool active)
@@ -3618,21 +3666,44 @@ namespace Chaite.Plugin
             }
             if (plan.Dash)
             {
-                var state = _combatSnapshot.Mobility.EyeShieldDash;
-                state.ControlLeft = plan.Horizontal < 0;
-                state.ControlRight = plan.Horizontal > 0;
-                state.ControlDash = true;
-                var direction = plan.Horizontal == -state.FacingDirection
-                    ? plan.Horizontal : state.FacingDirection;
-                ApplyDashProbe(_combatSnapshot.Mobility, direction, ref state);
-                EyeShieldDashCandidate candidate;
-                if (EyeShieldDashMotion.TryCreateDedicatedCandidate(state, out candidate))
+                if (FormulaRouteCatalog.IsTrustyChillet(plan.FormulaRoute))
                 {
-                    _pendingDashState = state;
-                    _pendingDashCandidate = candidate;
-                    _validatePendingDash = true;
+                    var expectedMount = FormulaRouteCatalog.
+                        TrustyChilletMountType(plan.FormulaRoute);
+                    var formulaMobility = _combatSnapshot.Mobility;
+                    if (plan.Horizontal != 0 && formulaMobility.MountActive &&
+                        formulaMobility.ActiveMountIdentityKnown &&
+                        formulaMobility.ActiveMountType == expectedMount &&
+                        formulaMobility.DashType == 6 &&
+                        formulaMobility.DashReady &&
+                        formulaMobility.EyeShieldDash.ReleaseDash &&
+                        !formulaMobility.Grappling &&
+                        !formulaMobility.GravityInverted)
+                    {
+                        _pendingFormulaMountType = expectedMount;
+                        _validatePendingFormulaMountDash = true;
+                    }
+                    else SetControl(player, "controlDash", false);
                 }
-                else SetControl(player, "controlDash", false);
+                else
+                {
+                    var state = _combatSnapshot.Mobility.EyeShieldDash;
+                    state.ControlLeft = plan.Horizontal < 0;
+                    state.ControlRight = plan.Horizontal > 0;
+                    state.ControlDash = true;
+                    var direction = plan.Horizontal == -state.FacingDirection
+                        ? plan.Horizontal : state.FacingDirection;
+                    ApplyDashProbe(_combatSnapshot.Mobility, direction, ref state);
+                    EyeShieldDashCandidate candidate;
+                    if (EyeShieldDashMotion.TryCreateDedicatedCandidate(state,
+                            out candidate))
+                    {
+                        _pendingDashState = state;
+                        _pendingDashCandidate = candidate;
+                        _validatePendingDash = true;
+                    }
+                    else SetControl(player, "controlDash", false);
+                }
             }
         }
 
@@ -3646,6 +3717,7 @@ namespace Chaite.Plugin
         public string ValidatePendingMobility(object player)
         {
             if (player == null || !_validatePendingGravity && !_validatePendingDash &&
+                !_validatePendingFormulaMountDash &&
                 !_validatePendingFeatherFall)
                 return null;
             var mount = _playerMount(player);
@@ -3656,6 +3728,7 @@ namespace Chaite.Plugin
                     _identityScratch);
             string gravityReason = null;
             string dashReason = null;
+            string formulaMountDashReason = null;
             string featherFallReason = null;
 
             if (_validatePendingGravity)
@@ -3694,6 +3767,22 @@ namespace Chaite.Plugin
                 }
             }
 
+            if (_validatePendingFormulaMountDash)
+            {
+                var activeType = mountActive && mount != null ?
+                    _mountTypeId(mount) : -1;
+                if (!mountActive || activeType != _pendingFormulaMountType ||
+                    _playerDashType(player) != 6 ||
+                    _playerDashDelay(player) != 0 ||
+                    !_releaseDash(player) ||
+                    !_controlReaders["controlDash"](player) ||
+                    _playerCCed(player) || _playerPulley(player) ||
+                    _playerGrapCount(player) > 0 || _playerTongued(player) ||
+                    _playerGravDir(player) != 1f)
+                    formulaMountDashReason =
+                        "trusty-chillet-native-dash-state-changed";
+            }
+
             if (_validatePendingFeatherFall)
             {
                 bool present;
@@ -3728,11 +3817,15 @@ namespace Chaite.Plugin
 
             _validatePendingGravity = false;
             _validatePendingDash = false;
+            _validatePendingFormulaMountDash = false;
+            _pendingFormulaMountType = -1;
             _validatePendingFeatherFall = false;
-            if (gravityReason == null && dashReason == null && featherFallReason == null)
+            if (gravityReason == null && dashReason == null &&
+                formulaMountDashReason == null && featherFallReason == null)
                 return null;
             var usedFallback = ResolveRejectedPendingMobility(player,
-                gravityReason != null || dashReason != null,
+                gravityReason != null || dashReason != null ||
+                    formulaMountDashReason != null,
                 featherFallReason != null);
             return "mobility validation rejected at pre-frame=" + _pendingMobilityFrame +
                 ", post-frame=" + _sightFrame + ": " +
@@ -3740,7 +3833,10 @@ namespace Chaite.Plugin
                 (gravityReason != null && (dashReason != null || featherFallReason != null)
                     ? "; " : string.Empty) +
                 (dashReason == null ? string.Empty : "dash=" + dashReason) +
-                (dashReason != null && featherFallReason != null ? "; " : string.Empty) +
+                ((dashReason != null || formulaMountDashReason != null) &&
+                    featherFallReason != null ? "; " : string.Empty) +
+                (formulaMountDashReason == null ? string.Empty :
+                    "formula-mount-dash=" + formulaMountDashReason) +
                 (featherFallReason == null ? string.Empty :
                     "feather-fall=" + featherFallReason) +
                 "; resolution=" + (usedFallback ?
@@ -3899,6 +3995,8 @@ namespace Chaite.Plugin
         {
             _validatePendingGravity = false;
             _validatePendingDash = false;
+            _validatePendingFormulaMountDash = false;
+            _pendingFormulaMountType = -1;
             _validatePendingFeatherFall = false;
             _pendingFeatherFallRequiresPotionUp = false;
             _pendingFallbackKnown = false;
@@ -4646,6 +4744,7 @@ namespace Chaite.Plugin
         {
             public GravityControlIdentity Gravity;
             public DashEquipmentIdentity Dash;
+            public int FrogLegSources;
             public int UnexpectedFormulaMobilityItemType;
         }
 

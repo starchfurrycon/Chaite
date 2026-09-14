@@ -66,6 +66,192 @@ namespace Chaite.Tests
             False(controller.Tick(in input, player, in boss, arena, true).Dash);
         }
 
+        private static void FishronChilletUsesReviewedNativeDashCadence()
+        {
+            var controller = new FishronChilletScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2600, 980), Width = 150, Height = 100 };
+            var arena = new ArenaSnapshot { FloorSupport = new SupportSpan
+                { Valid = true, Left = 800, Right = 3600 } };
+            var mobility = new MobilitySnapshot
+            {
+                SelectedMountIdentityKnown = true,
+                SelectedMountType = 64,
+                ActiveMountReleaseReady = true
+            };
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronTrustyChillet,
+                NativeState = 0, NativeSequence = 0 };
+            var mount = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            True(mount.Accepted); True(mount.ToggleMount); False(mount.Fire);
+
+            mobility.MountActive = true;
+            mobility.ActiveMountIdentityKnown = true;
+            mobility.ActiveMountType = 64;
+            mobility.DashType = 6;
+            mobility.DashReady = true;
+            var dashState = mobility.EyeShieldDash;
+            dashState.ReleaseDash = true;
+            mobility.EyeShieldDash = dashState;
+
+            input.NativeState = 1; input.NativeSequence = 0;
+            False(controller.Tick(in input, player, in boss, arena,
+                mobility).Dash, "the first P1 charge is deliberately passed");
+            input.NativeState = 0; input.NativeSequence = 2;
+            controller.Tick(in input, player, in boss, arena, mobility);
+            input.NativeState = 1;
+            var second = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            True(second.Dash); Equal(1, second.Horizontal);
+            False(controller.Tick(in input, player, in boss, arena,
+                mobility).Dash, "one native charge cannot emit two dash edges");
+
+            input.NativeState = 5; input.NativeSequence = 4;
+            controller.Tick(in input, player, in boss, arena, mobility);
+            input.NativeState = 6;
+            False(controller.Tick(in input, player, in boss, arena,
+                mobility).Dash, "the third P2 charge keeps running");
+            input.NativeState = 12; input.NativeSequence = 4;
+            controller.Tick(in input, player, in boss, arena, mobility);
+            input.NativeState = 11; input.NativeSequence = 5;
+            True(controller.Tick(in input, player, in boss, arena,
+                mobility).Dash, "every P3 charge is a reviewed counter edge");
+        }
+
+        private static void FishronChilletRejectsWrongMountAndShortRunway()
+        {
+            var player = new PlayerSnapshot { Position = new Vec2(1000, 1000),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(1400, 1000), Width = 150, Height = 100 };
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronTrustyChillet };
+            var shortArena = new ArenaSnapshot { FloorSupport = new SupportSpan
+                { Valid = true, Left = 500, Right = 1500 } };
+            False(new FishronChilletScript().Tick(in input, player, in boss,
+                shortArena, new MobilitySnapshot()).Accepted);
+
+            var arena = new ArenaSnapshot { FloorSupport = new SupportSpan
+                { Valid = true, Left = 0, Right = 3000 } };
+            var wrong = new MobilitySnapshot { MountActive = true,
+                ActiveMountIdentityKnown = true, ActiveMountType = 63 };
+            False(new FishronChilletScript().Tick(in input, player, in boss,
+                arena, wrong).Accepted);
+        }
+
+        private static void FishronChilletLockedRouteAcceptsOnlyItsActiveMount()
+        {
+            var scene = CombatScenario(370);
+            scene.Player.FunctionalEquipmentIdentityKnown = true;
+            scene.Mobility.FormulaAccessoryScanKnown = true;
+            scene.Mobility.SelectedMountIdentityKnown = true;
+            scene.Mobility.SelectedMountType = 64;
+            FormulaRoute route;
+            string reason;
+            True(FormulaMobilityContract.TrySelectRoute(scene, 370,
+                out route, out reason), reason);
+            Equal(FormulaRoute.FishronTrustyChillet, route);
+
+            scene.Mobility.MountActive = true;
+            scene.Mobility.ActiveMountIdentityKnown = true;
+            scene.Mobility.ActiveMountType = 64;
+            True(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
+                route, out reason), reason);
+            scene.Mobility.ActiveMountType = 65;
+            False(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
+                route, out reason));
+        }
+
+        private static void FishronQueenSlimeUsesMountAndFixedRunway()
+        {
+            var controller = new FishronQueenSlimeScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2600, 980), Width = 150, Height = 100 };
+            var arena = new ArenaSnapshot { FloorSupport = new SupportSpan
+                { Valid = true, Left = 600, Right = 3400 } };
+            var mobility = new MobilitySnapshot
+            {
+                SelectedMountIdentityKnown = true,
+                SelectedMountType = FishronQueenSlimeScript.QueenSlimeMountType,
+                ActiveMountReleaseReady = true
+            };
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronQueenSlime,
+                NativeState = 0, NativeSequence = 0 };
+            var mount = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            True(mount.Accepted); True(mount.ToggleMount); False(mount.Fire);
+
+            mobility.MountActive = true;
+            mobility.ActiveMountIdentityKnown = true;
+            mobility.ActiveMountType =
+                FishronQueenSlimeScript.QueenSlimeMountType;
+            var runway = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            True(runway.Accepted); True(runway.Fire);
+            input.NativeState = 1;
+            var charge = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            True(charge.Jump); Equal(1, charge.Horizontal);
+            Equal(-1, charge.Vertical);
+        }
+
+        private static void EmpressFlightUsesReviewedMountAndRainGate()
+        {
+            var broom = new EmpressFlightScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1200),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 636,
+                Position = new Vec2(2200, 900), Width = 80, Height = 80 };
+            var arena = new ArenaSnapshot
+            {
+                ClearanceLeft = 1500, ClearanceRight = 1800,
+                ClearanceUp = 700, ClearanceDown = 900
+            };
+            var mobility = new MobilitySnapshot
+            {
+                SelectedMountIdentityKnown = true,
+                SelectedMountType = EmpressFlightScript.WitchBroomMountType,
+                ActiveMountReleaseReady = true
+            };
+            var difficulty = new DifficultySnapshot
+            {
+                RainKnown = true, Rain = false
+            };
+            var input = new FormulaScriptInput { BossType = 636,
+                Route = FormulaRoute.EmpressBroom,
+                NativeState = 8, NativeSequence = 1, PlayerBelowBoss = true };
+            var mount = broom.Tick(in input, player, in boss, arena,
+                mobility, difficulty);
+            True(mount.Accepted); True(mount.ToggleMount); False(mount.Fire);
+
+            mobility.MountActive = true;
+            mobility.ActiveMountIdentityKnown = true;
+            mobility.ActiveMountType = EmpressFlightScript.WitchBroomMountType;
+            var dash = broom.Tick(in input, player, in boss, arena,
+                mobility, difficulty);
+            True(dash.Accepted); True(dash.Fire);
+            Equal(0, dash.Horizontal); Equal(-1, dash.Vertical);
+            True(dash.Jump);
+
+            var rain = new EmpressFlightScript();
+            input.Route = FormulaRoute.EmpressRainFishron;
+            mobility.MountActive = false;
+            mobility.ActiveMountIdentityKnown = false;
+            mobility.SelectedMountType =
+                EmpressFlightScript.ShrimpyTruffleMountType;
+            False(rain.Tick(in input, player, in boss, arena,
+                mobility, difficulty).Accepted);
+            difficulty.Rain = true;
+            True(rain.Tick(in input, player, in boss, arena,
+                mobility, difficulty).Accepted);
+        }
+
         private static void BossMonitoringDoesNotOwnControls()
         {
             var controller = new EncounterController(3);

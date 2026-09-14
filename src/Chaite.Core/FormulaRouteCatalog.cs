@@ -14,6 +14,14 @@ namespace Chaite.Core
         public static bool IsSupportedBoss(int bossType) =>
             bossType == 370 || bossType == 636;
 
+        public static bool IsTrustyChillet(FormulaRoute route) =>
+            route == FormulaRoute.FishronTrustyChillet ||
+            route == FormulaRoute.FishronTrustyChilletIgnis;
+
+        public static int TrustyChilletMountType(FormulaRoute route) =>
+            route == FormulaRoute.FishronTrustyChillet ? 64 :
+            route == FormulaRoute.FishronTrustyChilletIgnis ? 65 : -1;
+
         public static bool BelongsToBoss(FormulaRoute route, int bossType)
         {
             switch (route)
@@ -33,8 +41,8 @@ namespace Chaite.Core
         }
 
         public static FormulaRoute Select(int bossType, int wingItem,
-            int dashItem, bool crystalAssassinSet, int mountType,
-            bool raining)
+            int dashItem, bool crystalAssassinSet, bool frogLeg,
+            int mountType, bool raining)
         {
             bool dash = dashItem == 3097 || dashItem == 984 ||
                 crystalAssassinSet;
@@ -44,17 +52,28 @@ namespace Chaite.Core
                 if (mountType == 64) return FormulaRoute.FishronTrustyChillet;
                 if (mountType == 65) return FormulaRoute.FishronTrustyChilletIgnis;
                 if (mountType >= 0) return FormulaRoute.None;
-                if (dash && wingItem == 761) return FormulaRoute.FishronFairyWingsDash;
-                if (dash && (wingItem == 2609 || wingItem == 492)) return FormulaRoute.FishronStrongWingsDash;
+                if (dash && frogLeg && wingItem == 761)
+                    return FormulaRoute.FishronFairyWingsDash;
+                if (dash && frogLeg && IsStrongWingItem(wingItem))
+                    return FormulaRoute.FishronStrongWingsDash;
             }
             else if (bossType == 636)
             {
                 if (mountType == 23) return FormulaRoute.EmpressBroom;
                 if (mountType == 12 && raining) return FormulaRoute.EmpressRainFishron;
                 if (mountType >= 0) return FormulaRoute.None;
-                if (dash && wingItem == 2609) return FormulaRoute.EmpressStrongWingsDash;
+                if (dash && frogLeg && IsStrongWingItem(wingItem))
+                    return FormulaRoute.EmpressStrongWingsDash;
             }
             return FormulaRoute.None;
+        }
+
+        public static bool IsStrongWingItem(int type)
+        {
+            return type == 2609 || type == 492 || type == 493 ||
+                type == 2280 || type == 3468 || type == 3469 ||
+                type == 3470 || type == 3471 || type == 3883 ||
+                type == 4823;
         }
     }
 }

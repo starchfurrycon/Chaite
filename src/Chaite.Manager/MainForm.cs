@@ -199,8 +199,11 @@ namespace Chaite.Manager
             right.Controls.Add(UiTheme.Section("03", "战斗准备", "生产白名单仅猪鲨与昼/夜光女；其他 Boss 一律拒绝。"));
             right.Controls.Add(GuideLine("猪鲨召唤", "开启监视后，自行用松露虫在海洋钓鱼；拆特不会抛竿或消耗鱼饵。"));
             right.Controls.Add(GuideLine("光女召唤", "开启监视后，自行释放并击杀七彩草蛉；非神圣区也可召唤，需尽快击杀草蛉。"));
-            right.Controls.Add(GuideLine("公式重做中", "猪鲨：翅膀＋冲刺、史莱姆女士、可靠旋鼬。光女：强翼＋冲刺、扫帚、雨天虾松露。各路线尚待实战验收。"));
-            right.Controls.Add(GuideLine("拆特的原则", "配装不对：从来没试过哦。其他波斯：超囊的对我来说。F9 随时下班。"));
+            right.Controls.Add(GuideLine("已审核猪鲨路线", "蛙腿＋仙灵翼/强翼＋克盾／忍装／水晶刺客冲刺；史莱姆女士鞍；可靠疾旋鼬／桃旋鼬。"));
+            right.Controls.Add(GuideLine("已审核光女路线", "蛙腿＋猪鲨翼/同级强翼＋冲刺；女巫扫帚；原生雨天限定虾松露。"));
+            right.Controls.Add(GuideLine("战前准入", "仅 Boss 未出现时 F8 可开启监视；战斗中 F8 拒绝。配装不符会播放“从来没试过哦”，其他 Boss 播放“超囊的对我来说”。"));
+            right.Controls.Add(GuideLine("验收状态", "公式脚本已接入，但当前隔离实战仍有真实失败，未达到可宣称支持的标准。"));
+            right.Controls.Add(GuideLine("拆特的原则", "EZfic 只信固定表：不搜路、不评分、不中途换装。F9 立即归还操作，MANBA OUT。"));
             strategy.Controls.Add(right);
             grid.Controls.Add(strategy, 1, 0);
             return grid;

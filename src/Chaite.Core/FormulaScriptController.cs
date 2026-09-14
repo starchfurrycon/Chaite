@@ -18,6 +18,7 @@ namespace Chaite.Core
         public int Vertical;
         public bool Jump;
         public bool Dash;
+        public bool ToggleMount;
         public bool Fire;
         public string Phase;
     }
@@ -110,20 +111,46 @@ namespace Chaite.Core
             switch (input.NativeState)
             {
                 case 8: case 9:
-                    output.Horizontal = input.PlayerRightOfBoss ? -1 : 1;
-                    output.Vertical = input.PlayerBelowBoss ? 1 : -1;
+                    output.Horizontal = 0;
+                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
                     output.Dash = input.Route == FormulaRoute.EmpressStrongWingsDash;
-                    output.Jump = true;
+                    output.Jump = output.Vertical < 0;
                     break;
                 case 6:
                     output.Horizontal = 0;
                     output.Vertical = input.PlayerBelowBoss ? 1 : -1;
-                    output.Jump = true;
+                    output.Jump = output.Vertical < 0;
                     break;
                 default:
-                    output.Horizontal = input.PlayerRightOfBoss ? 1 : -1;
-                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
-                    output.Jump = true;
+                    EmpressQuadrant(in input, 1, out var horizontal,
+                        out var vertical);
+                    output.Horizontal = horizontal;
+                    output.Vertical = vertical;
+                    output.Jump = vertical < 0;
+                    break;
+            }
+        }
+
+        private static void EmpressQuadrant(in FormulaScriptInput input,
+            int loop, out int horizontal, out int vertical)
+        {
+            switch ((input.NativeTimer / 16) & 3)
+            {
+                case 1:
+                    horizontal = -loop;
+                    vertical = loop;
+                    break;
+                case 2:
+                    horizontal = -loop;
+                    vertical = -loop;
+                    break;
+                case 3:
+                    horizontal = loop;
+                    vertical = -loop;
+                    break;
+                default:
+                    horizontal = loop;
+                    vertical = loop;
                     break;
             }
         }

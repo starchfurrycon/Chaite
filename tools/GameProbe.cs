@@ -1618,8 +1618,11 @@ public static class ChaiteGameProbe
                 // equivalent) plus a reliable dash/evade source; the generic
                 // early-Hardmode fixture's Demon Wings alone is insufficient.
                 player.armor[4].SetDefaults(ItemID.FairyWings);
-                player.armor[8].SetDefaults(ItemID.EoCShield);
-                scenario.Equipment="Fishron formula fixture: Fairy Wings+Shield of Cthulhu";
+                player.armor[6].SetDefaults(ItemID.FrogLeg);
+                player.armor[7].SetDefaults(ItemID.EoCShield);
+                if(difficultyCode>0)
+                    player.armor[8].SetDefaults(ItemID.RangerEmblem);
+                scenario.Equipment="Fishron formula fixture: Fairy Wings+Frog Leg+Shield of Cthulhu";
             }
         }
         else if(scenario.EquipmentTier=="post-plantera")
@@ -1650,7 +1653,8 @@ public static class ChaiteGameProbe
             if (IsMonitorFixture && (scenario.Id == "empress-night" || scenario.Id == "empress-day"))
             {
                 player.armor[4].SetDefaults(ItemID.FishronWings);
-                scenario.Equipment="Empress monitor fixture: shroomite+lightning+Fishron Wings+Shield of Cthulhu+chain gun+ichor bullets";
+                player.armor[5].SetDefaults(ItemID.FrogLeg);
+                scenario.Equipment="Empress monitor fixture: shroomite+lightning+Fishron Wings+Frog Leg+Shield of Cthulhu+chain gun+ichor bullets";
             }
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")

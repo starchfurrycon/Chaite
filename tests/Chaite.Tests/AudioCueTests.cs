@@ -16,6 +16,7 @@ namespace Chaite.Tests
         private static void RunAudioCueRegressions()
         {
             Run(nameof(FormulaRoutesKeepBossAndWeatherBoundaries), FormulaRoutesKeepBossAndWeatherBoundaries);
+            Run(nameof(FormulaMobilityContractReadsFrogLegDashAndRain), FormulaMobilityContractReadsFrogLegDashAndRain);
             Run(nameof(FormulaScriptIsDeterministic), FormulaScriptIsDeterministic);
             Run(nameof(FormulaScriptReadsBossSpecificClocks), FormulaScriptReadsBossSpecificClocks);
             Run(nameof(UnsupportedBossCueRemainsDistinct), UnsupportedBossCueRemainsDistinct);
@@ -40,19 +41,71 @@ namespace Chaite.Tests
 
         private static void FormulaRoutesKeepBossAndWeatherBoundaries()
         {
-            Equal(FormulaRoute.FishronFairyWingsDash, FormulaRouteCatalog.Select(370, 761, 3097, false, -1, false));
-            Equal(FormulaRoute.FishronStrongWingsDash, FormulaRouteCatalog.Select(370, 2609, 984, false, -1, false));
-            Equal(FormulaRoute.EmpressStrongWingsDash, FormulaRouteCatalog.Select(636, 2609, 0, true, -1, false));
-            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 761, 3097, false, -1, false));
-            Equal(FormulaRoute.FishronQueenSlime, FormulaRouteCatalog.Select(370, 0, 0, false, 50, false));
-            Equal(FormulaRoute.FishronTrustyChillet, FormulaRouteCatalog.Select(370, 0, 0, false, 64, false));
-            Equal(FormulaRoute.FishronTrustyChilletIgnis, FormulaRouteCatalog.Select(370, 0, 0, false, 65, false));
-            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, 62, false));
-            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, 63, false));
-            Equal(FormulaRoute.EmpressBroom, FormulaRouteCatalog.Select(636, 0, 0, false, 23, false));
-            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 0, 0, false, 12, false));
-            Equal(FormulaRoute.EmpressRainFishron, FormulaRouteCatalog.Select(636, 0, 0, false, 12, true));
-            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(4, 2609, 3097, false, -1, true));
+            Equal(FormulaRoute.FishronFairyWingsDash, FormulaRouteCatalog.Select(370, 761, 3097, false, true, -1, false));
+            Equal(FormulaRoute.FishronStrongWingsDash, FormulaRouteCatalog.Select(370, 2609, 984, false, true, -1, false));
+            Equal(FormulaRoute.EmpressStrongWingsDash, FormulaRouteCatalog.Select(636, 2609, 0, true, true, -1, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 761, 3097, false, true, -1, false));
+            Equal(FormulaRoute.FishronQueenSlime, FormulaRouteCatalog.Select(370, 0, 0, false, false, 50, false));
+            Equal(FormulaRoute.FishronTrustyChillet, FormulaRouteCatalog.Select(370, 0, 0, false, false, 64, false));
+            Equal(FormulaRoute.FishronTrustyChilletIgnis, FormulaRouteCatalog.Select(370, 0, 0, false, false, 65, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, false, 62, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(370, 0, 0, false, false, 63, false));
+            Equal(FormulaRoute.EmpressBroom, FormulaRouteCatalog.Select(636, 0, 0, false, false, 23, false));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(636, 0, 0, false, false, 12, false));
+            Equal(FormulaRoute.EmpressRainFishron, FormulaRouteCatalog.Select(636, 0, 0, false, false, 12, true));
+            Equal(FormulaRoute.None, FormulaRouteCatalog.Select(4, 2609, 3097, false, true, -1, true));
+        }
+
+        private static void FormulaMobilityContractReadsFrogLegDashAndRain()
+        {
+            var fishron = CombatScenario(370);
+            fishron.Player.FunctionalEquipmentIdentityKnown = true;
+            fishron.Player.WingAccessoryItemType = 761;
+            fishron.Mobility.FormulaAccessoryScanKnown = true;
+            fishron.Mobility.FrogLegAccessoryKnown = true;
+            fishron.Mobility.FrogLegAccessoryPresent = true;
+            var dash = fishron.Mobility.EyeShieldDash;
+            dash.EquipmentIdentity =
+                DashEquipmentIdentity.ShieldOfCthulhuItem3097;
+            fishron.Mobility.EyeShieldDash = dash;
+            FormulaRoute route;
+            string reason;
+            True(FormulaMobilityContract.TrySelectRoute(fishron, 370,
+                out route, out reason), reason);
+            Equal(FormulaRoute.FishronFairyWingsDash, route);
+
+            fishron.Player.WingAccessoryItemType = 2609;
+            dash.EquipmentIdentity =
+                DashEquipmentIdentity.MasterNinjaGearItem984;
+            fishron.Mobility.EyeShieldDash = dash;
+            True(FormulaMobilityContract.TrySelectRoute(fishron, 370,
+                out route, out reason), reason);
+            Equal(FormulaRoute.FishronStrongWingsDash, route);
+
+            var empress = CombatScenario(636);
+            empress.Player.FunctionalEquipmentIdentityKnown = true;
+            empress.Player.WingAccessoryItemType = 2609;
+            empress.Mobility.FormulaAccessoryScanKnown = true;
+            empress.Mobility.FrogLegAccessoryKnown = true;
+            empress.Mobility.FrogLegAccessoryPresent = true;
+            dash.EquipmentIdentity =
+                DashEquipmentIdentity.CrystalAssassinArmorSet;
+            empress.Mobility.EyeShieldDash = dash;
+            True(FormulaMobilityContract.TrySelectRoute(empress, 636,
+                out route, out reason), reason);
+            Equal(FormulaRoute.EmpressStrongWingsDash, route);
+
+            empress.Player.WingAccessoryItemType = 0;
+            empress.Mobility.SelectedMountIdentityKnown = true;
+            empress.Mobility.SelectedMountType = 12;
+            empress.Difficulty.RainKnown = true;
+            empress.Difficulty.Rain = true;
+            True(FormulaMobilityContract.TrySelectRoute(empress, 636,
+                out route, out reason), reason);
+            Equal(FormulaRoute.EmpressRainFishron, route);
+            empress.Difficulty.Rain = false;
+            False(FormulaMobilityContract.TrySelectRoute(empress, 636,
+                out route, out reason));
         }
 
         private static void FormulaScriptIsDeterministic()

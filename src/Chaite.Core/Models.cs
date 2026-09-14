@@ -346,6 +346,8 @@ namespace Chaite.Core
         public bool DashRightProbeBlocked;
         public bool FormulaAccessoryScanKnown;
         public int UnexpectedFormulaMobilityItemType;
+        public bool FrogLegAccessoryKnown;
+        public bool FrogLegAccessoryPresent;
         // Capability is independent of remaining charge: no wings/rocket boots
         // and genuinely exhausted flight both have a zero resource fraction.
         public bool HasFiniteFlightResource;
@@ -437,6 +439,8 @@ namespace Chaite.Core
         public bool NoTraps;
         public bool Skyblock;
         public bool DayTime;
+        public bool RainKnown;
+        public bool Rain;
     }
 
     /// <summary>

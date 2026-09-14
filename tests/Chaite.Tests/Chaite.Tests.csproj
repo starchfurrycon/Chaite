@@ -11,6 +11,8 @@
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
     <Optimize Condition=" '$(Configuration)' == 'Release' ">true</Optimize>
+    <DefineConstants Condition=" '$(Configuration)' == 'Debug' ">DEBUG;TRACE</DefineConstants>
+    <DefineConstants Condition=" '$(Configuration)' == 'Release' ">TRACE</DefineConstants>
     <PlatformTarget>x86</PlatformTarget>
     <RuntimeIdentifiers>win-x86</RuntimeIdentifiers>
     <OutputPath>bin\$(Configuration)\net48\</OutputPath>

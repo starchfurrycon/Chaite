@@ -43,6 +43,8 @@ namespace Chaite.Tests
             Run(nameof(WitchBroomCapabilityRemainsNotProductionCertified),
                 WitchBroomCapabilityRemainsNotProductionCertified);
             Run(nameof(LateOptionalEdgeUsesOnlyCertifiedFallback), LateOptionalEdgeUsesOnlyCertifiedFallback);
+            Run(nameof(TrustyChilletDashIsRevalidatedAfterNativeInputCopy),
+                TrustyChilletDashIsRevalidatedAfterNativeInputCopy);
             Run(nameof(LateFeatherFallExpiryNeutralizesEveryInput), LateFeatherFallExpiryNeutralizesEveryInput);
             Run(nameof(DashCandidateRequiresBrakingRoomAndSafeReturn), DashCandidateRequiresBrakingRoomAndSafeReturn);
             Run(nameof(GravityReturnUsesUpForBothDirections), GravityReturnUsesUpForBothDirections);
@@ -1871,6 +1873,37 @@ namespace Chaite.Tests
             AssertEveryPendingControl(player, false);
         }
 
+        private static void TrustyChilletDashIsRevalidatedAfterNativeInputCopy()
+        {
+            var player = new PendingMobilityPlayer
+            {
+                mount = new PendingMobilityMount { Active = true, Type = 64 },
+                releaseDash = true,
+                dashType = 6,
+                dashDelay = 0,
+                controlDash = true
+            };
+            var facade = PendingMobilityFacade();
+            SetFacadeField(facade, "_validatePendingFormulaMountDash", true);
+            SetFacadeField(facade, "_pendingFormulaMountType", 64);
+            var validate = facade.GetType().GetMethod(
+                "ValidatePendingMobility", BindingFlags.Instance |
+                BindingFlags.Public);
+            True(validate != null);
+            Equal(null, validate.Invoke(facade, new object[] { player }));
+            True(player.controlDash);
+
+            SetEveryPendingControl(player, true);
+            player.mount.Type = 65;
+            SetFacadeField(facade, "_validatePendingFormulaMountDash", true);
+            SetFacadeField(facade, "_pendingFormulaMountType", 64);
+            var rejection = validate.Invoke(facade,
+                new object[] { player }) as string;
+            True(rejection != null && rejection.Contains(
+                "trusty-chillet-native-dash-state-changed"));
+            AssertEveryPendingControl(player, false);
+        }
+
         private static void LateFeatherFallExpiryNeutralizesEveryInput()
         {
             // buffTime 0 can leave the prior frame's aggregate slowFall=true at
@@ -2126,8 +2159,19 @@ namespace Chaite.Tests
             public bool controlUseItem, controlUseTile, controlThrow;
             public bool controlQuickHeal, controlQuickMana;
             public bool slowFall;
+            public bool releaseDash;
+            public bool cced, pulley, tongued;
+            public int dashType, dashDelay, grapCount;
+            public float gravDir = 1f;
+            public PendingMobilityMount mount;
             public int[] buffType = new int[22];
             public int[] buffTime = new int[22];
+        }
+
+        private sealed class PendingMobilityMount
+        {
+            public bool Active;
+            public int Type;
         }
 
         private static object PendingMobilityFacade()
@@ -2160,9 +2204,14 @@ namespace Chaite.Tests
             SetFacadeField(facade, "_controlReaders", readers);
             SetFacadeField(facade, "_capturedControls", captured);
             SetFacadeField(facade, "_playerMount",
-                new Func<object, object>(player => null));
+                new Func<object, object>(player =>
+                    ((PendingMobilityPlayer)player).mount));
             SetFacadeField(facade, "_mountActive",
-                new Func<object, bool>(mount => false));
+                new Func<object, bool>(mount =>
+                    mount != null && ((PendingMobilityMount)mount).Active));
+            SetFacadeField(facade, "_mountTypeId",
+                new Func<object, int>(mount =>
+                    ((PendingMobilityMount)mount).Type));
             SetFacadeField(facade, "_playerBuffType",
                 new Func<object, int[]>(player =>
                     ((PendingMobilityPlayer)player).buffType));
@@ -2173,15 +2222,35 @@ namespace Chaite.Tests
                 new Func<object, bool>(player =>
                     ((PendingMobilityPlayer)player).slowFall));
             SetFacadeField(facade, "_playerGrapCount",
-                new Func<object, int>(player => 0));
+                new Func<object, int>(player =>
+                    ((PendingMobilityPlayer)player).grapCount));
             SetFacadeField(facade, "_playerGravDir",
-                new Func<object, float>(player => 1f));
+                new Func<object, float>(player =>
+                    ((PendingMobilityPlayer)player).gravDir));
             SetFacadeField(facade, "_playerGravControl",
                 new Func<object, bool>(player => false));
             SetFacadeField(facade, "_playerGravControl2",
                 new Func<object, bool>(player => false));
             SetFacadeField(facade, "_playerForcedGravity",
                 new Func<object, int>(player => 0));
+            SetFacadeField(facade, "_playerDashType",
+                new Func<object, int>(player =>
+                    ((PendingMobilityPlayer)player).dashType));
+            SetFacadeField(facade, "_playerDashDelay",
+                new Func<object, int>(player =>
+                    ((PendingMobilityPlayer)player).dashDelay));
+            SetFacadeField(facade, "_releaseDash",
+                new Func<object, bool>(player =>
+                    ((PendingMobilityPlayer)player).releaseDash));
+            SetFacadeField(facade, "_playerCCed",
+                new Func<object, bool>(player =>
+                    ((PendingMobilityPlayer)player).cced));
+            SetFacadeField(facade, "_playerPulley",
+                new Func<object, bool>(player =>
+                    ((PendingMobilityPlayer)player).pulley));
+            SetFacadeField(facade, "_playerTongued",
+                new Func<object, bool>(player =>
+                    ((PendingMobilityPlayer)player).tongued));
             return facade;
         }
 

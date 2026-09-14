@@ -135,6 +135,14 @@ namespace Chaite.Core
         private float _latchedMinimumOutputDps;
         private FormulaRoute _formulaRoute;
         private readonly FishronWingScript _fishronWingScript = new FishronWingScript();
+        private readonly FishronChilletScript _fishronChilletScript =
+            new FishronChilletScript();
+        private readonly FishronQueenSlimeScript _fishronQueenSlimeScript =
+            new FishronQueenSlimeScript();
+        private readonly EmpressFlightScript _empressBroomScript =
+            new EmpressFlightScript();
+        private readonly EmpressFlightScript _empressRainFishronScript =
+            new EmpressFlightScript();
         private BossLocomotionBaseline _activeLocomotion =
             BossLocomotionBaseline.Unspecified;
         private bool _restoringFlight;
@@ -225,15 +233,24 @@ namespace Chaite.Core
             }
             if (!FormulaMobilityContract.TryValidate(snapshot,
                     startPlan.ExpectedBossType, out reason)) return false;
+            var dashIdentity =
+                snapshot.Mobility.EyeShieldDash.EquipmentIdentity;
+            var dashItem = dashIdentity ==
+                DashEquipmentIdentity.ShieldOfCthulhuItem3097 ? 3097 :
+                dashIdentity == DashEquipmentIdentity.MasterNinjaGearItem984
+                    ? FormulaMobilityContract.MasterNinjaGearItem : 0;
             var selectedFormulaRoute = FormulaRouteCatalog.Select(
                 startPlan.ExpectedBossType,
-                snapshot.Player.WingAccessoryItemType,
-                snapshot.Mobility.EyeShieldDash.EquipmentIdentity ==
-                    DashEquipmentIdentity.ShieldOfCthulhuItem3097 ? 3097 : 0,
-                false,
+                snapshot.Player.WingAccessoryItemType, dashItem,
+                dashIdentity ==
+                    DashEquipmentIdentity.CrystalAssassinArmorSet,
+                snapshot.Mobility.FrogLegAccessoryKnown &&
+                    snapshot.Mobility.FrogLegAccessoryPresent,
                 snapshot.Mobility.SelectedMountIdentityKnown ?
                     snapshot.Mobility.SelectedMountType : -1,
-                false);
+                snapshot.Difficulty != null &&
+                    snapshot.Difficulty.RainKnown &&
+                    snapshot.Difficulty.Rain);
             if (selectedFormulaRoute == FormulaRoute.None)
             {
                 reason = FormulaRouteCatalog.Refusal;
@@ -248,16 +265,10 @@ namespace Chaite.Core
         public static FormulaRoute SelectMonitorRoute(CombatSnapshot snapshot,
             int bossType)
         {
+            FormulaRoute route;
             string reason;
-            if (!FormulaMobilityContract.TryValidate(snapshot, bossType, out reason))
-                return FormulaRoute.None;
-            return FormulaRouteCatalog.Select(bossType,
-                snapshot.Player.WingAccessoryItemType,
-                snapshot.Mobility.EyeShieldDash.EquipmentIdentity ==
-                    DashEquipmentIdentity.ShieldOfCthulhuItem3097 ? 3097 : 0,
-                false,
-                snapshot.Mobility.SelectedMountIdentityKnown ?
-                    snapshot.Mobility.SelectedMountType : -1, false);
+            return FormulaMobilityContract.TrySelectRoute(snapshot, bossType,
+                out route, out reason) ? route : FormulaRoute.None;
         }
 
         public bool PrepareForMonitoredFormulaEncounter(CombatSnapshot snapshot,
@@ -745,19 +756,39 @@ namespace Chaite.Core
                 if (FormulaRouteCatalog.BelongsToBoss(_formulaRoute, candidate.Type))
                 { target = candidate; found = true; break; }
             if (!found) return plan;
-            if (SelectMonitorRoute(snapshot, target.Type) != _formulaRoute)
+            string reason;
+            if (!FormulaMobilityContract.TryValidateLockedRoute(snapshot,
+                    target.Type, _formulaRoute, out reason))
                 return UnsupportedMobilityRoutePlan(plan, "已锁定的公式机动配置发生变化");
             FormulaScriptInput input;
             if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
-            var script = target.Type == 370 &&
-                (_formulaRoute == FormulaRoute.FishronFairyWingsDash || _formulaRoute == FormulaRoute.FishronStrongWingsDash)
-                ? _fishronWingScript.Tick(in input, snapshot.Player, in target, snapshot.Arena,
-                    snapshot.Mobility.CanDash && snapshot.Mobility.DashReady)
-                : FormulaScriptController.Tick(in input);
+            FormulaScriptOutput script;
+            if (_formulaRoute == FormulaRoute.FishronFairyWingsDash ||
+                _formulaRoute == FormulaRoute.FishronStrongWingsDash)
+                script = _fishronWingScript.Tick(in input, snapshot.Player,
+                    in target, snapshot.Arena,
+                    snapshot.Mobility.CanDash && snapshot.Mobility.DashReady);
+            else if (_formulaRoute == FormulaRoute.FishronTrustyChillet ||
+                     _formulaRoute == FormulaRoute.FishronTrustyChilletIgnis)
+                script = _fishronChilletScript.Tick(in input, snapshot.Player,
+                    in target, snapshot.Arena, snapshot.Mobility);
+            else if (_formulaRoute == FormulaRoute.FishronQueenSlime)
+                script = _fishronQueenSlimeScript.Tick(in input,
+                    snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility);
+            else if (_formulaRoute == FormulaRoute.EmpressBroom)
+                script = _empressBroomScript.Tick(in input,
+                    snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility, snapshot.Difficulty);
+            else if (_formulaRoute == FormulaRoute.EmpressRainFishron)
+                script = _empressRainFishronScript.Tick(in input,
+                    snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility, snapshot.Difficulty);
+            else
+                script = FormulaScriptController.Tick(in input);
             if (!script.Accepted)
                 return UnsupportedMobilityRoutePlan(plan, "未识别的公式 Boss 阶段");
-            string reason;
             if (snapshot.Weapon.NativeProfileRequired && !EnsureLiveOutput(snapshot, 0f, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
             StampOutputRoute(ref plan);
@@ -771,9 +802,12 @@ namespace Chaite.Core
             plan.JumpAction = plan.Jump ? JumpAction.Default : JumpAction.Release;
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
+            plan.ToggleMount = script.ToggleMount;
             int hazardVertical;
             int hazardHorizontal;
-            if (TryFixedFishronHazardEscape(snapshot, out hazardHorizontal,
+            if ((_formulaRoute == FormulaRoute.FishronFairyWingsDash ||
+                 _formulaRoute == FormulaRoute.FishronStrongWingsDash) &&
+                TryFixedFishronHazardEscape(snapshot, out hazardHorizontal,
                     out hazardVertical))
             {
                 plan.Horizontal = hazardHorizontal;
@@ -1010,6 +1044,10 @@ namespace Chaite.Core
             _latchedMinimumOutputDps = 0f;
             _formulaRoute = FormulaRoute.None;
             _fishronWingScript.Reset();
+            _fishronChilletScript.Reset();
+            _fishronQueenSlimeScript.Reset();
+            _empressBroomScript.Reset();
+            _empressRainFishronScript.Reset();
             _activeLocomotion = BossLocomotionBaseline.Unspecified;
             _relevantThreats.Clear();
             _relevantBeams.Clear();
