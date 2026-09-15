@@ -342,7 +342,14 @@ namespace Chaite.Tests
             scene.Mobility.InfernoPotionStock = 3;
             True(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
                 FormulaRoute.FishronFairyWingsDash, out reason), reason);
+            // The stock is an admission condition, not a standing one: the
+            // circuit drinks from it, so a count that has fallen mid-fight must
+            // not cancel the run it was provisioned for.
             scene.Mobility.InfernoPotionStock = 1;
+            True(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
+                FormulaRoute.FishronFairyWingsDash, out reason), reason);
+            // Readability is still re-asserted every tick.
+            scene.Mobility.InfernoPotionStockKnown = false;
             False(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
                 FormulaRoute.FishronFairyWingsDash, out reason));
         }

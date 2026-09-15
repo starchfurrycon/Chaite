@@ -833,6 +833,17 @@ namespace Chaite.Core
                 return UnsupportedOutputRoutePlan(plan, reason);
             StampOutputRoute(ref plan);
             plan.FormulaRoute = _formulaRoute;
+            if (target.Type == SupportedBossPolicy.DukeFishronType)
+            {
+                // Reviewed bubble clearance is a provisioning action, not a
+                // route decision: the ring is refreshed before it lapses so
+                // there is never a window in which a homing bubble can arrive
+                // with nothing to stop it. Unknown buff state refreshes rather
+                // than assumes.
+                plan.QuickBuff = FishronThreatCatalog.NeedsInfernoRefresh(
+                    snapshot.Mobility.InfernoStateKnown,
+                    snapshot.Mobility.InfernoTicksLeft);
+            }
             plan.StrategyId = target.Type == 370 ? "formula-fishron" : "formula-empress";
             plan.PhaseId = script.Phase;
             plan.TacticalMode = TacticalMode.StablePattern;

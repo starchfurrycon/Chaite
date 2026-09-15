@@ -1796,6 +1796,14 @@ public static class ChaiteGameProbe
             player.inventory[10].SetDefaults(healingType);
             player.inventory[10].stack=20;
         }
+        if(IsMonitorFixture && scenario.Id=="duke-fishron")
+        {
+            // Reviewed bubble clearance for the formula fixture: the stock the
+            // admission requires, so the run can refresh the ring in flight.
+            player.inventory[11].SetDefaults(ItemID.InfernoPotion);
+            player.inventory[11].stack=Chaite.Core.FishronThreatCatalog.RequiredInfernoPotionStock;
+            scenario.Equipment+="; inferno-potion x"+Chaite.Core.FishronThreatCatalog.RequiredInfernoPotionStock;
+        }
         if(scenario.EquipmentTier=="early-hardmode" ||
            scenario.EquipmentTier=="post-plantera" ||
            scenario.EquipmentTier=="pre-moon-lord")

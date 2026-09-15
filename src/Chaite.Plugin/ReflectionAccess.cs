@@ -35,6 +35,27 @@ namespace Chaite.Plugin
                 Expression.Convert(value, field.FieldType)), source, value).Compile();
         }
 
+        /// <summary>An instance method with no arguments, called on the boxed
+        /// receiver. Used where the pinned build exposes the behaviour as a
+        /// method rather than as a Player.control field, such as the vanilla
+        /// quick buff, which is an input trigger with no control flag.</summary>
+        public static Action<object> Method(Type type, string name)
+        {
+            for (var current = type; current != null; current = current.BaseType)
+            {
+                var method = current.GetMethod(name,
+                    BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                    null, Type.EmptyTypes, null);
+                if (method == null) continue;
+                var source = Expression.Parameter(typeof(object), "source");
+                var call = Expression.Call(
+                    Expression.Convert(source, method.DeclaringType), method);
+                return Expression.Lambda<Action<object>>(call, source).Compile();
+            }
+            throw new MissingMethodException(type.FullName, name);
+        }
+
         public static Action<T> StaticSetter<T>(Type type, string name)
         {
             var field = Field(type, name);

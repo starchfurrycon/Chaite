@@ -25,10 +25,20 @@ namespace Chaite.Core
         }
 
         public static bool TrySelectRoute(CombatSnapshot s, int boss,
-            out FormulaRoute route, out string reason)
+            out FormulaRoute route, out string reason) =>
+            TrySelectRoute(s, boss, true, out route, out reason);
+
+        /// <summary>admission is false when the route identity is merely being
+        /// re-derived for an already locked route: the stock gate has already
+        /// been satisfied once, and the circuit drinks from that stock, so
+        /// applying it again would cancel the run it provisioned.</summary>
+        private static bool TrySelectRoute(CombatSnapshot s, int boss,
+            bool admission, out FormulaRoute route, out string reason)
         {
             route = FormulaRoute.None;
             if (!TryValidateCommon(s, boss, out reason)) return false;
+            if (admission && !TryValidateBubbleClearance(s, boss, out reason))
+                return false;
             var mount = -1;
             if (s.Mobility.MountActive)
             {
@@ -67,6 +77,13 @@ namespace Chaite.Core
             if (!TryValidateCommon(s, boss, out reason) ||
                 !FormulaRouteCatalog.BelongsToBoss(route, boss))
                 return false;
+            // Readability, unlike the count, is re-asserted every tick: a
+            // facade that stops reporting the stock cannot be trusted to keep
+            // the ring up, so the route fails closed even though its stock was
+            // sufficient at admission.
+            if (boss == SupportedBossPolicy.DukeFishronType &&
+                !s.Mobility.InfernoPotionStockKnown)
+            { reason = "无法读取地狱药水库存"; return false; }
             var expectedMount = ExpectedMount(route);
             if (expectedMount >= 0)
             {
@@ -89,10 +106,34 @@ namespace Chaite.Core
             if (s.Mobility.MountActive)
             { reason = "翼类公式运行时出现坐骑状态"; return false; }
             FormulaRoute selected;
-            if (!TrySelectRoute(s, boss, out selected, out reason) ||
+            if (!TrySelectRoute(s, boss, false, out selected, out reason) ||
                 selected != route)
             { reason = "战前锁定的公式机动配置发生变化"; return false; }
             reason = null;
+            return true;
+        }
+
+        /// <summary>Reviewed bubble clearance. The Detonating Bubbles home hard
+        /// enough that movement cannot clear them, so without the ring the hit
+        /// count is decided by luck rather than by the circuit and no wing
+        /// route can reach zero hits. This is checked when a route is chosen,
+        /// which is the only point at which the carried stock is still whole.
+        /// </summary>
+        private static bool TryValidateBubbleClearance(CombatSnapshot s,
+            int boss, out string reason)
+        {
+            reason = null;
+            if (boss != SupportedBossPolicy.DukeFishronType) return true;
+            if (!s.Mobility.InfernoPotionStockKnown)
+            { reason = "无法读取地狱药水库存"; return false; }
+            if (!FishronThreatCatalog.HasSufficientInfernoStock(
+                    s.Mobility.InfernoPotionStock))
+            {
+                reason = "猪鲨公式需要携带至少 " +
+                    FishronThreatCatalog.RequiredInfernoPotionStock +
+                    " 瓶地狱药水用于清泡";
+                return false;
+            }
             return true;
         }
 
@@ -109,21 +150,6 @@ namespace Chaite.Core
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.Grappling || s.Mobility.GravityInverted)
             { reason = "检测到公式外机动状态"; return false; }
-            if (boss == SupportedBossPolicy.DukeFishronType)
-            {
-                // Reviewed bubble clearance. The Detonating Bubbles home hard
-                // enough that movement cannot clear them, so without the ring
-                // the hit count is decided by luck rather than by the circuit
-                // and no wing route can reach zero hits. Admission is the
-                // carried stock; the live buff is refreshed from it in flight.
-                if (!s.Mobility.InfernoPotionStockKnown)
-                { reason = "无法读取地狱药水库存"; return false; }
-                if (!FishronThreatCatalog.HasSufficientInfernoStock(
-                        s.Mobility.InfernoPotionStock))
-                { reason = "猪鲨公式需要携带至少 " +
-                    FishronThreatCatalog.RequiredInfernoPotionStock +
-                    " 瓶地狱药水用于清泡"; return false; }
-            }
             reason = null;
             return true;
         }

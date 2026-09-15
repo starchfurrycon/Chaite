@@ -689,6 +689,10 @@ namespace Chaite.Core
         public bool Fire;
         public bool QuickHeal;
         public bool QuickMana;
+        // The vanilla quick-buff is an input trigger rather than a
+        // Player.control flag, so the facade reaches the native entry point
+        // directly. It is raised only to keep the reviewed Inferno ring alive.
+        public bool QuickBuff;
         public bool Dash;
         public bool Hook;
         public bool ToggleMount;

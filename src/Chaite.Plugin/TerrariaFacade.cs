@@ -117,6 +117,8 @@ namespace Chaite.Plugin
         // mana.  Reading its release latch prevents a continuously low-life
         // plan from holding the key down and silently consuming only the
         // first potion of an encounter.
+        private readonly Action<object> _quickBuff;
+        private int _quickBuffCooldown;
         private readonly Func<object, bool> _releaseQuickHeal;
         private readonly Func<object, bool> _releaseQuickMana;
         private readonly Func<object, bool> _releaseJump;
@@ -459,6 +461,7 @@ namespace Chaite.Plugin
             _playerDead = ReflectionAccess.Getter<bool>(playerType, "dead");
             _playerActive = ReflectionAccess.Getter<bool>(playerType, "active");
             _releaseUseItem = ReflectionAccess.Getter<bool>(playerType, "releaseUseItem");
+            _quickBuff = ReflectionAccess.Method(playerType, "QuickBuff");
             _releaseQuickHeal = ReflectionAccess.Getter<bool>(playerType,
                 "releaseQuickHeal");
             _releaseQuickMana = ReflectionAccess.Getter<bool>(playerType,
@@ -3325,6 +3328,16 @@ namespace Chaite.Plugin
             var quickHealPulse = plan.QuickHeal && _config.AutoQuickHeal &&
                 _releaseQuickHeal(player);
             SetControl(player, "controlQuickHeal", quickHealPulse);
+            // The pinned build exposes no controlQuickBuff, so the reviewed
+            // Inferno refresh reaches the native entry point instead. Vanilla
+            // skips potions whose buff is already up, and the cooldown keeps a
+            // low clock from retrying on every frame.
+            if (_quickBuffCooldown > 0) _quickBuffCooldown--;
+            else if (plan.QuickBuff)
+            {
+                _quickBuff?.Invoke(player);
+                _quickBuffCooldown = QuickBuffCooldownTicks;
+            }
             // Health has priority when both resource edges are requested;
             // vanilla cannot reliably consume two quick-use potions in one
             // update and the weapon pulse is already deferred above.
@@ -4781,6 +4794,11 @@ namespace Chaite.Plugin
             public int FrogLegSources;
             public int UnexpectedFormulaMobilityItemType;
         }
+
+        /// <summary>Frames between Inferno refreshes. The buff state is only
+        /// re-read on the planner's next tick, so this bounds how often the
+        /// native entry point is invoked while the clock reads low.</summary>
+        private const int QuickBuffCooldownTicks = 60;
 
         private void SetControl(object player, string name, bool value) => _controls[name](player, value);
         private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
