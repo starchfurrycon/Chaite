@@ -23,8 +23,10 @@ namespace Chaite.Tests
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
             Run(nameof(FishronChilletRejectsWrongMountAndShortRunway), FishronChilletRejectsWrongMountAndShortRunway);
             Run(nameof(FishronChilletLockedRouteAcceptsOnlyItsActiveMount), FishronChilletLockedRouteAcceptsOnlyItsActiveMount);
+            Run(nameof(FormulaAdmissionSeparatesMobilityAndOutputRefusal), FormulaAdmissionSeparatesMobilityAndOutputRefusal);
             Run(nameof(FishronQueenSlimeUsesMountAndFixedRunway), FishronQueenSlimeUsesMountAndFixedRunway);
             Run(nameof(EmpressFlightUsesReviewedMountAndRainGate), EmpressFlightUsesReviewedMountAndRainGate);
+            Run(nameof(EmpressWingUsesOneRepositionDashEdge), EmpressWingUsesOneRepositionDashEdge);
             Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);

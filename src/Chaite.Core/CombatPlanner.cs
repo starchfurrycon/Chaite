@@ -134,8 +134,13 @@ namespace Chaite.Core
         private SummonWhipOutputController _summonWhipOutputController;
         private float _latchedMinimumOutputDps;
         private FormulaRoute _formulaRoute;
-        private readonly FishronWingScript _fishronWingScript = new FishronWingScript();
+        private readonly FishronWingScript _fishronFairyWingScript =
+            new FishronWingScript();
+        private readonly FishronWingScript _fishronStrongWingScript =
+            new FishronWingScript();
         private readonly FishronChilletScript _fishronChilletScript =
+            new FishronChilletScript();
+        private readonly FishronChilletScript _fishronChilletIgnisScript =
             new FishronChilletScript();
         private readonly FishronQueenSlimeScript _fishronQueenSlimeScript =
             new FishronQueenSlimeScript();
@@ -143,6 +148,8 @@ namespace Chaite.Core
             new EmpressFlightScript();
         private readonly EmpressFlightScript _empressRainFishronScript =
             new EmpressFlightScript();
+        private readonly EmpressWingScript _empressWingScript =
+            new EmpressWingScript();
         private BossLocomotionBaseline _activeLocomotion =
             BossLocomotionBaseline.Unspecified;
         private bool _restoringFlight;
@@ -274,6 +281,16 @@ namespace Chaite.Core
         public bool PrepareForMonitoredFormulaEncounter(CombatSnapshot snapshot,
             int bossType, FormulaRoute armedRoute, out string reason)
         {
+            bool ignoredMobilityRefusal;
+            return PrepareForMonitoredFormulaEncounter(snapshot, bossType,
+                armedRoute, out reason, out ignoredMobilityRefusal);
+        }
+
+        public bool PrepareForMonitoredFormulaEncounter(CombatSnapshot snapshot,
+            int bossType, FormulaRoute armedRoute, out string reason,
+            out bool mobilityRefusal)
+        {
+            mobilityRefusal = true;
             if (!SupportedBossPolicy.IsSupportedNativeSnapshot(snapshot, out reason))
                 return false;
             if (armedRoute == FormulaRoute.None ||
@@ -283,6 +300,7 @@ namespace Chaite.Core
                 reason = FormulaRouteCatalog.Refusal;
                 return false;
             }
+            mobilityRefusal = false;
             // A manually summoned Boss needs no bait, critter-kill weapon or
             // summon-plan certificate. Revalidate combat readiness on arrival.
             Reset();
@@ -764,14 +782,20 @@ namespace Chaite.Core
             if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
             FormulaScriptOutput script;
-            if (_formulaRoute == FormulaRoute.FishronFairyWingsDash ||
-                _formulaRoute == FormulaRoute.FishronStrongWingsDash)
-                script = _fishronWingScript.Tick(in input, snapshot.Player,
+            if (_formulaRoute == FormulaRoute.FishronFairyWingsDash)
+                script = _fishronFairyWingScript.Tick(in input,
+                    snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility);
+            else if (_formulaRoute == FormulaRoute.FishronStrongWingsDash)
+                script = _fishronStrongWingScript.Tick(in input, snapshot.Player,
                     in target, snapshot.Arena, snapshot.Mobility);
-            else if (_formulaRoute == FormulaRoute.FishronTrustyChillet ||
-                     _formulaRoute == FormulaRoute.FishronTrustyChilletIgnis)
+            else if (_formulaRoute == FormulaRoute.FishronTrustyChillet)
                 script = _fishronChilletScript.Tick(in input, snapshot.Player,
                     in target, snapshot.Arena, snapshot.Mobility);
+            else if (_formulaRoute == FormulaRoute.FishronTrustyChilletIgnis)
+                script = _fishronChilletIgnisScript.Tick(in input,
+                    snapshot.Player, in target, snapshot.Arena,
+                    snapshot.Mobility);
             else if (_formulaRoute == FormulaRoute.FishronQueenSlime)
                 script = _fishronQueenSlimeScript.Tick(in input,
                     snapshot.Player, in target, snapshot.Arena,
@@ -784,6 +808,9 @@ namespace Chaite.Core
                 script = _empressRainFishronScript.Tick(in input,
                     snapshot.Player, in target, snapshot.Arena,
                     snapshot.Mobility, snapshot.Difficulty);
+            else if (_formulaRoute == FormulaRoute.EmpressStrongWingsDash)
+                script = _empressWingScript.Tick(in input, snapshot.Player,
+                    in target, snapshot.Arena, snapshot.Mobility);
             else
                 script = FormulaScriptController.Tick(in input);
             if (!script.Accepted)
@@ -992,11 +1019,14 @@ namespace Chaite.Core
             _summonWhipOutputController = null;
             _latchedMinimumOutputDps = 0f;
             _formulaRoute = FormulaRoute.None;
-            _fishronWingScript.Reset();
+            _fishronFairyWingScript.Reset();
+            _fishronStrongWingScript.Reset();
             _fishronChilletScript.Reset();
+            _fishronChilletIgnisScript.Reset();
             _fishronQueenSlimeScript.Reset();
             _empressBroomScript.Reset();
             _empressRainFishronScript.Reset();
+            _empressWingScript.Reset();
             _activeLocomotion = BossLocomotionBaseline.Unspecified;
             _relevantThreats.Clear();
             _relevantBeams.Clear();

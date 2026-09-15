@@ -1,0 +1,112 @@
+namespace Chaite.Core
+{
+    /// <summary>
+    /// Fixed Fishron-wing circuit for Empress of Light. AI_120 selects the
+    /// authored branch; the script keeps one loop direction and emits at most
+    /// one horizontal dash edge in an inter-attack reposition window.
+    /// </summary>
+    public sealed class EmpressWingScript
+    {
+        private bool _initialized;
+        private bool _dashIssued;
+        private int _loopDirection;
+        private int _previousState = int.MinValue;
+        private int _previousSequence = int.MinValue;
+
+        public void Reset()
+        {
+            _initialized = false;
+            _dashIssued = false;
+            _previousState = int.MinValue;
+            _previousSequence = int.MinValue;
+        }
+
+        public FormulaScriptOutput Tick(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss,
+            ArenaSnapshot arena, MobilitySnapshot mobility)
+        {
+            var output = new FormulaScriptOutput();
+            if (input.BossType != 636 ||
+                input.Route != FormulaRoute.EmpressStrongWingsDash ||
+                player == null || arena == null || mobility == null ||
+                mobility.MountActive || mobility.Grappling ||
+                mobility.GravityInverted || input.NativeState < 0 ||
+                input.NativeState > 13 || input.NativeState == 3)
+                return output;
+
+            if (!_initialized)
+            {
+                _initialized = true;
+                _loopDirection = arena.ClearanceRight >= arena.ClearanceLeft
+                    ? 1 : -1;
+            }
+
+            var attackEdge = input.NativeState != _previousState ||
+                input.NativeSequence != _previousSequence;
+            if (attackEdge) _dashIssued = false;
+            _previousState = input.NativeState;
+            _previousSequence = input.NativeSequence;
+
+            output.Accepted = true;
+            output.Fire = true;
+            switch (input.NativeState)
+            {
+                case 8:
+                case 9:
+                    output.Horizontal = 0;
+                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                    output.Phase = "empress-wing-dash-perpendicular";
+                    break;
+                case 6:
+                    output.Horizontal = 0;
+                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                    output.Phase = "empress-wing-sun-dance-pivot";
+                    break;
+                default:
+                    OrbitQuadrant(input.NativeTimer, _loopDirection,
+                        out output.Horizontal, out output.Vertical);
+                    output.Phase = "empress-wing-state-" +
+                        input.NativeState;
+                    break;
+            }
+
+            // Horizontal burst is useful before the next authored attack, not
+            // during the horizontal body charge where vertical separation is
+            // the fixed response. The edge is single-shot for this state.
+            if (input.NativeState == 1 && input.NativeTimer <= 8 &&
+                !_dashIssued && mobility.CanDash && mobility.DashReady)
+            {
+                output.Horizontal = boss.Center.X >= player.Center.X ? -1 : 1;
+                output.Dash = true;
+                _dashIssued = true;
+                output.Phase = "empress-wing-reposition-dash-edge";
+            }
+            output.Jump = output.Vertical < 0;
+            return output;
+        }
+
+        private static void OrbitQuadrant(int timer, int loop,
+            out int horizontal, out int vertical)
+        {
+            switch ((timer / 16) & 3)
+            {
+                case 1:
+                    horizontal = -loop;
+                    vertical = loop;
+                    break;
+                case 2:
+                    horizontal = -loop;
+                    vertical = -loop;
+                    break;
+                case 3:
+                    horizontal = loop;
+                    vertical = -loop;
+                    break;
+                default:
+                    horizontal = loop;
+                    vertical = loop;
+                    break;
+            }
+        }
+    }
+}

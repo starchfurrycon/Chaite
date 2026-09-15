@@ -15,7 +15,8 @@ param(
 # Priority/mid-fight plan: {"schema":"chaite-boss-cases/v2","cases":[
 #   {"scenario":"deerclops","phase":"forward-spikes","takeoverTick":360,
 #    "seed":20260910,"difficulty":"expert"}]}
-# Optional case fields: maxTicks (600..24000), wallSeconds (15..900). A staged
+# Optional case fields: formulaRoute (required for monitor), maxTicks
+# (600..24000), wallSeconds (15..900). A staged
 # phase is a disclosed test-only native-field fixture, never an organic phase or
 # a win-rate claim. Unsupported scenario/phase/difficulty tuples fail closed.
 $ErrorActionPreference = 'Stop'
@@ -29,9 +30,9 @@ $scenarioPhases = [ordered]@{
     'skeletron' = @('hover','pre-spin','spin-imminent','spin','spin-pursuit','spin-exit','hand-vertical-imminent','hand-vertical-locking','hand-vertical','hand-horizontal-imminent','hand-horizontal-locking','hand-horizontal')
     'queen-bee' = @('summon','choose','charge-align','charge','charge-brake','bee-wave','move-above','stinger','reacquire')
     'wall-of-flesh' = @('runway','accelerating','low-health','critical','eye-laser')
-    'duke-fishron' = @('summon','spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
-    'empress-night' = @('summon','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
-    'empress-day' = @('summon','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
+    'duke-fishron' = @('summon','monitor','spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
+    'empress-night' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
+    'empress-day' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
     'moon-lord' = @('intro','synchronize-eyes','head-bolts','head-tongue','head-deathray-telegraph','left-sphere-release','right-sphere-release')
 }
 $scenarios = @($scenarioPhases.Keys)
@@ -540,6 +541,19 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
         (Require-Integer (Read-Field $Result 'requestedTakeoverTick') 120 23880 'requested takeover tick') -ne $Case.TakeoverTick) {
         throw 'Result identity/schema does not match its case.'
     }
+    if ($Case.Phase -ceq 'monitor') {
+        $routeMap = @{
+            'fishron-fairy-wing'='FishronFairyWingsDash'; 'fishron-strong-wing'='FishronStrongWingsDash'
+            'fishron-queen-slime'='FishronQueenSlime'; 'fishron-trusty-chillet'='FishronTrustyChillet'
+            'fishron-trusty-chillet-ignis'='FishronTrustyChilletIgnis'; 'empress-strong-wing'='EmpressStrongWingsDash'
+            'empress-broom'='EmpressBroom'; 'empress-rain-fishron'='EmpressRainFishron'
+        }
+        if ((Require-String (Read-Field $Result 'formulaRoute') 'result formulaRoute') -cne $Case.FormulaRoute -or
+            (Require-String (Read-Field $Result 'observedFormulaRoute') 'result observedFormulaRoute') -cne $routeMap[$Case.FormulaRoute] -or
+            (Require-Integer (Read-Field $Result 'formulaRouteMismatches') 0 0 'formula route mismatches') -ne 0) {
+            throw 'Result did not prove the requested locked production formula route.'
+        }
+    }
     $status = Read-Field $Result 'status'
     if ($status -isnot [string] -or $status -cnotin @('win', 'loss', 'timeout', 'rejected', 'harness-error')) {
         throw 'Unrecognized result status.'
@@ -557,13 +571,18 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
         'phaseStage', 'takeoverNativeSnapshot', 'encounterFixtureReady', 'summonConsumed'
     ) 'result'
     $directSpawn = Require-Boolean (Read-Field $Result 'directSpawn') 'result directSpawn'
+    $monitorFixture = $Case.Phase -ceq 'monitor'
     $organicPriority = $Case.Scenario -cin @('deerclops','queen-bee','duke-fishron','empress-night','empress-day') -and $Case.Phase -ceq 'summon'
     $expectedDirectSpawn = $Case.Scenario -cin $priorityScenarios -and -not $organicPriority
     if ($directSpawn -ne $expectedDirectSpawn) { throw 'Result direct-spawn mode disagrees with the reviewed scenario catalog.' }
     $variant = Assert-VariantEvidence $Result $Case $validBattle
     $evidenceKind = Require-String (Read-Field $Result 'evidenceKind') 'result evidenceKind'
     $readinessEligible = Require-Boolean (Read-Field $Result 'readinessEligible') 'result readinessEligible'
-    if ($expectedDirectSpawn) {
+    if ($monitorFixture) {
+        if ($evidenceKind -cne 'native-monitor-arrival-fixture' -or $readinessEligible) {
+            throw 'A monitor-arrival fixture must remain separate from readiness evidence.'
+        }
+    } elseif ($expectedDirectSpawn) {
         if ($evidenceKind -cne 'staged-native-phase-regression' -or $readinessEligible) {
             throw 'A staged priority phase fixture must not be labeled as readiness-eligible evidence.'
         }
@@ -591,7 +610,13 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
         (Require-Boolean (Read-Field $Result 'encounterFixtureReady') 'encounterFixtureReady') -ne $true)) {
         throw 'Valid battle did not prove the requested takeover edge and complete fixture.'
     }
-    if ($expectedDirectSpawn) {
+    if ($monitorFixture) {
+        if ((Require-Integer (Read-Field $Result 'monitorArmedTick') 120 23880 'monitor armed tick') -ne $Case.TakeoverTick -or
+            (Require-Integer (Read-Field $Result 'monitorPassiveFrames') 120 24000 'monitor passive frames') -lt 120 -or
+            (Require-Integer (Read-Field $Result 'monitorCombatTick') 1 24000 'monitor combat tick') -lt $Case.TakeoverTick) {
+            throw 'Monitor fixture lacks its passive pre-Boss window or takeover edge.'
+        }
+    } elseif ($expectedDirectSpawn) {
         foreach ($field in @('directSpawnAttempted','directSpawnCompleted','phaseStageAttempted','phaseStaged','phaseVerifiedAtTakeover')) {
             $value = Require-Boolean (Read-Field $Result $field) "result $field"
             if ($validBattle -and -not $value) { throw "Valid priority Boss battle lacks $field evidence." }
@@ -881,7 +906,7 @@ if ($PSBoundParameters.ContainsKey('Cases')) {
 if ($rawCases.Count -lt 1 -or $rawCases.Count -gt $MaximumCases) { throw "Plan must contain 1..$MaximumCases cases; larger batches require an explicit bounded MaximumCases (at most 180)." }
 $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     $case = $rawCases[$index]
-    foreach ($property in $case.PSObject.Properties.Name) { if ($property -cnotin @('scenario', 'variant', 'phase', 'takeoverTick', 'seed', 'difficulty', 'maxTicks', 'wallSeconds')) { throw "Unknown case field: $property" } }
+    foreach ($property in $case.PSObject.Properties.Name) { if ($property -cnotin @('scenario', 'variant', 'phase', 'takeoverTick', 'seed', 'difficulty', 'formulaRoute', 'maxTicks', 'wallSeconds')) { throw "Unknown case field: $property" } }
     $scenario = Read-Field $case 'scenario'
     if ($scenario -cnotin $scenarios) { throw 'Case scenario is not in the reviewed fixture catalog; legacy eye-baseline is deliberately excluded.' }
     $seed = Require-Integer (Read-Field $case 'seed') 0 2147483647 'seed'
@@ -897,6 +922,19 @@ $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     }
     $phase = Read-Field $case 'phase' 'summon'
     if ($phase -isnot [string] -or $phase -cnotin $scenarioPhases[$scenario]) { throw 'Case phase is not reviewed for the selected scenario.' }
+    $formulaRoute = Read-Field $case 'formulaRoute' $null
+    if ($phase -ceq 'monitor') {
+        if ($formulaRoute -isnot [string] -or $formulaRoute -cnotin @(
+            'fishron-fairy-wing','fishron-strong-wing','fishron-queen-slime',
+            'fishron-trusty-chillet','fishron-trusty-chillet-ignis',
+            'empress-strong-wing','empress-broom','empress-rain-fishron')) {
+            throw 'Monitor cases require one reviewed formulaRoute.'
+        }
+        if (($scenario -ceq 'duke-fishron' -and $formulaRoute -cnotlike 'fishron-*') -or
+            ($scenario -cin @('empress-night','empress-day') -and $formulaRoute -cnotlike 'empress-*')) {
+            throw 'Case formulaRoute does not belong to its scenario.'
+        }
+    } elseif ($null -ne $formulaRoute) { throw 'formulaRoute is valid only for monitor cases.' }
     $takeoverTick = Require-Integer (Read-Field $case 'takeoverTick' 120) 120 23880 'takeoverTick'
     $maxTicks = Require-Integer (Read-Field $case 'maxTicks' 24000) 600 24000 'maxTicks'
     if ($takeoverTick -ge $maxTicks - 120) { throw 'takeoverTick must leave at least 120 native frames before maxTicks.' }
@@ -905,12 +943,12 @@ $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     }
     [pscustomobject]@{
         Id = ('case{0:D3}' -f ($index + 1)); Scenario = $scenario; Phase = $phase; TakeoverTick = $takeoverTick
-        Seed = $seed; Difficulty = $difficulty; Variant = $variant; MaxTicks = $maxTicks
+        Seed = $seed; Difficulty = $difficulty; Variant = $variant; FormulaRoute = $formulaRoute; MaxTicks = $maxTicks
         WallSeconds = (Require-Integer (Read-Field $case 'wallSeconds' 90) 15 900 'wallSeconds')
     }
 })
 Write-Output ("Plan: $($plan.Count) serial cases from $planSource")
-$plan | Format-Table Id, Scenario, Variant, Phase, TakeoverTick, Seed, Difficulty, MaxTicks, WallSeconds | Out-String | Write-Output
+$plan | Format-Table Id, Scenario, Variant, FormulaRoute, Phase, TakeoverTick, Seed, Difficulty, MaxTicks, WallSeconds | Out-String | Write-Output
 Write-Output 'Results measure only these fixture/loadout/seed combinations. Overall attempted success and started-battle success use separate denominators.'
 if (-not $Run) {
     Write-Output 'PLAN ONLY: no output files, preparation, game processes or desktop windows were created. Pass -Run to execute this explicit plan.'
@@ -970,13 +1008,13 @@ function Save-Summary {
         ReadinessEligibleCases = $readinessEligible; ReadinessEligibleWins = $readinessEligibleWins
         ReadinessEligibleSuccessPercent = (Get-Rate $readinessEligibleWins $readinessEligible)
         StagedFixtureRegressionWins = $stagedFixtureWins
-        ByScenarioPhase = @(foreach ($group in ($records | Group-Object Scenario, Variant, Difficulty, Phase, TakeoverTick)) {
+        ByScenarioPhase = @(foreach ($group in ($records | Group-Object Scenario, Variant, FormulaRoute, Difficulty, Phase, TakeoverTick)) {
             $groupWins = @($group.Group | Where-Object { $_.Classification -eq 'win' }).Count
             $groupStarted = @($group.Group | Where-Object { $_.BattleStarted }).Count
             $groupEligible = @($group.Group | Where-Object { $_.ReadinessEligible }).Count
             $groupEligibleWins = @($group.Group | Where-Object { $_.ReadinessEligible -and $_.Classification -eq 'win' }).Count
             [pscustomobject]@{
-                Scenario = $group.Group[0].Scenario; Variant = $group.Group[0].Variant; Difficulty = $group.Group[0].Difficulty
+                Scenario = $group.Group[0].Scenario; Variant = $group.Group[0].Variant; FormulaRoute = $group.Group[0].FormulaRoute; Difficulty = $group.Group[0].Difficulty
                 Phase = $group.Group[0].Phase; TakeoverTick = $group.Group[0].TakeoverTick
                 Attempted = $group.Count; Started = $groupStarted; Wins = $groupWins
                 OverallAttemptSuccessPercent = (Get-Rate $groupWins $group.Count)
@@ -990,7 +1028,7 @@ function Save-Summary {
         Cases = @($records.ToArray())
     }
     $summary | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'summary.json') -Encoding UTF8
-    $records | Select-Object Id, Scenario, Variant, EvidenceKind, ReadinessEligible, Phase, TakeoverTick, ActualTakeoverTick, Seed, Difficulty, Classification, BattleStarted, ValidBattle, Deaths, HostExitCode, ChildExitCode, DesktopSafe, `
+    $records | Select-Object Id, Scenario, Variant, FormulaRoute, EvidenceKind, ReadinessEligible, Phase, TakeoverTick, ActualTakeoverTick, Seed, Difficulty, Classification, BattleStarted, ValidBattle, Deaths, HostExitCode, ChildExitCode, DesktopSafe, `
         InputPluginSha256, InputCoreSha256, StartIsolatedTestScriptSha256, DesktopHostSourceSha256, RunId, ManifestSha256, StaticEvidenceSha256, `
         PinPlanSha256, LaunchBindingSha256, HostLockCompletionSha256, PreparedTerrariaSha256, PreparedGameProbeSha256, PreparedDesktopHostSha256, `
         PinnedPreparedFileCount, HostCompletedFileCount, HostLockedFileCount, Failure, RunDirectory |
@@ -1002,7 +1040,7 @@ foreach ($case in $plan) {
     $runDirectory = Join-Path $artifactPrefix $runName
     $hostDirectory = Join-Path $OutputDirectory ($case.Id + '-desktop')
     $record = [ordered]@{
-        Id = $case.Id; Scenario = $case.Scenario; Variant = $case.Variant; EvidenceKind = $null; ReadinessEligible = $false
+        Id = $case.Id; Scenario = $case.Scenario; Variant = $case.Variant; FormulaRoute = $case.FormulaRoute; EvidenceKind = $null; ReadinessEligible = $false
         Phase = $case.Phase; TakeoverTick = $case.TakeoverTick; ActualTakeoverTick = $null
         Seed = $case.Seed; Difficulty = $case.Difficulty
         Classification = 'prepare-error'; BattleStarted = $false; ValidBattle = $false; Deaths = 0
@@ -1048,6 +1086,9 @@ foreach ($case in $plan) {
         $arguments = @('-scenario', $case.Scenario, '-phase', $case.Phase, '-takeovertick', [string]$case.TakeoverTick,
             '-seed', [string]$case.Seed, '-difficulty', $case.Difficulty, '-maxticks', [string]$case.MaxTicks, '-wallseconds', [string]$case.WallSeconds,
             '-skipbeam')
+        if ($null -ne $case.FormulaRoute) {
+            $arguments += @('-formularoute', $case.FormulaRoute)
+        }
         $record.Classification = 'host-error'
         try {
             & (Join-Path $PSScriptRoot 'start-isolated-test.ps1') -TargetExe (Join-Path $runDirectory 'Terraria.exe') -TargetArguments $arguments -TimeoutSeconds $TimeoutSeconds -OutputDirectory $hostDirectory |

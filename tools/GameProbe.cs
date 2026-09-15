@@ -33,6 +33,7 @@ public static class ChaiteGameProbe
     static bool IsMonitorFixture { get { return requestedPhase == "monitor"; } }
     static string difficulty = "classic";
     static string requestedPhase = "summon";
+    static string formulaRoute;
     static int deaths, minLife = int.MaxValue, grappleTicks, maximumGrappleTicks, expectedBossMask;
     static long bossDamage, previousRuntimeTotal;
     static int previousRuntimeFrames, nativeSceneMetricRefreshes;
@@ -87,6 +88,8 @@ public static class ChaiteGameProbe
     const int BattleObservationInterval=60, BattleObservationEdgeInterval=15;
     const int BattleObservationMaximumRows=2048, BattleObservationMaximumNpcs=48;
     static Chaite.Core.ControlPlan observedPlan;
+    static string observedFormulaRoute;
+    static int formulaRouteMismatches;
     static PlanTargetObservation observedPlanTarget;
     static bool hasObservedPlan, observedPlanPending, hasObservedPlanReturn;
     static int observedPlanTick=-1, observedPlanReturnTick=-1, observedPlanCalls, observedPlanReturns, observedPlanUnpaired;
@@ -444,12 +447,20 @@ public static class ChaiteGameProbe
                 };
         }
         if(observedPlanPending) observedPlanUnpaired++;
-        if(!hasObservedPlan || !String.Equals(observedPlan.StrategyId,plan.StrategyId,StringComparison.Ordinal) ||
+        if(!hasObservedPlan || observedPlan.FormulaRoute != plan.FormulaRoute ||
+            !String.Equals(observedPlan.StrategyId,plan.StrategyId,StringComparison.Ordinal) ||
             !String.Equals(observedPlan.PhaseId,plan.PhaseId,StringComparison.Ordinal)) MarkBattleObservation(2);
         if(!hasObservedPlan || observedPlan.TargetKey!=plan.TargetKey || observedPlanTarget.Exists!=planTarget.Exists ||
             (planTarget.Exists && (observedPlanTarget.Type!=planTarget.Type || observedPlanTarget.Active!=planTarget.Active)))
             MarkBattleObservation(4);
         observedPlan=plan; // ControlPlan is a value type; no game/plan writes.
+        var planFormulaRoute=plan.FormulaRoute.ToString();
+        if(planFormulaRoute!="None")
+        {
+            if(observedFormulaRoute==null) observedFormulaRoute=planFormulaRoute;
+            else if(observedFormulaRoute!=planFormulaRoute)
+                formulaRouteMismatches++;
+        }
         observedPlanTarget=planTarget;
         hasObservedPlan=true;
         observedPlanPending=true;
@@ -591,6 +602,7 @@ public static class ChaiteGameProbe
             plan=new Dictionary<string,object>
             {
                 {"tick",observedPlanTick},{"strategy",observedPlan.StrategyId},{"phase",observedPlan.PhaseId},
+                {"formulaRoute",observedPlan.FormulaRoute.ToString()},
                 {"target",observedPlan.TargetKey},{"fire",observedPlan.Fire},{"hook",observedPlan.Hook},
                 {"selectedTargetAtPlan",new Dictionary<string,object>
                     {
@@ -782,7 +794,7 @@ public static class ChaiteGameProbe
         foreach(var key in Terraria.Program.LaunchParameters.Keys)
             if(key!="-savedirectory" && key!="-skipbeam" && key!="-scenario" && key!="-seed" &&
                 key!="-difficulty" && key!="-maxticks" && key!="-wallseconds" && key!="-motioncase" && key!="-flightcase" &&
-                key!="-phase" && key!="-takeovertick")
+                key!="-phase" && key!="-takeovertick" && key!="-formularoute")
                 throw new ArgumentException("Unsupported probe argument: "+key);
         string value;
         if(Terraria.Program.LaunchParameters.TryGetValue("-seed",out value))
@@ -794,6 +806,7 @@ public static class ChaiteGameProbe
         if(Terraria.Program.LaunchParameters.TryGetValue("-takeovertick",out value))
             takeoverTick=BoundedInt(value,120,23880,"takeovertick");
         if(Terraria.Program.LaunchParameters.TryGetValue("-phase",out value)) requestedPhase=value.ToLowerInvariant();
+        if(Terraria.Program.LaunchParameters.TryGetValue("-formularoute",out value)) formulaRoute=value.ToLowerInvariant();
         if(Terraria.Program.LaunchParameters.TryGetValue("-difficulty",out value)) difficulty=value.ToLowerInvariant();
         switch(difficulty)
         {
@@ -849,6 +862,7 @@ public static class ChaiteGameProbe
             default: throw new ArgumentException("Unknown bounded scenario: "+id);
         }
         scenario.ExpectedVariant=ExpectedVariantForScenario(id);
+        ValidateFormulaRoute();
         ConfigureScenarioProgression();
         if(!IsMotion)
         {
@@ -890,6 +904,20 @@ public static class ChaiteGameProbe
         else if(motionCase!=null) throw new ArgumentException("-motioncase is valid only with motion-jump");
         if(!IsFlight && flightCase!=null) throw new ArgumentException("-flightcase is valid only with motion-flight");
         settingsRead=true;
+    }
+
+    static void ValidateFormulaRoute()
+    {
+        if(formulaRoute==null) return;
+        if(requestedPhase!="monitor")
+            throw new ArgumentException("-formularoute requires -phase monitor");
+        string[] allowed=scenario.Id=="duke-fishron"
+            ?new[]{"fishron-fairy-wing","fishron-strong-wing","fishron-queen-slime","fishron-trusty-chillet","fishron-trusty-chillet-ignis"}
+            :scenario.Id=="empress-night"||scenario.Id=="empress-day"
+                ?new[]{"empress-strong-wing","empress-broom","empress-rain-fishron"}
+                :new string[0];
+        if(Array.IndexOf(allowed,formulaRoute)<0)
+            throw new ArgumentException("Unreviewed formula route for scenario: "+formulaRoute);
     }
 
     static void DirectScenario(int spawnType,int[] bossTypes,bool hardMode,string[] phases)
@@ -1280,6 +1308,12 @@ public static class ChaiteGameProbe
             Game.worldName = "Chaite isolated engine test";
             Game.dayTime = scenario.Daytime;
             Game.time = scenario.Daytime?27000:1000;
+            Game.raining = formulaRoute=="empress-rain-fishron";
+            if(Game.raining)
+            {
+                Game.rainTime = 86400;
+                Game.maxRaining = 1f;
+            }
             Game.hardMode = scenario.HardMode;
             Game.wofNPCIndex = -1;
             Game.netMode = 0;
@@ -1617,12 +1651,29 @@ public static class ChaiteGameProbe
                 // Fishron's reviewed minimum route requires Fairy Wings (or
                 // equivalent) plus a reliable dash/evade source; the generic
                 // early-Hardmode fixture's Demon Wings alone is insufficient.
-                player.armor[4].SetDefaults(ItemID.FairyWings);
-                player.armor[6].SetDefaults(ItemID.FrogLeg);
-                player.armor[7].SetDefaults(ItemID.EoCShield);
-                if(difficultyCode>0)
-                    player.armor[8].SetDefaults(ItemID.RangerEmblem);
-                scenario.Equipment="Fishron formula fixture: Fairy Wings+Frog Leg+Shield of Cthulhu";
+                if(formulaRoute=="fishron-queen-slime")
+                {
+                    player.miscEquips[3].SetDefaults(4981);
+                    scenario.Equipment="Fishron formula fixture: Queen Slime mount";
+                }
+                else if(formulaRoute=="fishron-trusty-chillet" ||
+                    formulaRoute=="fishron-trusty-chillet-ignis")
+                {
+                    player.miscEquips[3].SetDefaults(formulaRoute==
+                        "fishron-trusty-chillet"?6150:6151);
+                    scenario.Equipment="Fishron formula fixture: "+formulaRoute;
+                }
+                else
+                {
+                    player.armor[4].SetDefaults(formulaRoute==
+                        "fishron-strong-wing"?ItemID.FishronWings:ItemID.FairyWings);
+                    player.armor[6].SetDefaults(ItemID.FrogLeg);
+                    player.armor[7].SetDefaults(ItemID.EoCShield);
+                    if(difficultyCode>0)
+                        player.armor[8].SetDefaults(ItemID.RangerEmblem);
+                    scenario.Equipment="Fishron formula fixture: "+
+                        (formulaRoute??"fishron-fairy-wing");
+                }
             }
         }
         else if(scenario.EquipmentTier=="post-plantera")
@@ -1652,9 +1703,19 @@ public static class ChaiteGameProbe
             scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+frozen-turtle-shell+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
             if (IsMonitorFixture && (scenario.Id == "empress-night" || scenario.Id == "empress-day"))
             {
-                player.armor[4].SetDefaults(ItemID.FishronWings);
-                player.armor[5].SetDefaults(ItemID.FrogLeg);
-                scenario.Equipment="Empress monitor fixture: shroomite+lightning+Fishron Wings+Frog Leg+Shield of Cthulhu+chain gun+ichor bullets";
+                if(formulaRoute=="empress-broom" ||
+                    formulaRoute=="empress-rain-fishron")
+                {
+                    player.miscEquips[3].SetDefaults(formulaRoute==
+                        "empress-broom"?4444:3367);
+                    scenario.Equipment="Empress formula fixture: "+formulaRoute;
+                }
+                else
+                {
+                    player.armor[4].SetDefaults(ItemID.FishronWings);
+                    player.armor[5].SetDefaults(ItemID.FrogLeg);
+                    scenario.Equipment="Empress formula fixture: empress-strong-wing";
+                }
             }
         }
         else if(scenario.EquipmentTier=="pre-moon-lord")
@@ -1713,6 +1774,7 @@ public static class ChaiteGameProbe
         equipmentReport=new Dictionary<string,object>
         {
             {"label",scenario.Equipment},{"tier",scenario.EquipmentTier},{"life",scenario.MaxLife},{"mana",200},{"armorAndAccessories",armor},
+            {"formulaRoute",formulaRoute},
             {"weaponType",player.inventory[0].type},{"summonType",scenario.Summon},{"summonCount",scenario.Summon==0?0:1},
             {"ammoType",player.inventory[54].type},{"ammoCount",9999},
             {"weaponBallisticFields",new Dictionary<string,object>
@@ -3342,6 +3404,8 @@ public static class ChaiteGameProbe
         {
             {"schema","chaite-boss-result/v1"},{"schemaVersion",1},{"scenario",scenario==null?null:scenario.Id},
             {"seed",seed},{"difficulty",difficulty},{"difficultyCode",difficultyCode},{"variant",reportedVariant},
+            {"formulaRoute",formulaRoute},
+            {"observedFormulaRoute",observedFormulaRoute},{"formulaRouteMismatches",formulaRouteMismatches},
             {"variantEvidence",variantEvidence},{"evidenceKind",evidenceKind},{"readinessEligible",readinessEligible},{"status",status},
             {"requestedPhase",requestedPhase},{"requestedTakeoverTick",takeoverTick},{"actualTakeoverTick",actualTakeoverTick},
             {"directSpawn",scenario!=null && scenario.DirectSpawn},{"directSpawnTick",directSpawnTick},

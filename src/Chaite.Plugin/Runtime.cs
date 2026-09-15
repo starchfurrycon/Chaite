@@ -724,9 +724,14 @@ namespace Chaite.Plugin
             }
             var armedRoute = type == 370 ? _monitorFishronRoute : _monitorEmpressRoute;
             var snapshot = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
-            if (!_planner.PrepareForMonitoredFormulaEncounter(snapshot, type, armedRoute, out reason))
+            bool mobilityRefusal;
+            if (!_planner.PrepareForMonitoredFormulaEncounter(snapshot, type,
+                    armedRoute, out reason, out mobilityRefusal))
             {
-                StopBossMonitor(FormulaRouteCatalog.Refusal + "（" + reason + "）", AudioCue.UntestedLoadout);
+                StopBossMonitor(mobilityRefusal
+                        ? FormulaRouteCatalog.Refusal + "（" + reason + "）"
+                        : "当前武器输出无法完成固定公式（" + reason + "）",
+                    mobilityRefusal ? AudioCue.UntestedLoadout : AudioCue.None);
                 return false;
             }
             _authorizedBossType = type;

@@ -219,6 +219,30 @@ namespace Chaite.Tests
                 route, out reason));
         }
 
+        private static void FormulaAdmissionSeparatesMobilityAndOutputRefusal()
+        {
+            var scene = CombatScenario(370);
+            scene.Player.FunctionalEquipmentIdentityKnown = true;
+            scene.Mobility.FormulaAccessoryScanKnown = true;
+            scene.Mobility.SelectedMountIdentityKnown = true;
+            scene.Mobility.SelectedMountType = 64;
+            scene.Weapon.NativeProfileRequired = true;
+            scene.Weapon.WeaponId = -1;
+            var planner = new CombatPlanner(new PlannerSettings());
+            string reason;
+            bool mobilityRefusal;
+            False(planner.PrepareForMonitoredFormulaEncounter(scene, 370,
+                FormulaRoute.FishronTrustyChillet, out reason,
+                out mobilityRefusal));
+            False(mobilityRefusal);
+            True(reason.Contains("output route"), reason);
+
+            False(planner.PrepareForMonitoredFormulaEncounter(scene, 370,
+                FormulaRoute.FishronQueenSlime, out reason,
+                out mobilityRefusal));
+            True(mobilityRefusal);
+        }
+
         private static void FishronQueenSlimeUsesMountAndFixedRunway()
         {
             var controller = new FishronQueenSlimeScript();
@@ -304,6 +328,45 @@ namespace Chaite.Tests
             difficulty.Rain = true;
             True(rain.Tick(in input, player, in boss, arena,
                 mobility, difficulty).Accepted);
+        }
+
+        private static void EmpressWingUsesOneRepositionDashEdge()
+        {
+            var script = new EmpressWingScript();
+            var player = new PlayerSnapshot { Position = new Vec2(1800, 1000),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 636,
+                Position = new Vec2(2200, 800), Width = 80, Height = 80 };
+            var arena = new ArenaSnapshot
+            {
+                ClearanceLeft = 800,
+                ClearanceRight = 1200
+            };
+            var mobility = new MobilitySnapshot
+            {
+                CanDash = true,
+                DashReady = true
+            };
+            var input = new FormulaScriptInput { BossType = 636,
+                Route = FormulaRoute.EmpressStrongWingsDash,
+                NativeState = 1, NativeTimer = 1, NativeSequence = 2 };
+            var edge = script.Tick(in input, player, in boss, arena,
+                mobility);
+            True(edge.Accepted); True(edge.Dash); Equal(-1, edge.Horizontal);
+            input.NativeTimer++;
+            False(script.Tick(in input, player, in boss, arena,
+                mobility).Dash);
+
+            input.NativeState = 8;
+            input.NativeTimer = 41;
+            input.PlayerBelowBoss = true;
+            var charge = script.Tick(in input, player, in boss, arena,
+                mobility);
+            False(charge.Dash); Equal(0, charge.Horizontal);
+            Equal(-1, charge.Vertical); True(charge.Jump);
+            mobility.MountActive = true;
+            False(script.Tick(in input, player, in boss, arena,
+                mobility).Accepted);
         }
 
         private static void BossMonitoringDoesNotOwnControls()

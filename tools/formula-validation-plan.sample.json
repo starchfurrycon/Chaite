@@ -1,0 +1,35 @@
+{
+  "schema": "chaite-boss-cases/v2",
+  "cases": [
+    {
+      "scenario": "duke-fishron",
+      "phase": "monitor",
+      "formulaRoute": "fishron-fairy-wing",
+      "takeoverTick": 120,
+      "seed": 20260915,
+      "difficulty": "expert",
+      "maxTicks": 24000,
+      "wallSeconds": 900
+    },
+    {
+      "scenario": "empress-night",
+      "phase": "monitor",
+      "formulaRoute": "empress-broom",
+      "takeoverTick": 120,
+      "seed": 20260916,
+      "difficulty": "expert",
+      "maxTicks": 24000,
+      "wallSeconds": 720
+    },
+    {
+      "scenario": "empress-day",
+      "phase": "monitor",
+      "formulaRoute": "empress-rain-fishron",
+      "takeoverTick": 120,
+      "seed": 20260917,
+      "difficulty": "expert",
+      "maxTicks": 24000,
+      "wallSeconds": 720
+    }
+  ]
+}

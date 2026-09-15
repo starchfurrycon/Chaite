@@ -58,6 +58,7 @@
     <Compile Include="FishronChilletScript.cs" />
     <Compile Include="FishronQueenSlimeScript.cs" />
     <Compile Include="EmpressFlightScript.cs" />
+    <Compile Include="EmpressWingScript.cs" />
     <Compile Include="ClassicSecondaryBossContract.cs" />
     <Compile Include="OrdinarySecondaryBossContracts.cs" />
     <Compile Include="BossStrategyCatalog.cs" />

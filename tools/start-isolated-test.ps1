@@ -424,6 +424,14 @@ if ($Probe) {
                 if ($value -cnotin @('classic', 'expert', 'master')) { throw 'Unreviewed difficulty.' }
                 $fixtureArguments['-difficulty'] = $value
             }
+            '-formularoute' {
+                if ($fixtureArguments.Contains('-formularoute') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -formularoute.' }
+                $value = $TargetArguments[$index]
+                if ($value -cnotin @('fishron-fairy-wing','fishron-strong-wing','fishron-queen-slime',
+                    'fishron-trusty-chillet','fishron-trusty-chillet-ignis','empress-strong-wing',
+                    'empress-broom','empress-rain-fishron')) { throw 'Unreviewed formula route.' }
+                $fixtureArguments['-formularoute'] = $value
+            }
             '-maxticks' {
                 if ($fixtureArguments.Contains('-maxticks') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -maxticks.' }
                 $value = $TargetArguments[$index]
@@ -444,6 +452,17 @@ if ($Probe) {
     $motion = $fixtureArguments.Contains('-scenario') -and $fixtureArguments['-scenario'] -ceq 'motion-jump'
     $flight = $fixtureArguments.Contains('-scenario') -and $fixtureArguments['-scenario'] -ceq 'motion-flight'
     $scenarioId = if ($fixtureArguments.Contains('-scenario')) { $fixtureArguments['-scenario'] } else { 'eye-baseline' }
+    if ($fixtureArguments.Contains('-formularoute')) {
+        if (-not $fixtureArguments.Contains('-phase') -or $fixtureArguments['-phase'] -cne 'monitor' -or
+            $scenarioId -cnotin @('duke-fishron','empress-night','empress-day')) {
+            throw '-formularoute requires a Fishron/Empress monitor fixture.'
+        }
+        $route = $fixtureArguments['-formularoute']
+        if (($scenarioId -ceq 'duke-fishron' -and $route -cnotlike 'fishron-*') -or
+            ($scenarioId -cin @('empress-night','empress-day') -and $route -cnotlike 'empress-*')) {
+            throw '-formularoute does not belong to the selected Boss.'
+        }
+    }
     $scopeNegative = $scenarioId -clike 'scope-negative-*'
     $phaseSpecified = $fixtureArguments.Contains('-phase')
     $takeoverSpecified = $fixtureArguments.Contains('-takeovertick')
