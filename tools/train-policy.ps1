@@ -21,6 +21,9 @@ param(
     [double]$BossMaxLife = 98000,
     [double]$HitPenalty = 0.5,
     [double]$HitsToDie = 14.0,
+    # Hits a win may absorb before its score floors at 0.5. The objective is
+    # no-hit, so this only shapes the gradient inside the win band.
+    [double]$WinHitBudget = 25.0,
     [int[]]$TrainSeeds = (1..40),
     [int[]]$EvalSeeds = (1001..1020),
     [int]$Population = 16,
@@ -104,10 +107,21 @@ function Get-ResultFor([string]$RunTag) {
 }
 
 function Get-Fitness($row) {
-    if ($row.win) { return 1.0 }
+    # The objective the user set is to take no damage at all. A win therefore
+    # has to be worth strictly more than any loss, but inside a win the only
+    # way to reach the maximum is to be untouched: zero hits scores 1.0, a win
+    # that ate WinHitBudget hits scores 0.5, and beyond that it floors at 0.5
+    # rather than dropping under a loss. Without the hit term a sloppy win and
+    # a flawless one would both score 1.0 and the search would have no reason
+    # to prefer the flawless one.
+    if ($row.win) {
+        $decay = [double]$row.hits / [double]$WinHitBudget
+        if ($decay -gt 1.0) { $decay = 1.0 }
+        return 0.5 + 0.5 * (1.0 - $decay)
+    }
     $dealt = $row.damage / $BossMaxLife
     $penalty = $HitPenalty * ($row.hits / $HitsToDie)
-    return $dealt - $penalty
+    return 0.5 * $dealt - $penalty
 }
 
 # One candidate on one seed. Each candidate needs its own parameter file, so
@@ -127,7 +141,19 @@ function Invoke-Evaluation([string]$ParamsPath, [int[]]$SeedList, [string]$RunTa
 function Measure-Candidate([string]$ParamsPath, [int[]]$SeedList, [string]$RunTag) {
     $rows = Invoke-Evaluation $ParamsPath $SeedList $RunTag
     $sum = 0.0
-    foreach ($r in $rows) { $sum += (Get-Fitness $r) }
+    $noHit = 0
+    $wins = 0
+    foreach ($r in $rows) {
+        $sum += (Get-Fitness $r)
+        if ($r.win) {
+            $wins++
+            if ([int]$r.hits -eq 0) { $noHit++ }
+        }
+    }
+    # The real objective, reported alongside the scalar so the curve can be
+    # read directly as no-hit wins rather than only as fitness.
+    $script:LastWins = $wins
+    $script:LastNoHit = $noHit
     return $sum / $rows.Count
 }
 
@@ -203,8 +229,9 @@ for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
     $parentFitness = Measure-Candidate $parentPath $seedList "$Tag-g$gen-p"
     $parentRows = Get-ResultFor "$Tag-g$gen-p"
     $parentWins = @($parentRows | Where-Object { $_.win }).Count
-    Add-Content -Path $LogFile -Value "$gen,parent,$seedCsv,$([math]::Round($parentFitness,5)),wins=$parentWins"
-    Write-Host "gen $gen parent fitness $([math]::Round($parentFitness,4)) wins $parentWins/$($seedList.Count)"
+    $parentNoHit = @($parentRows | Where-Object { $_.win -and ([int]$_.hits -eq 0) }).Count
+    Add-Content -Path $LogFile -Value "$gen,parent,$seedCsv,$([math]::Round($parentFitness,5)),wins=$parentWins,noHit=$parentNoHit"
+    Write-Host "gen $gen parent fitness $([math]::Round($parentFitness,4)) wins $parentWins/$($seedList.Count) noHit $parentNoHit"
 
     $bestCandidate = $null
     $bestCandidateFitness = [double]::NegativeInfinity
@@ -247,9 +274,14 @@ for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
         if ($rows.Count -eq 0) { Add-Content -Path $LogFile -Value "$gen,$($item.c),$seedCsv,,no-result"; continue }
         $sum = 0.0
         $wins = @($rows | Where-Object { $_.win }).Count
+        # Computed from this candidate's own rows. Measure-Candidate is not in
+        # this path, so its script-scoped counters would have reported the
+        # parent's numbers here.
+        $noHit = @($rows | Where-Object { $_.win -and ([int]$_.hits -eq 0) }).Count
+        $hitsum = [int](($rows | Measure-Object -Property hits -Sum).Sum)
         foreach ($r in $rows) { $sum += (Get-Fitness $r) }
         $fit = $sum / $rows.Count
-        Add-Content -Path $LogFile -Value "$gen,$($item.c),$seedCsv,$([math]::Round($fit,5)),wins=$wins"
+        Add-Content -Path $LogFile -Value "$gen,$($item.c),$seedCsv,$([math]::Round($fit,5)),wins=$wins,noHit=$noHit,hits=$hitsum"
         if ($fit -gt $bestCandidateFitness) { $bestCandidateFitness = $fit; $bestCandidate = $item.c }
     }
 
