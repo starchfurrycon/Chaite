@@ -24,6 +24,7 @@ namespace Chaite.Tests
             Run(nameof(FishronFormulaRejectsImpossibleNativeTuples), FishronFormulaRejectsImpossibleNativeTuples);
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
             Run(nameof(FishronChilletRejectsWrongMountAndShortRunway), FishronChilletRejectsWrongMountAndShortRunway);
+            Run(nameof(FishronAdmissionRequiresInfernoStock), FishronAdmissionRequiresInfernoStock);
             Run(nameof(FishronChilletLockedRouteAcceptsOnlyItsActiveMount), FishronChilletLockedRouteAcceptsOnlyItsActiveMount);
             Run(nameof(FormulaAdmissionSeparatesMobilityAndOutputRefusal), FormulaAdmissionSeparatesMobilityAndOutputRefusal);
             Run(nameof(FishronQueenSlimeUsesMountAndFixedRunway), FishronQueenSlimeUsesMountAndFixedRunway);
@@ -640,7 +641,11 @@ namespace Chaite.Tests
                 Mobility = new MobilitySnapshot
                 {
                     CanDash = true, DashReady = true, HasGrapple = true,
-                    HasFiniteFlightResource = true, FlightResourceFraction = 1f, MountRunSpeed = 8f
+                    HasFiniteFlightResource = true, FlightResourceFraction = 1f, MountRunSpeed = 8f,
+                    // Fishron admission includes the reviewed bubble clearance,
+                    // so the shared fixture carries the potion stock a real run
+                    // is required to bring.
+                    InfernoPotionStockKnown = true, InfernoPotionStock = 3
                 },
                 Arena = new ArenaSnapshot
                 {

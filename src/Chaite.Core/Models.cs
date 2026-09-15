@@ -352,6 +352,16 @@ namespace Chaite.Core
         // and genuinely exhausted flight both have a zero resource fraction.
         public bool HasFiniteFlightResource;
         public float FlightResourceFraction;
+        // The reviewed bubble-clearance admission for the Fishron formula. The
+        // rule is a carried stock plus a refresh before the ring lapses, so the
+        // buff's remaining time is read alongside the potion count rather than
+        // only its present/absent state. Unknown bit flags keep a synthetic or
+        // partial adapter from being treated as provisioned.
+        public bool InfernoStateKnown;
+        public bool InfernoActive;
+        public int InfernoTicksLeft;
+        public bool InfernoPotionStockKnown;
+        public int InfernoPotionStock;
     }
 
     public sealed class ArenaSnapshot

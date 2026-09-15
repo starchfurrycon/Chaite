@@ -988,6 +988,7 @@ namespace Chaite.Plugin
             mobility.FrogLegAccessoryKnown = true;
             mobility.FrogLegAccessoryPresent =
                 functionalIdentity.FrogLegSources == 1;
+            PublishInfernoProvisioning(player, items, mobility);
             PublishMountIdentities(mobility, mountActive,
                 mountActive ? _mountTypeId(mount) : -1, hasMount,
                 selectedMountItemType, selectedMountType);
@@ -1339,6 +1340,39 @@ namespace Chaite.Plugin
         private bool TryReadActiveGravitationBuff(object player, out bool active)
         {
             return TryReadActiveBuff(player, 18, out active);
+        }
+
+        /// <summary>Reads the reviewed bubble-clearance provisioning: the live
+        /// Inferno buff and its remaining clock, plus the potions carried to
+        /// refresh it with. The clock is read, not just the flag, because the
+        /// formula refreshes before the ring lapses rather than after.</summary>
+        private void PublishInfernoProvisioning(object player, object[] items,
+            MobilitySnapshot mobility)
+        {
+            mobility.InfernoStateKnown = TryReadBuffSlot(
+                _playerBuffType(player), _playerBuffTime(player),
+                FishronThreatCatalog.InfernoBuff, out var present,
+                out var remainingTicks);
+            mobility.InfernoActive = mobility.InfernoStateKnown && present &&
+                remainingTicks > 0;
+            mobility.InfernoTicksLeft = mobility.InfernoActive ? remainingTicks : 0;
+            if (items == null)
+            {
+                mobility.InfernoPotionStockKnown = false;
+                mobility.InfernoPotionStock = 0;
+                return;
+            }
+            var stock = 0;
+            foreach (var item in items)
+            {
+                if (item == null) continue;
+                if (_itemTypeId(item) != FishronThreatCatalog.InfernoPotionItem)
+                    continue;
+                var stack = _itemStack(item);
+                if (stack > 0) stock += stack;
+            }
+            mobility.InfernoPotionStockKnown = true;
+            mobility.InfernoPotionStock = stock;
         }
 
         private bool TryReadActiveBuff(object player, int buffType, out bool active)

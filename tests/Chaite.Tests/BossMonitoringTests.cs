@@ -295,10 +295,56 @@ namespace Chaite.Tests
 
             var arena = new ArenaSnapshot { FloorSupport = new SupportSpan
                 { Valid = true, Left = 0, Right = 3000 } };
-            var wrong = new MobilitySnapshot { MountActive = true,
+            var wrong = new MobilitySnapshot { InfernoPotionStockKnown = true,
+                InfernoPotionStock = 3, MountActive = true,
                 ActiveMountIdentityKnown = true, ActiveMountType = 63 };
             False(new FishronChilletScript().Tick(in input, player, in boss,
                 arena, wrong).Accepted);
+        }
+
+        /// <summary>The reviewed bubble clearance is part of Fishron admission,
+        /// and it fails closed: a short or unreadable potion stock must refuse
+        /// the fight rather than let a route start without a way to clear the
+        /// homing bubbles.</summary>
+        private static void FishronAdmissionRequiresInfernoStock()
+        {
+            var scene = CombatScenario(370);
+            scene.Player.FunctionalEquipmentIdentityKnown = true;
+            scene.Player.WingAccessoryItemType = 761;
+            scene.Mobility.FormulaAccessoryScanKnown = true;
+            scene.Mobility.FrogLegAccessoryKnown = true;
+            scene.Mobility.FrogLegAccessoryPresent = true;
+            var dash = scene.Mobility.EyeShieldDash;
+            dash.EquipmentIdentity =
+                DashEquipmentIdentity.ShieldOfCthulhuItem3097;
+            scene.Mobility.EyeShieldDash = dash;
+            FormulaRoute route;
+            string reason;
+            True(FormulaMobilityContract.TrySelectRoute(scene, 370, out route,
+                out reason), reason);
+
+            scene.Mobility.InfernoPotionStock = 2;
+            False(FormulaMobilityContract.TrySelectRoute(scene, 370, out route,
+                out reason));
+            True(reason.Contains("地狱药水"), reason);
+
+            scene.Mobility.InfernoPotionStock = 0;
+            False(FormulaMobilityContract.TrySelectRoute(scene, 370, out route,
+                out reason));
+
+            scene.Mobility.InfernoPotionStockKnown = false;
+            scene.Mobility.InfernoPotionStock = 0;
+            False(FormulaMobilityContract.TrySelectRoute(scene, 370, out route,
+                out reason));
+
+            // A locked route is re-validated at takeover under the same rule.
+            scene.Mobility.InfernoPotionStockKnown = true;
+            scene.Mobility.InfernoPotionStock = 3;
+            True(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
+                FormulaRoute.FishronFairyWingsDash, out reason), reason);
+            scene.Mobility.InfernoPotionStock = 1;
+            False(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
+                FormulaRoute.FishronFairyWingsDash, out reason));
         }
 
         private static void FishronChilletLockedRouteAcceptsOnlyItsActiveMount()

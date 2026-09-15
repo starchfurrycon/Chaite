@@ -109,6 +109,21 @@ namespace Chaite.Core
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.Grappling || s.Mobility.GravityInverted)
             { reason = "检测到公式外机动状态"; return false; }
+            if (boss == SupportedBossPolicy.DukeFishronType)
+            {
+                // Reviewed bubble clearance. The Detonating Bubbles home hard
+                // enough that movement cannot clear them, so without the ring
+                // the hit count is decided by luck rather than by the circuit
+                // and no wing route can reach zero hits. Admission is the
+                // carried stock; the live buff is refreshed from it in flight.
+                if (!s.Mobility.InfernoPotionStockKnown)
+                { reason = "无法读取地狱药水库存"; return false; }
+                if (!FishronThreatCatalog.HasSufficientInfernoStock(
+                        s.Mobility.InfernoPotionStock))
+                { reason = "猪鲨公式需要携带至少 " +
+                    FishronThreatCatalog.RequiredInfernoPotionStock +
+                    " 瓶地狱药水用于清泡"; return false; }
+            }
             reason = null;
             return true;
         }
