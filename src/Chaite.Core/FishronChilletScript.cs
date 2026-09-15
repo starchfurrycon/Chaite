@@ -91,6 +91,27 @@ namespace Chaite.Core
                     _dashIssued = true;
                 }
             }
+            // A trained policy for this route replaces only the movement
+            // decision. It sits after the mount release and mount identity
+            // admission above, because that path has its own early return and
+            // taking it over would stop the mount from ever being summoned.
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned != null)
+            {
+                int learnedHorizontal, learnedVertical;
+                bool learnedJump, learnedDash;
+                if (learned.TryDecide(in input, player, in boss, arena,
+                        out learnedHorizontal, out learnedVertical,
+                        out learnedJump, out learnedDash))
+                {
+                    output.Horizontal = learnedHorizontal;
+                    output.Vertical = learnedVertical;
+                    output.Jump = learnedJump;
+                    output.Dash = learnedDash;
+                    output.Phase = "fishron-chillet-learned";
+                    return output;
+                }
+            }
             output.Horizontal = _runDirection;
             output.Phase = Phase(in input, counter, output.Dash);
             return output;
