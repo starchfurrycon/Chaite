@@ -4,24 +4,31 @@ namespace Chaite.Core
 {
     /// <summary>
     /// Fixed wing circuit for Duke Fishron, written against the pinned 1.4.5.8
-    /// AI_069 state table and the pinned Player wing/jump implementation rather
-    /// than against a screen recording or a distance heuristic.
+    /// AI_069 source, the pinned Player wing/jump implementation, the reviewed
+    /// counter-play on the Terraria Wiki (Duke Fishron and
+    /// Guide:Duke Fishron strategies), and the isolated probe.
     ///
-    /// Three measured facts decide the whole circuit:
+    /// Measured facts the circuit is built on:
     /// <list type="number">
     /// <item>A charge (ai[0] 1/6/11) commits its velocity once, at the native
     /// state entry, to <c>normalize(playerCentre - centre) * 17</c> and then
-    /// travels in a straight line for its whole duration. Nothing the player
-    /// does afterwards bends it, so the only input that matters is how far the
-    /// player leaves that line.</item>
+    /// travels a fixed 476 px in a straight line. Nothing the player does
+    /// afterwards bends it, so the only input that matters is how far the
+    /// player leaves that line — which is why every reviewed source says to
+    /// move perpendicular to the charge.</item>
     /// <item>Wing flight answers slowly. <c>Player.WingMovement</c> adds about
     /// 0.1 px/tick per tick while rising, so a charge that starts with zero
-    /// vertical speed cannot be cleared vertically within the 28 ticks the Boss
-    /// needs to cross. A ground jump is different: it sets velocity.Y straight
-    /// to -jumpSpeed, and <c>if ((velocity.Y == 0 || sliding) &amp;&amp;
+    /// vertical speed cannot be cleared within the 28 ticks the Boss needs to
+    /// cross. A ground jump is different: it sets velocity.Y straight to
+    /// -jumpSpeed, and <c>if ((velocity.Y == 0 || sliding) &amp;&amp;
     /// releaseJump) wingTime = wingTimeMax</c> refills the whole 130-tick
     /// flight budget on contact. The circuit is therefore ground-anchored and
-    /// answers charges with a jump, not with a mid-air climb.</item>
+    /// answers charges with a jump.</item>
+    /// <item>AI_069's ai[3] counter selects the next projectile attack outright,
+    /// so the Sharknado phase is known several charges in advance. Sharkrons
+    /// are fired from a fixed tornado and have limited range, so the reviewed
+    /// answer is to spend that flurry ending at an arena edge and then run the
+    /// arena's width away from the column.</item>
     /// <item>The Boss enrages from geometry alone: AI_069 uses the short
     /// 10-tick hover, doubled damage and a 23 px/tick charge whenever
     /// <c>player.position.Y &lt; 800</c>, <c>player.position.Y &gt;
@@ -48,20 +55,21 @@ namespace Chaite.Core
         /// axis, and that fifth is worth keeping because it is the only part
         /// that arrives at full speed on the first tick.</summary>
         private const float DominantAxisFraction = 0.15f;
-        /// <summary>Perpendicular separation that already clears both hitboxes with
-        /// margin, so the escape can stop climbing. It is deliberately close to
-        /// the minimum: every pixel climbed has to be walked back down before
-        /// the next charge, and arriving on the ground late is what turns a
-        /// dodge into a hit.</summary>
+        /// <summary>Perpendicular separation that already clears both hitboxes
+        /// with margin, so the escape can stop climbing. It is deliberately
+        /// close to the minimum: every pixel climbed has to be walked back down
+        /// before the next charge, and arriving on the ground late is what turns
+        /// a dodge into a hit.</summary>
         private const float EscapeSufficient = 96f;
-        /// <summary>Horizontal gap the circuit refuses to give up.
-        ///
-        /// A charge is a fixed 476 px of travel, so a player standing further
-        /// away than that is simply never reached and needs no dodge at all.
-        /// The gap is kept well past that figure because the Boss still has to
-        /// be dodged on the way in, and because the next hover closes about two
-        /// pixels per tick while the circuit flees.</summary>
+        /// <summary>Horizontal gap the circuit refuses to give up. A charge is a
+        /// fixed 476 px of travel, so a player standing further away than that
+        /// is simply never reached and needs no dodge at all.</summary>
         private const float StandoffPixels = 720f;
+        /// <summary>Centre-to-centre distance inside which the Boss body itself
+        /// is the threat. A charge that ends beside the player leaves the Boss
+        /// close enough that the next hover starts from contact range, and
+        /// running away cannot outpace it: 6.2 px/tick against 8.5.</summary>
+        private const float PersonalSpace = 150f;
         /// <summary>Signed offset large enough to count as a committed side.</summary>
         private const float CommittedOffset = 24f;
         /// <summary>Perpendicular speed large enough to count as a committed
@@ -77,7 +85,7 @@ namespace Chaite.Core
         /// descending. Wing flight reverses a fall at roughly 0.5 px/tick per
         /// tick, so a charge that finds the player falling cannot be escaped at
         /// all; the last few hover ticks are spent making sure it never does.</summary>
-        private const int PreJumpTicks = 9;
+        private const int PreJumpTicks = 20;
 
         private bool _initialized;
         private int _patrol = 1;
@@ -95,6 +103,7 @@ namespace Chaite.Core
         private float _lineY;
         private float _lineDirX;
         private float _lineDirY;
+        // Indexed by native state; only the hover states are used.
         private readonly int[] _hoverLimit = { 30, 30, 80, 90, 180, 30, 30, 120, 90, 180, 30, 30, 30 };
 
         public void Reset()
@@ -150,13 +159,14 @@ namespace Chaite.Core
             string phase;
             if (dash && _escapeLatched)
             {
-                ChargeEscape(player, in boss, mobility, out horizontal,
-                    out vertical, out phase);
+                ChargeEscape(player, in boss, out horizontal, out vertical,
+                    out phase);
             }
             else
             {
-                Cruise(player, in boss, state, input.NativeTimer, out horizontal,
-                    out vertical, out phase);
+                Cruise(player, in boss, state, input.NativeSequence,
+                    input.NativeTimer, out horizontal, out vertical,
+                    out phase);
             }
             ApplyArena(player, dash && _escapeLatched, ref horizontal,
                 ref vertical);
@@ -165,118 +175,17 @@ namespace Chaite.Core
             output.Horizontal = horizontal;
             output.Vertical = vertical;
             output.Jump = vertical < 0;
+            // The Shield of Cthulhu dash writes velocity.X = +-14.5 and nothing
+            // else. AI_069 hovers 300 px to the side and 200 above, so its
+            // charges are mostly horizontal, which makes the shield edge nearly
+            // parallel to the very charge it would have to dodge. It stays a
+            // reviewed route identity, not a per-charge input.
             output.Dash = false;
             output.Phase = phase;
             _previousState = state;
             _previousSequence = input.NativeSequence;
             _previousTimer = input.NativeTimer;
             return output;
-        }
-
-        /// <summary>Everything that is not a charge. The circuit walks the ocean band
-        /// on foot: contact with support is what refills the whole flight budget
-        /// and what makes the next charge jump available on its first tick.
-        ///
-        /// Two rules hold here. The circuit never gives up the standoff gap,
-        /// because a charge that starts closer than the view distance cannot be
-        /// cleared; and it never stands still, because Sharkrons and the Boss
-        /// body both punish a stationary player.</summary>
-        private void Cruise(PlayerSnapshot player, in TargetSnapshot boss,
-            int state, int timer, out int horizontal, out int vertical,
-            out string phase)
-        {
-            var gap = boss.Center.X - player.Center.X;
-            var preJump = PredictChargImminent(state, timer) &&
-                Math.Abs(gap) >= StandoffPixels * 0.6f;
-            if (preJump)
-            {
-                // A charge is one hover-length away. Grounded: jump now so the
-                // escape starts already rising. Airborne and falling: arrest the
-                // fall, which costs a few ticks of flight and no altitude.
-                horizontal = ContinuationAxis(gap);
-                if (player.OnGround || player.Velocity.Y > 0.5f)
-                {
-                    vertical = -1;
-                    phase = "fishron-wing-precharge-jump";
-                    return;
-                }
-            }
-            if (state == 2 || state == 7)
-            {
-                // Sharkrons are emitted on the Boss-to-player line, so the
-                // useful axis is perpendicular to that line rather than the
-                // runway heading.
-                AwayFromBoss(player, in boss, out horizontal, out vertical);
-                vertical = player.OnGround ? 0 : 1;
-                phase = "fishron-wing-sharkron-line";
-                return;
-            }
-            if (state == 3 || state == 8)
-            {
-                // The Cthulhunado spawns at the Boss centre. Leave the column.
-                horizontal = gap >= 0f ? -1 : 1;
-                vertical = player.OnGround ? 0 : 1;
-                phase = "fishron-wing-tornado-column";
-                return;
-            }
-            if (Math.Abs(gap) < StandoffPixels)
-            {
-                horizontal = gap >= 0f ? -1 : 1;
-                vertical = player.OnGround ? 0 : 1;
-                phase = "fishron-wing-standoff";
-                return;
-            }
-            horizontal = _patrol;
-            if (!player.OnGround)
-            {
-                vertical = 1;
-                phase = "fishron-wing-cruise-descend";
-                return;
-            }
-            vertical = 0;
-            phase = "fishron-wing-cruise-" + state;
-        }
-
-        private void ChargeEscape(PlayerSnapshot player, in TargetSnapshot boss,
-            MobilitySnapshot mobility, out int horizontal, out int vertical,
-            out string phase)
-        {
-            Split(_escapeX, _escapeY, out horizontal, out vertical);
-            var separation = PerpendicularSeparation(player);
-            if (player.OnGround ||
-                player.Center.Y >= _floorY - GroundedBand - player.Height * 0.5f)
-            {
-                // A grounded jump is the only input that produces perpendicular
-                // speed on the very first tick of a charge.
-                vertical = -1;
-                phase = "fishron-wing-charge-ground-jump";
-                return;
-            }
-            if (!player.OnGround && player.Velocity.Y > 3f &&
-                player.Center.Y >= _floorY - LandingBand)
-            {
-                // Already falling the last few pixels to the floor. Reversing
-                // that with wings costs about twenty ticks and the charge does
-                // not have twenty ticks left; finishing the landing refills the
-                // flight budget and makes the very next tick a ground jump.
-                vertical = 1;
-                phase = "fishron-wing-charge-landing";
-                return;
-            }
-            if (separation >= EscapeSufficient)
-            {
-                // Far enough from the line. The rest of the charge is spent
-                // widening the gap, because the distance at the *next* charge
-                // edge is what decides whether that charge is escapable at all.
-                // The escape's own horizontal points back towards the side the
-                // charge came from, so it is replaced here.
-                vertical = 0;
-                horizontal = boss.Center.X >= player.Center.X ? -1 : 1;
-                phase = "fishron-wing-charge-glide";
-                return;
-            }
-            if (vertical > 0) vertical = -1;
-            phase = "fishron-wing-charge-ascent";
         }
 
         /// <summary>Compatibility overload retained for synthetic adapters which
@@ -336,15 +245,17 @@ namespace Chaite.Core
         }
 
         /// <summary>The charge velocity is committed before the first dash tick,
-        /// so the whole problem is the perpendicular axis. Note that the
-        /// observed offset is <em>parallel</em> to that velocity by
-        /// construction: AI_069 aims the charge straight at the player, so the
-        /// perpendicular component is near zero and one of the two perpendicular
-        /// directions has to be chosen on its merits.
+        /// so the whole problem is the perpendicular axis. The observed offset
+        /// is <em>parallel</em> to that velocity by construction: AI_069 aims
+        /// the charge straight at the player, so the perpendicular component is
+        /// near zero and one of the two perpendicular directions has to be
+        /// chosen on its merits.
         ///
-        /// The upward one is chosen. A falling player is carried into the region
-        /// the Boss is still travelling into once it has passed, and the ground
-        /// is what refills the flight budget.</summary>
+        /// The side is taken from the signed offset, or from the offset's
+        /// current rate when the offset itself is still ambiguous, and only
+        /// falls back to "upward" when neither is committed. Choosing a fixed
+        /// side instead walks the player back across the charge line whenever
+        /// they were already separating on the other one.</summary>
         private void LatchEscape(PlayerSnapshot player, in TargetSnapshot boss)
         {
             var vx = boss.Velocity.X;
@@ -363,19 +274,13 @@ namespace Chaite.Core
             _lineY = boss.Center.Y;
             _lineDirX = vx;
             _lineDirY = vy;
-            // The two perpendicular directions separate equally in principle,
-            // but not from where the player actually is. The offset is signed
-            // against the line and the escape has to increase it; picking a
-            // fixed side walks the player back across the charge whenever they
-            // were already separating on the other one.
             var cross = (player.Center.X - _lineX) * vy -
                 (player.Center.Y - _lineY) * vx;
             var crossVelocity = player.Velocity.X * vy -
                 player.Velocity.Y * vx;
             // (dirY, -dirX) adds +1 to the signed offset and (-dirY, dirX)
-            // subtracts one, so the side is simply the sign of the offset — or
-            // of the offset's current rate when the offset itself is still
-            // ambiguous. Getting this backwards walks the player across the
+            // subtracts one, so the side is the sign of the offset, or of the
+            // offset's rate. Getting this backwards walks the player across the
             // charge line, which is exactly what the dodge must never do.
             int side;
             if (Math.Abs(cross) > CommittedOffset) side = cross > 0f ? 1 : -1;
@@ -405,6 +310,160 @@ namespace Chaite.Core
             _escapeLatched = true;
         }
 
+        private void ChargeEscape(PlayerSnapshot player, in TargetSnapshot boss,
+            out int horizontal, out int vertical, out string phase)
+        {
+            Split(_escapeX, _escapeY, out horizontal, out vertical);
+            var separation = PerpendicularSeparation(player);
+            if (player.OnGround ||
+                player.Center.Y >= _floorY - GroundedBand - player.Height * 0.5f)
+            {
+                // A grounded jump is the only input that produces perpendicular
+                // speed on the very first tick of a charge.
+                vertical = -1;
+                phase = "fishron-wing-charge-ground-jump";
+                return;
+            }
+            if (player.Velocity.Y > 3f &&
+                player.Center.Y >= _floorY - LandingBand)
+            {
+                // Already falling the last few pixels to the floor. Reversing
+                // that with wings costs about twenty ticks and the charge does
+                // not have twenty ticks left; finishing the landing refills the
+                // flight budget and makes the very next tick a ground jump.
+                vertical = 1;
+                phase = "fishron-wing-charge-landing";
+                return;
+            }
+            if (separation >= EscapeSufficient)
+            {
+                // Far enough from the line. The rest of the charge is spent
+                // widening the gap, because the distance at the *next* charge
+                // edge is what decides whether that charge is escapable at all.
+                vertical = 0;
+                horizontal = AwayFromBossAxis(boss.Center.X - player.Center.X);
+                phase = "fishron-wing-charge-glide";
+                return;
+            }
+            if (vertical > 0) vertical = -1;
+            phase = "fishron-wing-charge-ascent";
+        }
+
+        /// <summary>Everything that is not a charge.
+        ///
+        /// AI_069's ai[3] counter selects the next projectile attack outright,
+        /// so the Sharknado phase is known several charges in advance. The
+        /// reviewed counter-play is to spend the flurry before it ending at an
+        /// arena edge, so that once the Sharknados exist the circuit can run the
+        /// whole width of the arena away from them. Sharkrons are fired from a
+        /// fixed tornado and have limited range, so distance is the whole
+        /// defence; nothing here tries to out-turn a homing projectile.
+        ///
+        /// Between those phases the circuit walks the ocean band on foot:
+        /// contact with support refills the flight budget and makes the next
+        /// charge jump available on its first tick.</summary>
+        private void Cruise(PlayerSnapshot player, in TargetSnapshot boss,
+            int state, int sequence, int timer, out int horizontal,
+            out int vertical, out string phase)
+        {
+            horizontal = 0;
+            vertical = 0;
+            phase = null;
+            var gap = boss.Center.X - player.Center.X;
+            var separation = Distance(player, in boss);
+            if (separation < PersonalSpace && state >= 0)
+            {
+                // Nothing else matters while the Boss body is this close.
+                horizontal = gap >= 0f ? -1 : 1;
+                vertical = boss.Center.Y >= player.Center.Y ? -1 : 1;
+                phase = "fishron-wing-personal-space";
+                return;
+            }
+            // Fires regardless of the gap: a close charge is exactly when an
+            // already-rising player matters most.
+            var preJump = PredictChargImminent(state, timer);
+            if (preJump)
+            {
+                // Hold the jump for the whole window. Wing flight only adds
+                // about 0.1 px/tick per tick of climb, so starting from zero at
+                // the charge edge is worth almost nothing; twenty ticks of
+                // pre-load turns the same escape into roughly 120 px. Landing
+                // refills the flight budget, so this is not paid for twice.
+                //
+                // The one thing that outranks the pre-load is the Boss body:
+                // AI_069 hovers 200 px above the player, so a climb from a few
+                // tens of pixels below the hover point flies straight into it.
+                horizontal = AwayFromBossAxis(gap);
+                vertical = -1;
+                phase = "fishron-wing-precharge-jump";
+                return;
+            }
+            if (state == 3 || state == 8)
+            {
+                // The Sharknado is a fixed column near the Boss. Clear it
+                // horizontally for the whole phase; the column cannot follow.
+                horizontal = AwayFromBossAxis(gap);
+                vertical = player.OnGround ? 0 : 1;
+                phase = "fishron-wing-sharknado-exit";
+                return;
+            }
+            if (state == 2 || state == 7)
+            {
+                // Detonating Bubbles: laid along the Boss line in phase one and
+                // around the Boss in phase two. They follow the player and
+                // explode, so the useful input is to keep crossing their line
+                // rather than to try to outrun them.
+                AwayFromBoss(player, in boss, out horizontal, out vertical);
+                vertical = player.OnGround ? 0 : 1;
+                phase = "fishron-wing-bubble-line";
+                return;
+            }
+            if (TornadoIncoming(state, sequence))
+            {
+                // Run the flurry out towards the far edge, so the incoming
+                // Sharknado lands behind the circuit and the arena's whole
+                // width stays available to run back into. Fleeing the Boss
+                // reaches that edge on its own and never crosses him.
+                horizontal = AwayFromBossAxis(gap);
+                vertical = player.OnGround ? 0 : 1;
+                phase = "fishron-wing-tornado-bait";
+                return;
+            }
+            if (Math.Abs(gap) < StandoffPixels)
+            {
+                horizontal = AwayFromBossAxis(gap);
+                vertical = player.OnGround ? 0 : 1;
+                phase = "fishron-wing-standoff";
+                return;
+            }
+            horizontal = _patrol;
+            if (!player.OnGround)
+            {
+                vertical = 1;
+                phase = "fishron-wing-cruise-descend";
+                return;
+            }
+            vertical = 0;
+            phase = "fishron-wing-cruise-" + state;
+        }
+
+        private static float Distance(PlayerSnapshot player,
+            in TargetSnapshot boss)
+        {
+            var dx = boss.Center.X - player.Center.X;
+            var dy = boss.Center.Y - player.Center.Y;
+            return (float)Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        /// <summary>AI_069 chooses the next projectile attack from ai[3] when a
+        /// hover ends, so the value while hovering names the attack that is
+        /// about to happen. 11 selects the phase-one Sharknado pair and 7 the
+        /// phase-two Cthulhunado.</summary>
+        private static bool TornadoIncoming(int state, int sequence) =>
+            (state == 0 && sequence >= 9) || (state == 5 && sequence >= 6);
+
+        private static int AwayFromBossAxis(float gap) => gap >= 0f ? -1 : 1;
+
         /// <summary>Perpendicular to the Boss-to-player line, with the sign
         /// chosen to widen the horizontal gap rather than close it.</summary>
         private static void AwayFromBoss(PlayerSnapshot player,
@@ -422,10 +481,6 @@ namespace Chaite.Core
             Split(perpX, perpY, out horizontal, out vertical);
         }
 
-        /// <summary>Never used to steer towards the Boss: a pre-charge jump
-        /// still has to keep the standoff gap open.</summary>
-        private static int ContinuationAxis(float gap) => gap >= 0f ? -1 : 1;
-
         /// <summary>True once the current hover is close enough to its end that
         /// the next charge is imminent.</summary>
         private bool PredictChargImminent(int state, int timer)
@@ -441,6 +496,10 @@ namespace Chaite.Core
             Math.Abs((player.Center.X - _lineX) * _lineDirY -
                 (player.Center.Y - _lineY) * _lineDirX);
 
+        /// <summary>Keeps the circuit inside the geometry AI_069 reads for its
+        /// own enrage test. During a charge an edge only cancels the offending
+        /// axis: reversing it would turn the perpendicular escape back into the
+        /// charge line.</summary>
         private void ApplyArena(PlayerSnapshot player, bool chargeEscape,
             ref int horizontal, ref int vertical)
         {

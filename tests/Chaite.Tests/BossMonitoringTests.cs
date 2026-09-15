@@ -113,7 +113,7 @@ namespace Chaite.Tests
             Equal(first.Horizontal, second.Horizontal);
             Equal(first.Vertical, second.Vertical);
             Equal(first.Dash, second.Dash);
-            Equal("fishron-wing-sharkron-line", first.Phase);
+            Equal("fishron-wing-bubble-line", first.Phase);
         }
 
         private static void FishronFormulaRejectsImpossibleNativeTuples()
