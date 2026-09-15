@@ -115,6 +115,32 @@ namespace Chaite.Core
                 output.Jump = output.Vertical < 0;
                 output.Phase = "empress-flight-sun-dance-pivot";
             }
+            else if (input.NativeState == 1)
+            {
+                // Inter-attack reposition is 15.6% of the damage still being
+                // taken, all of it from 873, and the geometry says the unsafe
+                // region is below her rather than close to her:
+                //
+                //   below/centred <400px   257 frames   20.6%
+                //   wellBelow/right 400-900 133 frames   32.3%
+                //   below/right     400-900  35 frames   25.7%
+                //   level/right     <400     88 frames    0.0%
+                //   level/left      <400     85 frames    1.2%
+                //   above/...       >900    133 frames    0.0%
+                //
+                // A radial retreat from below drives the player deeper into
+                // that region, so the vertical component is inverted here:
+                // when the player is below her the circuit climbs toward her
+                // level instead. No 636 body damage was recorded in this state
+                // at all, so levelling out carries no contact risk.
+                Standoff(player, in boss, _loopTicks, _loopDirection,
+                    out var horizontal, out var vertical);
+                if (player.Center.Y - boss.Center.Y > LevelBandPixels) vertical = -1;
+                output.Horizontal = horizontal;
+                output.Vertical = vertical;
+                output.Jump = vertical < 0;
+                output.Phase = "empress-flight-inter-attack-reposition";
+            }
             else
             {
                 Standoff(player, in boss, _loopTicks, _loopDirection,
@@ -148,6 +174,11 @@ namespace Chaite.Core
         /// the clearance is set above the measured boundary rather than at
         /// it.</summary>
         public const float SunDanceLateralClearance = 200f;
+
+        /// <summary>Vertical offset below the Empress that state 1 treats as the
+        /// unsafe side of the fight. Measured hazard there is 20.6-32.3% against
+        /// 0.0-1.2% for the same distances taken level with her.</summary>
+        public const float LevelBandPixels = 100f;
 
         /// <summary>Radius component small enough to be treated as zero, so an
         /// exactly axis-aligned separation still produces a usable input.</summary>
