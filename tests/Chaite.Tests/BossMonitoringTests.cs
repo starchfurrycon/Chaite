@@ -10,7 +10,7 @@ namespace Chaite.Tests
         /// <summary>The threats a wing circuit cannot answer by moving. The
         /// split that matters is the removal cost, not the homing, so the
         /// one-life bubble and the two armoured ones must stay distinct.</summary>
-        private static void FishronThreatIdentitiesSeparateByRemovalCost()
+        private static void FishronThreatIdentitiesKeepTheWeaponBarWide()
         {
             True(FishronThreatCatalog.IsHomingBubble(
                 FishronThreatCatalog.DetonatingBubbleType));
@@ -22,12 +22,26 @@ namespace Chaite.Tests
                 FishronThreatCatalog.SharknadoType));
             False(FishronThreatCatalog.IsHomingBubble(
                 FishronThreatCatalog.SharknadoBoltType));
-            False(FishronThreatCatalog.IsArmouredBubble(
+            // Only the one-life bubble has to be shot down. The two the
+            // Sharknado emits are answered by where the circuit lets the
+            // tornado land, which is what keeps the weapon bar wide.
+            True(FishronThreatCatalog.RequiresWeaponClearance(
                 FishronThreatCatalog.DetonatingBubbleType));
-            True(FishronThreatCatalog.IsArmouredBubble(
+            False(FishronThreatCatalog.RequiresWeaponClearance(
                 FishronThreatCatalog.LargeSharknadoBubbleType));
-            True(FishronThreatCatalog.IsArmouredBubble(
+            False(FishronThreatCatalog.RequiresWeaponClearance(
                 FishronThreatCatalog.SmallSharknadoBubbleType));
+            True(FishronThreatCatalog.IsSharknadoSpawnedBubble(
+                FishronThreatCatalog.LargeSharknadoBubbleType));
+            True(FishronThreatCatalog.IsSharknadoSpawnedBubble(
+                FishronThreatCatalog.SmallSharknadoBubbleType));
+            False(FishronThreatCatalog.IsSharknadoSpawnedBubble(
+                FishronThreatCatalog.DetonatingBubbleType));
+            True(FishronThreatCatalog.IsReviewedBubbleClearer(
+                FishronThreatCatalog.GoldenShowerItem));
+            True(FishronThreatCatalog.IsReviewedBubbleClearer(
+                FishronThreatCatalog.RazorbladeTyphoonItem));
+            False(FishronThreatCatalog.IsReviewedBubbleClearer(757));
             Equal(1, FishronThreatCatalog.DetonatingBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleDefense);

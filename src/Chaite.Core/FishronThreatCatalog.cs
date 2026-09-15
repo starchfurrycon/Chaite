@@ -5,11 +5,12 @@ namespace Chaite.Core
     /// circuit cannot answer by moving. Values are read from the pinned
     /// 1.4.5.8 assembly; see docs/fishron-threat-identities.md.
     ///
-    /// The important split is that the two bubble families behave the same way
-    /// — strong homing, no way to outrun them — but do not cost the same to
-    /// remove. The Detonating Bubble dies to any single hit; the two
-    /// Sharknado-generating bubbles carry 100 life behind 100 defence and need
-    /// a weapon that actually deals damage through that.
+    /// Only the Detonating Bubble needs weapon fire. The two Sharknado
+    /// bubbles are emitted by the tornado itself, and the reviewed play puts
+    /// that tornado at an arena edge, so they are answered by position rather
+    /// than by damage. That is what keeps the weapon requirement broad: the
+    /// target has one life and no defence, so coverage and rate decide it and
+    /// damage does not.
     /// </summary>
     public static class FishronThreatCatalog
     {
@@ -42,10 +43,31 @@ namespace Chaite.Core
             npcType == LargeSharknadoBubbleType ||
             npcType == SmallSharknadoBubbleType;
 
-        /// <summary>The two bubbles that survive a single hit, so their removal
-        /// is what the reviewed bubble-clearing weapon has to be judged on.</summary>
-        public static bool IsArmouredBubble(int npcType) =>
+        /// <summary>The two bubbles the Sharknado emits at the arena edge.
+        /// They survive a single hit, but the reviewed circuit never has to
+        /// remove them: it chooses where the tornado lands instead.</summary>
+        public static bool IsSharknadoSpawnedBubble(int npcType) =>
             npcType == LargeSharknadoBubbleType ||
             npcType == SmallSharknadoBubbleType;
+
+        /// <summary>The only Fishron threat that must be shot down, and the
+        /// reason the route requires a wide, fast weapon in the hotbar.</summary>
+        public static bool RequiresWeaponClearance(int npcType) =>
+            npcType == DetonatingBubbleType;
+
+        /// <summary>Reviewed bubble-clearing weapons. All three are chosen for
+        /// coverage and rate rather than damage, because the target has one
+        /// life and no defence. Item ids read from the pinned assembly.</summary>
+        public const int GoldenShowerItem = 1336;
+        public const int RazorbladeTyphoonItem = 2622;
+        public const int RazorpineItem = 1930;
+        /// <summary>Inferno Potion destroys Detonating Bubbles without any
+        /// weapon input at all.</summary>
+        public const int InfernoPotionItem = 2348;
+
+        public static bool IsReviewedBubbleClearer(int itemType) =>
+            itemType == GoldenShowerItem ||
+            itemType == RazorbladeTyphoonItem ||
+            itemType == RazorpineItem;
     }
 }
