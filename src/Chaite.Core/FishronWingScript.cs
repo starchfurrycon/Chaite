@@ -222,6 +222,29 @@ namespace Chaite.Core
             // so the next close pass chooses its side from its own geometry.
             if (phase != PersonalSpacePhase) _personalSpaceLatched = false;
 
+            // A trained policy for this route replaces only the movement
+            // decision. Route, form and mount admission above are untouched,
+            // because that part is already verified.
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned != null)
+            {
+                int learnedHorizontal, learnedVertical;
+                bool learnedJump, learnedDash;
+                if (learned.TryDecide(in input, player, in boss, arena,
+                        out learnedHorizontal, out learnedVertical,
+                        out learnedJump, out learnedDash))
+                {
+                    output.Horizontal = learnedHorizontal;
+                    output.Vertical = learnedVertical;
+                    output.Jump = learnedJump;
+                    output.Dash = learnedDash;
+                    output.Phase = "fishron-wing-learned";
+                    _previousState = state;
+                    _previousSequence = input.NativeSequence;
+                    _previousTimer = input.NativeTimer;
+                    return output;
+                }
+            }
             output.Horizontal = horizontal;
             output.Vertical = vertical;
             output.Jump = vertical < 0;
