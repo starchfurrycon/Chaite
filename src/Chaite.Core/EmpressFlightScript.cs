@@ -97,8 +97,13 @@ namespace Chaite.Core
             }
             else if (input.NativeState == 6)
             {
-                Tangent(in input, _loopDirection, out output.Horizontal,
-                    out output.Vertical);
+                // Sun Dance is 58% of the damage still being taken, and it
+                // lands at a median of 481 px -- the 26% band of the distance
+                // curve -- because the fixed quadrant diagonal only points away
+                // from the body on 84% of its frames. The same standoff policy
+                // that fixed the other states belongs here too.
+                Standoff(player, in boss, _loopTicks, _loopDirection,
+                    out output.Horizontal, out output.Vertical);
                 output.Jump = output.Vertical < 0;
                 output.Phase = "empress-flight-sun-dance-pivot";
             }
@@ -181,13 +186,6 @@ namespace Chaite.Core
                     vertical = loop;
                     break;
             }
-        }
-
-        private static void Tangent(in FormulaScriptInput input, int loop,
-            out int horizontal, out int vertical)
-        {
-            horizontal = input.PlayerBelowBoss ? -loop : loop;
-            vertical = input.PlayerRightOfBoss ? -loop : loop;
         }
 
         private static string Phase(in FormulaScriptInput input)
