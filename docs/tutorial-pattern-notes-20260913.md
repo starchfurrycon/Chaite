@@ -8,6 +8,11 @@ meant to replace blind scoring tuning with per-attack deterministic responses.
 - Phase 1 (100%-50%): 5 charges -> 21 detonating bubbles -> 5 charges ->
   Sharknado (29 tiles, 9s, 6 Sharkrons). Move vertically the instant a charge
   starts. Inferno Potion auto-pops bubbles.
+  - CORRECTION (user, 2026-09-15): the bubbles are meant to be *shot down*.
+    They are one-life NPCs, so a high fire rate or a wide/piercing weapon clears
+    them; weaving left and right to dodge them was the mistake, and the
+    `bubble-line` branch's 39% per-frame direction flip is a defect, not intent.
+    The Inferno ring only covers what reaches the player.
 - Phase 2 (50%-15%): 3 faster charges per set (~1s apart), 31 circling bubbles,
   tracking Cthulhunado 58x23 tiles for 14s with 12 Sharkrons. Drag tornadoes
   to arena edges; keep center clear.
@@ -67,4 +72,11 @@ meant to replace blind scoring tuning with per-attack deterministic responses.
 - Expert/Master `FishronStrategy` certifies Shield of Cthulhu as the burst
   baseline, so the planner can counter-dash during the fixed dash windows;
   full triple-dash evasion is achieved by never treating state 11 as a
-  generic orbit and by latching the charge escape direction for the group.
+  generic orbit.
+- FALSIFIED (2026-09-15): this file used to end with "and by latching the charge
+  escape direction for the group". Latching it was measured on ten seeds and is
+  clearly worse -- 1 win / 78 hits against 3 / 73 for the baseline and 4 / 75
+  with only the body latch. A charge is aimed continuously at the player's
+  current position, so its side is feedback and must be re-derived every frame;
+  the *beat* is scheduling and is the thing that must be latched. See
+  `docs/continuation-20260915.md`.
