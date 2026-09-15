@@ -781,6 +781,19 @@ namespace Chaite.Core
             FormulaScriptInput input;
             if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
+            if (target.Type == SupportedBossPolicy.DukeFishronType)
+            {
+                DukeFishronNativeEnrageObservation enrage;
+                if (!TryGetFishronEnrage(snapshot, target.Key, out enrage) ||
+                    !FishronFormulaStateContract.IsValid(in input,
+                        snapshot.Difficulty, enrage.NativeEnraged))
+                    return UnsupportedMobilityRoutePlan(plan,
+                        "猪鲨原生 AI 状态/时钟不在已审核公式表");
+            }
+            else if (!EmpressFormulaStateContract.IsValid(in input,
+                    snapshot.Difficulty))
+                return UnsupportedMobilityRoutePlan(plan,
+                    "光女原生 AI 状态/时钟不在已审核公式表");
             FormulaScriptOutput script;
             if (_formulaRoute == FormulaRoute.FishronFairyWingsDash)
                 script = _fishronFairyWingScript.Tick(in input,
@@ -835,6 +848,23 @@ namespace Chaite.Core
             ApplyConsumables(snapshot, ref plan);
             RememberPlan(plan);
             return plan;
+        }
+
+        private static bool TryGetFishronEnrage(CombatSnapshot snapshot,
+            int npcKey, out DukeFishronNativeEnrageObservation observation)
+        {
+            observation = default(DukeFishronNativeEnrageObservation);
+            if (snapshot?.PriorityBoss == null) return false;
+            var values = snapshot.PriorityBoss.DukeFishrons;
+            for (var i = 0; i < values.Count; i++)
+            {
+                if (values[i].NpcKey != npcKey || !values[i].Known) continue;
+                observation = values[i];
+                string reason;
+                return PriorityBossNativeContextContract.TryValidate(
+                    in observation, out reason);
+            }
+            return false;
         }
 
         public ControlPlan PlanSurvival(CombatSnapshot snapshot)

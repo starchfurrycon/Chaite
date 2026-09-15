@@ -20,6 +20,7 @@ namespace Chaite.Tests
             Run(nameof(FishronShieldEdgeIsEarlyAndSingle), FishronShieldEdgeIsEarlyAndSingle);
             Run(nameof(FishronCloseContactDoesNotCounterDash), FishronCloseContactDoesNotCounterDash);
             Run(nameof(FishronWingScriptIgnoresThreatListContents), FishronWingScriptIgnoresThreatListContents);
+            Run(nameof(FishronFormulaRejectsImpossibleNativeTuples), FishronFormulaRejectsImpossibleNativeTuples);
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
             Run(nameof(FishronChilletRejectsWrongMountAndShortRunway), FishronChilletRejectsWrongMountAndShortRunway);
             Run(nameof(FishronChilletLockedRouteAcceptsOnlyItsActiveMount), FishronChilletLockedRouteAcceptsOnlyItsActiveMount);

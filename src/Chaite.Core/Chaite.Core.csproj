@@ -57,6 +57,7 @@
     <Compile Include="FishronWingScript.cs" />
     <Compile Include="FishronChilletScript.cs" />
     <Compile Include="FishronQueenSlimeScript.cs" />
+    <Compile Include="FishronFormulaStateContract.cs" />
     <Compile Include="EmpressFlightScript.cs" />
     <Compile Include="EmpressWingScript.cs" />
     <Compile Include="EmpressFormulaStateContract.cs" />

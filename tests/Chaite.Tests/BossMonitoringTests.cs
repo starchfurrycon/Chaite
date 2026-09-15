@@ -120,6 +120,36 @@ namespace Chaite.Tests
             Equal("fishron-wing-hazard-run-edge", first.Phase);
         }
 
+        private static void FishronFormulaRejectsImpossibleNativeTuples()
+        {
+            var difficulty = new DifficultySnapshot();
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash,
+                NativeState = 11, NativeTimer = 1, NativeSequence = 0 };
+            False(FishronFormulaStateContract.IsValid(in input,
+                difficulty, false));
+            difficulty.Expert = true;
+            True(FishronFormulaStateContract.IsValid(in input,
+                difficulty, false));
+            input.NativeSequence = 1;
+            False(FishronFormulaStateContract.IsValid(in input,
+                difficulty, false));
+            input.NativeState = 1;
+            input.NativeSequence = 0;
+            input.NativeTimer = 29;
+            False(FishronFormulaStateContract.IsValid(in input,
+                difficulty, false));
+            input.NativeTimer = 27;
+            True(FishronFormulaStateContract.IsValid(in input,
+                difficulty, false));
+            input.NativeTimer = 27;
+            True(FishronFormulaStateContract.IsValid(in input,
+                difficulty, true));
+            input.NativeTimer = 28;
+            False(FishronFormulaStateContract.IsValid(in input,
+                difficulty, true));
+        }
+
         private static void FishronChilletUsesReviewedNativeDashCadence()
         {
             var controller = new FishronChilletScript();
