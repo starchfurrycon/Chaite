@@ -97,13 +97,21 @@ namespace Chaite.Core
             }
             else if (input.NativeState == 6)
             {
-                // Sun Dance is 58% of the damage still being taken, and it
-                // lands at a median of 481 px -- the 26% band of the distance
-                // curve -- because the fixed quadrant diagonal only points away
-                // from the body on 84% of its frames. The same standoff policy
-                // that fixed the other states belongs here too.
+                // Sun Dance is 58% of the damage still being taken. It lands at a
+                // median of 481 px, in the 26% band, and the reason is the
+                // player's bearing rather than the range: bucketing every Sun
+                // Dance frame by position relative to her gives a hazard of
+                // 97-100% within 150 px of her vertical axis (69 frames) against
+                // 4.6-18.8% once laterally offset (429 frames). Retreating
+                // straight down that axis keeps the player inside the beam
+                // column, and the radial retreat below commands exactly that
+                // whenever the player is directly beneath her.
                 Standoff(player, in boss, _loopTicks, _loopDirection,
                     out output.Horizontal, out output.Vertical);
+                var sunDanceDx = player.Center.X - boss.Center.X;
+                if (Math.Abs(sunDanceDx) < SunDanceLateralClearance)
+                    output.Horizontal = sunDanceDx > 0f ? 1 :
+                        sunDanceDx < 0f ? -1 : _loopDirection;
                 output.Jump = output.Vertical < 0;
                 output.Phase = "empress-flight-sun-dance-pivot";
             }
@@ -133,6 +141,13 @@ namespace Chaite.Core
         /// resumes once the player is outside this radius, which keeps the
         /// player from simply running off the arena.</summary>
         public const float StandoffRadius = 900f;
+
+        /// <summary>Lateral offset from the Empress's vertical axis that the
+        /// Sun Dance circuit insists on. Measured hazard during that state is
+        /// 97-100% inside 150 px of the axis against 4.6-18.8% outside it, so
+        /// the clearance is set above the measured boundary rather than at
+        /// it.</summary>
+        public const float SunDanceLateralClearance = 200f;
 
         /// <summary>Radius component small enough to be treated as zero, so an
         /// exactly axis-aligned separation still produces a usable input.</summary>
