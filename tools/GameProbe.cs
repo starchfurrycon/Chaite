@@ -527,6 +527,14 @@ public static class ChaiteGameProbe
             return key;
         }
     }
+    /// <summary>Remaining ticks of BuffID.Inferno (116), or 0 when it is not up.</summary>
+    static int InfernoTicks(Player p)
+    {
+        if(p==null || p.buffType==null || p.buffTime==null) return 0;
+        for(int i=0;i<p.buffType.Length && i<p.buffTime.Length;i++)
+            if(p.buffType[i]==116) return p.buffTime[i];
+        return 0;
+    }
     static bool BattleNpcIsPriority(NPC npc)
     {
         return npc!=null && ((npc.active && npc.boss) ||
@@ -616,6 +624,7 @@ public static class ChaiteGameProbe
                 {"horizontal",observedPlan.Horizontal},{"jump",observedPlan.Jump},{"jumpAction",observedPlan.JumpAction.ToString()},
                 {"drop",observedPlan.Drop},{"dash",observedPlan.Dash},{"toggleMount",observedPlan.ToggleMount},
                 {"quickHeal",observedPlan.QuickHeal},{"quickMana",observedPlan.QuickMana},
+                {"quickBuff",observedPlan.QuickBuff},
                 {"gravityControl",observedPlan.GravityControl},{"featherFallUp",observedPlan.FeatherFallUp},
                 {"preferredWeaponSlot",observedPlan.PreferredWeaponSlot},
                 {"aim",new Dictionary<string,object>{{"x",observedPlan.AimWorld.X},{"y",observedPlan.AimWorld.Y}}},
@@ -651,6 +660,11 @@ public static class ChaiteGameProbe
                      // rather than only that the input was pressed.
                      {"mountActive",p.mount.Active},{"mountType",p.mount.Type},
                      {"poisoned",p.poisoned},
+                     // The Inferno ring is the route's stated bubble-clearance
+                     // premise, so the run has to show whether the buff is
+                     // actually up rather than only that a refresh was asked
+                     // for. 116 is BuffID.Inferno.
+                     {"infernoTicks",InfernoTicks(p)},
                      {"wingsLogic",p.wingsLogic},{"grapCount",p.grapCount},{"controlUseItem",p.controlUseItem},
                      {"dashType",p.dashType},{"dashDelay",p.dashDelay},{"eocDash",p.eocDash},
                      {"eocHit",p.eocHit},{"immuneTime",p.immuneTime},{"controlDash",p.controlDash},
