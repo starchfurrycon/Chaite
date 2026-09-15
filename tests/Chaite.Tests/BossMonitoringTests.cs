@@ -133,6 +133,41 @@ namespace Chaite.Tests
                 "phase=" + far.Phase);
         }
 
+        /// <summary>The body escape is one decision per episode. AI_069 crosses
+        /// the player on its way through a charge, so re-deriving the side every
+        /// frame makes the sign follow whatever sub-pixel difference happens to
+        /// exist while the body is on top of the player.</summary>
+        private static void FishronWingLatchesTheBodyEscapeSide()
+        {
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 5000),
+                Width = 20, Height = 40, WorldLeft = 0, WorldRight = 67200,
+                WingTime = 130, OnGround = true };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2120, 5000), Width = 150, Height = 100 };
+            var arena = new ArenaSnapshot();
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash, NativeState = 0,
+                NativeTimer = 1 };
+            var controller = new FishronWingScript();
+            var first = controller.Tick(in input, player, in boss, arena);
+            Equal("fishron-wing-personal-space", first.Phase);
+            Equal(-1, first.Horizontal);
+            // The Boss crosses to the other side without ever leaving the
+            // personal-space radius.
+            boss.Position = new Vec2(1890, 5000);
+            var second = controller.Tick(in input, player, in boss, arena);
+            Equal("fishron-wing-personal-space", second.Phase);
+            Equal(-1, second.Horizontal);
+            // Once the body is clear the next episode chooses its own side.
+            boss.Position = new Vec2(2600, 5000);
+            var clear = controller.Tick(in input, player, in boss, arena);
+            Equal("fishron-wing-standoff", clear.Phase);
+            boss.Position = new Vec2(1890, 5000);
+            var fresh = controller.Tick(in input, player, in boss, arena);
+            Equal("fishron-wing-personal-space", fresh.Phase);
+            Equal(1, fresh.Horizontal);
+        }
+
         /// <summary>A projectile attack restarts the charge group, so the cycle
         /// must begin again from its horizontal beat rather than continuing.</summary>
         private static void FishronWingRestartsCycleAfterProjectileAttack()

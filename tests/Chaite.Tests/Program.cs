@@ -19,6 +19,7 @@ namespace Chaite.Tests
             Run(nameof(FishronThreatIdentitiesKeepTheWeaponBarWide), FishronThreatIdentitiesKeepTheWeaponBarWide);
             Run(nameof(FishronWingFollowsReviewedChargeCycle), FishronWingFollowsReviewedChargeCycle);
             Run(nameof(FishronWingKeepsStandoffGap), FishronWingKeepsStandoffGap);
+            Run(nameof(FishronWingLatchesTheBodyEscapeSide), FishronWingLatchesTheBodyEscapeSide);
             Run(nameof(FishronWingRestartsCycleAfterProjectileAttack), FishronWingRestartsCycleAfterProjectileAttack);
             Run(nameof(FishronWingScriptIgnoresThreatListContents), FishronWingScriptIgnoresThreatListContents);
             Run(nameof(FishronFormulaRejectsImpossibleNativeTuples), FishronFormulaRejectsImpossibleNativeTuples);

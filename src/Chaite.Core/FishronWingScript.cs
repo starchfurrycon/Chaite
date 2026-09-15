@@ -89,8 +89,14 @@ namespace Chaite.Core
         /// all; the last few hover ticks are spent making sure it never does.</summary>
         private const int PreJumpTicks = 20;
 
+        /// <summary>The one branch name that carries a latched direction.</summary>
+        private const string PersonalSpacePhase = "fishron-wing-personal-space";
+
         private bool _initialized;
         private int _patrol = 1;
+        private bool _personalSpaceLatched;
+        private int _personalSpaceHorizontal;
+        private int _personalSpaceVertical;
         private int _previousState = int.MinValue;
         private int _previousSequence = int.MinValue;
         private int _previousTimer;
@@ -117,6 +123,9 @@ namespace Chaite.Core
             _previousSequence = int.MinValue;
             _previousTimer = 0;
             _patrol = 1;
+            _personalSpaceLatched = false;
+            _personalSpaceHorizontal = 0;
+            _personalSpaceVertical = 0;
             for (var i = 0; i < _hoverLimit.Length; i++)
                 _hoverLimit[i] = DefaultHoverLimit(i);
         }
@@ -209,6 +218,9 @@ namespace Chaite.Core
             }
             ApplyArena(player, ref horizontal, ref vertical);
             _patrol = horizontal == 0 ? _patrol : horizontal;
+            // A latched escape lives only as long as the episode that set it,
+            // so the next close pass chooses its side from its own geometry.
+            if (phase != PersonalSpacePhase) _personalSpaceLatched = false;
 
             output.Horizontal = horizontal;
             output.Vertical = vertical;
@@ -251,6 +263,16 @@ namespace Chaite.Core
             var worldRight = player.WorldRight;
             // Pick the ocean band the player actually occupies; AI_069 only
             // protects the band the fight started in.
+            //
+            // Both edges are deliberately *inside* the native world-border
+            // keep-out: Player.BordersMovement clamps the position to
+            // leftWorld + 640 and to rightWorld - 640 - width, so the left
+            // edge here can never be reached and the engine, not the circuit,
+            // performs that turnaround. Moving the edge out to the border was
+            // measured (see docs/formula-routes.md): it removes the cheap
+            // bubble hits that cluster there, but every seed then dies to a
+            // Cthulhunado at the end of the runway. The unreachable edge is
+            // load-bearing and must not be "fixed" without answering that.
             var leftDistance = player.Center.X - worldLeft;
             var rightDistance = worldRight - player.Center.X;
             if (leftDistance <= rightDistance)
@@ -377,9 +399,25 @@ namespace Chaite.Core
             if (separation < PersonalSpace && state >= 0)
             {
                 // Nothing else matters while the Boss body is this close.
-                horizontal = gap >= 0f ? -1 : 1;
-                vertical = boss.Center.Y >= player.Center.Y ? -1 : 1;
-                phase = "fishron-wing-personal-space";
+                //
+                // The escape side is latched once per episode, not re-derived
+                // from the Boss's current side. AI_069 crosses the player on
+                // its way through a charge, so a per-frame sign flips exactly
+                // while the body is on top of the player -- and that is the
+                // frame where the raw difference is pure noise: one death
+                // frame decided the whole escape on a 0.7 px gap. The latch
+                // keeps the circuit committed to leaving on one side instead
+                // of oscillating underneath the Boss.
+                if (!_personalSpaceLatched)
+                {
+                    _personalSpaceLatched = true;
+                    _personalSpaceHorizontal = AwayFromBossAxis(gap);
+                    _personalSpaceVertical =
+                        boss.Center.Y >= player.Center.Y ? -1 : 1;
+                }
+                horizontal = _personalSpaceHorizontal;
+                vertical = _personalSpaceVertical;
+                phase = PersonalSpacePhase;
                 return;
             }
             // Fires regardless of the gap: a close charge is exactly when an
