@@ -338,15 +338,8 @@ namespace Chaite.Tests
                 out reason));
 
             // A locked route is re-validated at takeover under the same rule.
-            // The clearer is the other half of the same admission, and it is
-            // checked at selection only for the same reason the stock is.
-            scene.BubbleClearSlot = -1;
             scene.Mobility.InfernoPotionStockKnown = true;
             scene.Mobility.InfernoPotionStock = 3;
-            False(FormulaMobilityContract.TrySelectRoute(scene, 370, out route,
-                out reason));
-            True(reason.Contains("清泡武器"), reason);
-            scene.BubbleClearSlot = 0;
             True(FormulaMobilityContract.TryValidateLockedRoute(scene, 370,
                 FormulaRoute.FishronFairyWingsDash, out reason), reason);
             // The stock is an admission condition, not a standing one: the

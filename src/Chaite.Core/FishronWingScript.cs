@@ -96,7 +96,6 @@ namespace Chaite.Core
         private int _previousTimer;
         private int _chargeIndex;
         private int _chargeBeat;
-        private int _chargeHorizontal;
         private bool _dashIssued;
         private float _tornadoX;
         private int _tornadoTicksLeft;
@@ -112,7 +111,6 @@ namespace Chaite.Core
             _initialized = false;
             _chargeIndex = 0;
             _chargeBeat = 0;
-            _chargeHorizontal = 1;
             _dashIssued = false;
             _tornadoTicksLeft = 0;
             _previousState = int.MinValue;
@@ -186,12 +184,6 @@ namespace Chaite.Core
                 // the player straight through the Boss body.
                 _chargeBeat = _chargeIndex % 3;
                 _chargeIndex++;
-                // The horizontal direction is latched here for the same reason
-                // the beat is: AI_069 aims the charge at the player, so it
-                // crosses them part-way through, and a direction re-derived
-                // from the Boss's current side flips at that moment and walks
-                // the player back over the line it just left.
-                _chargeHorizontal = boss.Center.X >= player.Center.X ? -1 : 1;
                 // The hover that just ended tells the circuit its real length,
                 // including the shortened enraged clock.
                 if (_previousState >= 0 && _previousState < _hoverLimit.Length &&
@@ -322,7 +314,7 @@ namespace Chaite.Core
             var away = _tornadoTicksLeft > 0 &&
                 Math.Abs(player.Center.X - _tornadoX) < TornadoClearance
                 ? (_tornadoX >= player.Center.X ? -1 : 1)
-                : _chargeHorizontal;
+                : (boss.Center.X >= player.Center.X ? -1 : 1);
             horizontal = away;
             switch (_chargeBeat)
             {
