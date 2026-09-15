@@ -1128,8 +1128,17 @@ public static class ChaiteGameProbe
                 scenario.EquipmentTier="late-pre-hardmode";
                 break;
             case "queen-slime": case "destroyer": case "twins": case "prime":
-            case "duke-fishron":
                 scenario.EquipmentTier="early-hardmode";
+                break;
+            case "duke-fishron":
+                // The staged phase fixtures keep the historical early-Hardmode
+                // loadout.  The formula monitor fixture instead reuses the
+                // hash-reviewed post-Plantera Chain Gun output: 78000 Expert
+                // life cannot be removed inside the probe budget by the
+                // Clockwork burst, and a route that cannot finish can never be
+                // accepted.  Weapons and ammo never select a formula route, so
+                // this changes mobility admission in no way.
+                scenario.EquipmentTier=IsMonitorFixture?"post-plantera":"early-hardmode";
                 break;
             case "empress-night": case "empress-day":
                 scenario.EquipmentTier="post-plantera";
@@ -1701,6 +1710,39 @@ public static class ChaiteGameProbe
             player.dashDelay=0;
             player.dashTime=0;
             scenario.Equipment="post-Plantera shroomite-bullet+lightning+demon-wings+frozen-turtle-shell+charm+ranger-emblem+chain-gun+ichor-bullets; greater-healing x20";
+            if (IsMonitorFixture && scenario.Id == "duke-fishron")
+            {
+                // Reviewed Fishron formula identities. Amphibian Boots (3990) is
+                // the literal "frog boots" source; Fishron Wings (2609) and
+                // Fairy Wings (761) are the two reviewed wing tiers, and the
+                // Shield of Cthulhu (3097) is the reviewed dash source.
+                player.armor[3].SetDefaults(ItemID.AmphibianBoots);
+                if(formulaRoute=="fishron-queen-slime")
+                {
+                    player.miscEquips[3].SetDefaults(ItemID.QueenSlimeMountSaddle);
+                    scenario.Equipment="Fishron formula fixture: fishron-queen-slime";
+                }
+                else if(formulaRoute=="fishron-trusty-chillet" ||
+                    formulaRoute=="fishron-trusty-chillet-ignis")
+                {
+                    player.miscEquips[3].SetDefaults(formulaRoute==
+                        "fishron-trusty-chillet"?ItemID.PalworldMountTrustyChillet:
+                        ItemID.PalworldMountTrustyChilletIgnis);
+                    scenario.Equipment="Fishron formula fixture: "+formulaRoute;
+                }
+                else
+                {
+                    player.armor[4].SetDefaults(formulaRoute=="fishron-strong-wing"?
+                        ItemID.FishronWings:ItemID.FairyWings);
+                    // The declared route identity is frog-boots + wing + dash.
+                    // A plain Frog Leg is accepted as the same source for real
+                    // players; the fixture pins the amphibian-boots reading.
+                    player.armor[5].SetDefaults(0);
+                    player.armor[8].SetDefaults(ItemID.EoCShield);
+                    scenario.Equipment="Fishron formula fixture: "+
+                        (formulaRoute??"fishron-fairy-wing");
+                }
+            }
             if (IsMonitorFixture && (scenario.Id == "empress-night" || scenario.Id == "empress-day"))
             {
                 if(formulaRoute=="empress-broom" ||

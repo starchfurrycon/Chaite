@@ -7,11 +7,17 @@ namespace Chaite.Core
         public const int ShieldOfCthulhuItem = 3097;
         public const int MasterNinjaGearItem = 984;
         public const int FrogLegItem = 2423;
+        public const int AmphibianBootsItem = 3990;
+        /// <summary>The reviewed "frog boots" source: Amphibian Boots are the
+        /// vanilla upgrade of a Frog Leg, so both satisfy the same route
+        /// identity. Neither is treated as a second, unrelated mobility item.</summary>
+        public static bool IsFrogSourceItem(int type) =>
+            type == FrogLegItem || type == AmphibianBootsItem;
         public static bool IsMobilityAccessory(int type) =>
             type == DemonWingsItem || type == LightningBootsItem ||
             type == ShieldOfCthulhuItem || type == 492 || type == 761 ||
             type == 2609 || type == 984 || type == 4981 || type == 3367 ||
-            type == FrogLegItem;
+            IsFrogSourceItem(type);
         public static bool TryValidate(CombatSnapshot s, int boss, out string reason)
         {
             FormulaRoute ignored;

@@ -1266,7 +1266,7 @@ namespace Chaite.Plugin
                 if (type == 3097) shieldSources++;
                 else if (type == 984) masterNinjaGearSources++;
                 else if (type == 977) tabiSources++;
-                if (type == FormulaMobilityContract.FrogLegItem)
+                if (FormulaMobilityContract.IsFrogSourceItem(type))
                     frogLegSources++;
                 if (FormulaMobilityContract.IsMobilityAccessory(type) &&
                     type != FormulaMobilityContract.DemonWingsItem &&
@@ -1274,7 +1274,7 @@ namespace Chaite.Plugin
                     type != FormulaMobilityContract.LightningBootsItem &&
                     type != FormulaMobilityContract.ShieldOfCthulhuItem &&
                     type != FormulaMobilityContract.MasterNinjaGearItem &&
-                    type != FormulaMobilityContract.FrogLegItem &&
+                    !FormulaMobilityContract.IsFrogSourceItem(type) &&
                     unexpectedFormulaMobilityItemType == 0)
                     unexpectedFormulaMobilityItemType = type;
             }

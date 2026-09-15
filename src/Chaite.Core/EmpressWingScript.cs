@@ -11,6 +11,7 @@ namespace Chaite.Core
         private bool _dashIssued;
         private int _loopDirection;
         private int _loopTicks;
+        private int _dashVertical;
         private int _previousState = int.MinValue;
         private int _previousSequence = int.MinValue;
 
@@ -52,6 +53,9 @@ namespace Chaite.Core
             if (input.NativeState == 1 &&
                 (_previousState == 8 || _previousState == 9))
                 _loopDirection *= -1;
+            if (attackEdge && (input.NativeState == 8 ||
+                    input.NativeState == 9))
+                _dashVertical = input.PlayerBelowBoss ? -1 : 1;
             if (attackEdge) _dashIssued = false;
             _previousState = input.NativeState;
             _previousSequence = input.NativeSequence;
@@ -64,12 +68,12 @@ namespace Chaite.Core
                 case 8:
                 case 9:
                     output.Horizontal = 0;
-                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                    output.Vertical = _dashVertical;
                     output.Phase = "empress-wing-dash-perpendicular";
                     break;
                 case 6:
-                    output.Horizontal = 0;
-                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                    Tangent(in input, _loopDirection, out output.Horizontal,
+                        out output.Vertical);
                     output.Phase = "empress-wing-sun-dance-pivot";
                     break;
                 default:
@@ -98,7 +102,7 @@ namespace Chaite.Core
         private static void OrbitQuadrant(int timer, int loop,
             out int horizontal, out int vertical)
         {
-            switch ((timer / 24) & 3)
+            switch ((timer / 60) & 3)
             {
                 case 1:
                     horizontal = -loop;
@@ -117,6 +121,13 @@ namespace Chaite.Core
                     vertical = loop;
                     break;
             }
+        }
+
+        private static void Tangent(in FormulaScriptInput input, int loop,
+            out int horizontal, out int vertical)
+        {
+            horizontal = input.PlayerBelowBoss ? -loop : loop;
+            vertical = input.PlayerRightOfBoss ? -loop : loop;
         }
     }
 }

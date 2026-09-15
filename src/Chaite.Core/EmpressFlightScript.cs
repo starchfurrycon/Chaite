@@ -18,12 +18,14 @@ namespace Chaite.Core
         private int _loopDirection;
         private int _loopTicks;
         private int _previousState = int.MinValue;
+        private int _dashVertical;
 
         public void Reset()
         {
             _initialized = false;
             _loopTicks = 0;
             _previousState = int.MinValue;
+            _dashVertical = 0;
         }
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
@@ -78,6 +80,9 @@ namespace Chaite.Core
             if (input.NativeState == 1 &&
                 (_previousState == 8 || _previousState == 9))
                 _loopDirection *= -1;
+            if (input.NativeState != _previousState &&
+                (input.NativeState == 8 || input.NativeState == 9))
+                _dashVertical = input.PlayerBelowBoss ? -1 : 1;
             _previousState = input.NativeState;
             _loopTicks++;
             if (input.NativeState == 8 || input.NativeState == 9)
@@ -86,14 +91,14 @@ namespace Chaite.Core
                 // lane with a perpendicular vertical input and keep the
                 // horizontal axis neutral so homing lances do not reverse us.
                 output.Horizontal = 0;
-                output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                output.Vertical = _dashVertical;
                 output.Jump = output.Vertical < 0;
                 output.Phase = "empress-flight-dash-perpendicular";
             }
             else if (input.NativeState == 6)
             {
-                output.Horizontal = 0;
-                output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                Tangent(in input, _loopDirection, out output.Horizontal,
+                    out output.Vertical);
                 output.Jump = output.Vertical < 0;
                 output.Phase = "empress-flight-sun-dance-pivot";
             }
@@ -112,7 +117,7 @@ namespace Chaite.Core
         private static void OrbitQuadrant(int ticks, int loop,
             out int horizontal, out int vertical)
         {
-            switch ((ticks / 24) & 3)
+            switch ((ticks / 45) & 3)
             {
                 case 1:
                     horizontal = -loop;
@@ -131,6 +136,13 @@ namespace Chaite.Core
                     vertical = loop;
                     break;
             }
+        }
+
+        private static void Tangent(in FormulaScriptInput input, int loop,
+            out int horizontal, out int vertical)
+        {
+            horizontal = input.PlayerBelowBoss ? -loop : loop;
+            vertical = input.PlayerRightOfBoss ? -loop : loop;
         }
 
         private static string Phase(in FormulaScriptInput input)

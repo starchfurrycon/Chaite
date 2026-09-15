@@ -7,62 +7,58 @@ namespace Chaite.Tests
 {
     internal static partial class Program
     {
-        private static void FishronWingCircuitKeepsDashDirectionAndLands()
+        /// <summary>The charge commits its velocity once, so the escape has to be
+        /// spent on the perpendicular axis and has to survive the Boss crossing
+        /// the player mid-charge.</summary>
+        private static void FishronWingChargeEscapeIsPerpendicularAndLatched()
         {
             var controller = new FishronWingScript();
-            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000), Width = 20, Height = 40,
-                WorldLeft = 0, WorldRight = 5000, WingTime = 130, OnGround = true };
-            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2600, 800), Width = 150, Height = 100 };
+            // Kept clear of the native enrage ceiling at y = 800, which the
+            // circuit is required to respect regardless of the charge.
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 5000), Width = 20, Height = 40,
+                WorldLeft = 0, WorldRight = 67200, WingTime = 130, OnGround = true };
+            // A pure horizontal charge: only the vertical axis can separate.
+            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2600, 5000),
+                Width = 150, Height = 100, Velocity = new Vec2(-17, 0) };
             var arena = new ArenaSnapshot();
-            var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash, NativeState = 0 };
-            var opening = controller.Tick(in input, player, in boss, arena);
-            True(opening.Horizontal == -1,
-                "opening horizontal=" + opening.Horizontal);
-            input.NativeState = 1; input.NativeTimer = 1;
-            player.OnGround = false; player.Velocity = new Vec2(-6, -5);
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash, NativeState = 1, NativeTimer = 1 };
             var escape = controller.Tick(in input, player, in boss, arena);
-            True(escape.Horizontal == -1,
-                "escape horizontal=" + escape.Horizontal);
-            True(escape.Vertical == -1,
-                "escape vertical=" + escape.Vertical);
+            Equal(0, escape.Horizontal);
+            Equal(-1, escape.Vertical);
+            True(escape.Jump);
             False(escape.Dash);
-            boss.Position = new Vec2(1500, 1200);
-            player.Velocity = new Vec2(-6, 2); input.NativeTimer = 15;
+            // The Boss crossing the player must not reverse the committed side.
+            input.NativeTimer = 15;
+            boss.Position = new Vec2(1900, 5000);
+            player.Position = new Vec2(1600, 5040);
+            player.OnGround = false;
             var crossed = controller.Tick(in input, player, in boss, arena);
-            Equal(escape.Horizontal, crossed.Horizontal);
             Equal(escape.Vertical, crossed.Vertical);
-            input.NativeState = 0;
-            player.Position = new Vec2(1200, 500);
-            var landing = controller.Tick(in input, player, in boss, arena);
-            Equal(1, landing.Vertical); False(landing.Jump);
-            player.Position = new Vec2(1000, 1000); player.OnGround = true; player.WingTime = 130;
-            var launched = controller.Tick(in input, player, in boss, arena);
-            True(launched.Horizontal == 1,
-                "launched horizontal=" + launched.Horizontal);
-            True(launched.Vertical == -1,
-                "launched vertical=" + launched.Vertical);
-            controller.Reset();
-            var reset = controller.Tick(in input, player, in boss, arena);
-            True(reset.Horizontal == -1,
-                "reset horizontal=" + reset.Horizontal);
         }
 
-        private static void FishronShieldEdgeIsEarlyAndSingle()
+        /// <summary>A charge starting closer than the standoff cannot be cleared
+        /// by any available perpendicular speed, so the circuit is required to
+        /// hold the horizontal gap open whenever nothing else claims the axis.</summary>
+        private static void FishronWingKeepsStandoffGap()
         {
             var controller = new FishronWingScript();
-            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000), Width = 20, Height = 40,
-                WorldLeft = 0, WorldRight = 5000, WingTime = 130 };
-            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2500, 970), Width = 150,
-                Height = 100, Velocity = new Vec2(-17, 0) };
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 5000),
+                Width = 20, Height = 40, WorldLeft = 0, WorldRight = 67200,
+                WingTime = 130, OnGround = true };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2300, 5000), Width = 150, Height = 100 };
             var arena = new ArenaSnapshot();
-            var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash,
-                NativeState = 1, NativeTimer = 1 };
-            var counter = controller.Tick(in input, player, in boss, arena, true);
-            True(counter.Dash); Equal(-1, counter.Horizontal);
-            input.NativeTimer++;
-            False(controller.Tick(in input, player, in boss, arena, true).Dash);
-            controller.Reset();
-            False(controller.Tick(in input, player, in boss, arena, false).Dash);
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash, NativeState = 0,
+                NativeTimer = 2 };
+            var close = controller.Tick(in input, player, in boss, arena);
+            Equal(-1, close.Horizontal);
+            // Past the standoff the circuit stops fleeing and patrols instead.
+            boss.Position = new Vec2(4400, 5000);
+            var far = controller.Tick(in input, player, in boss, arena);
+            True(far.Phase.StartsWith("fishron-wing-cruise"),
+                "phase=" + far.Phase);
         }
 
         private static void FishronCloseContactDoesNotCounterDash()
@@ -97,7 +93,7 @@ namespace Chaite.Tests
                 Velocity = new Vec2(-17, 4) };
             var input = new FormulaScriptInput { BossType = 370,
                 Route = FormulaRoute.FishronFairyWingsDash,
-                NativeState = 3, NativeTimer = 4 };
+                NativeState = 2, NativeTimer = 4 };
             var mobility = new MobilitySnapshot
             {
                 CanDash = true,
@@ -117,7 +113,7 @@ namespace Chaite.Tests
             Equal(first.Horizontal, second.Horizontal);
             Equal(first.Vertical, second.Vertical);
             Equal(first.Dash, second.Dash);
-            Equal("fishron-wing-hazard-run-edge", first.Phase);
+            Equal("fishron-wing-sharkron-line", first.Phase);
         }
 
         private static void FishronFormulaRejectsImpossibleNativeTuples()
@@ -397,6 +393,11 @@ namespace Chaite.Tests
                 mobility, difficulty);
             False(charge.Dash); Equal(0, charge.Horizontal);
             Equal(-1, charge.Vertical); True(charge.Jump);
+            input.PlayerBelowBoss = false;
+            input.NativeTimer++;
+            var crossed = script.Tick(in input, player, in boss, arena,
+                mobility, difficulty);
+            Equal(charge.Vertical, crossed.Vertical);
             mobility.MountActive = true;
             False(script.Tick(in input, player, in boss, arena,
                 mobility, difficulty).Accepted);
@@ -421,7 +422,9 @@ namespace Chaite.Tests
                 NativeFormKnown = true };
             var wing = new EmpressWingScript();
             FormulaScriptOutput before = default(FormulaScriptOutput);
-            for (var tick = 0; tick < 23; tick++)
+            // Stop one tick short of the quadrant boundary so the next attack
+            // must land in the following quadrant.
+            for (var tick = 0; tick < 59; tick++)
                 before = wing.Tick(in input, player, in boss, arena,
                     mobility, difficulty);
             input.NativeState = 1;
@@ -450,6 +453,16 @@ namespace Chaite.Tests
                 mobility, new DifficultySnapshot());
             True(reversed.Accepted);
             Equal(-1, reversed.Horizontal);
+
+            input.NativeState = 6;
+            input.NativeTimer = 1;
+            input.NativeSequence = 3;
+            input.PlayerBelowBoss = true;
+            input.PlayerRightOfBoss = true;
+            var sun = mount.Tick(in input, player, in boss, arena,
+                mobility, new DifficultySnapshot());
+            True(sun.Accepted);
+            True(sun.Horizontal != 0 && sun.Vertical != 0);
         }
 
         private static void BossMonitoringDoesNotOwnControls()
