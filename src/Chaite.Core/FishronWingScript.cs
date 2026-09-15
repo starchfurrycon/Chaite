@@ -75,7 +75,7 @@ namespace Chaite.Core
         /// is the threat. A charge that ends beside the player leaves the Boss
         /// close enough that the next hover starts from contact range, and
         /// running away cannot outpace it: 6.2 px/tick against 8.5.</summary>
-        private const float PersonalSpace = 150f;
+        private const float PersonalSpace = 200f;
         /// <summary>Signed offset large enough to count as a committed side.</summary>
         /// <summary>Perpendicular speed large enough to count as a committed
         /// direction when the offset itself is still ambiguous.</summary>
@@ -284,9 +284,16 @@ namespace Chaite.Core
             dash = false;
             // The dash writes velocity.X in the player's facing direction, so
             // the horizontal input is also what aims the dash away from the
-            // Boss. Turning back at a band edge is part of the same cycle and
+            // hazard. Turning back at a band edge is part of the same cycle and
             // uses the same dash.
-            var away = boss.Center.X >= player.Center.X ? -1 : 1;
+            //
+            // A remembered Sharknado column outranks the Boss here: the column
+            // does not move, so a charge that carries the player into it is
+            // worse than one that carries them towards the Boss.
+            var away = _tornadoTicksLeft > 0 &&
+                Math.Abs(player.Center.X - _tornadoX) < TornadoClearance
+                ? (_tornadoX >= player.Center.X ? -1 : 1)
+                : (boss.Center.X >= player.Center.X ? -1 : 1);
             horizontal = away;
             switch (_chargeIndex % 3)
             {
