@@ -56,6 +56,15 @@ meant to replace blind scoring tuning with per-attack deterministic responses.
   "stay near the pivot where the beam is slowest": player below -> up,
   player above -> down. `PerpendicularY` itself is world-space signed, so the
   negation converts it into the player-gravity `VerticalIntent` convention.
+  - SCOPE CORRECTION (2026-09-15): everything in this section describes
+    `BossStrategyCatalog.cs`, the legacy scorer. It does NOT describe the
+    formula scripts that actually fly the reviewed Empress routes.
+    `EmpressFlightScript` still calls `Tangent()` for state 6, a fixed
+    per-quadrant diagonal that is not an orbit: measured on rt-eb1 it drives
+    the player through the body (centre distance 325 -> 41 px) and then in a
+    straight line out to 3010 px, still taking beams. Do not read this file as
+    a description of the live Empress circuit. See
+    `docs/continuation-20260915.md` sections 8-9.
 - State 1 with the next fixed table entry 8/9 keeps the perpendicular charge
   lane reservation. States 4/7/11 retain vertical lane escape for lance walls.
 - `EmpressSunDanceMovesTowardPivotLine` regression pins the up/down sign
