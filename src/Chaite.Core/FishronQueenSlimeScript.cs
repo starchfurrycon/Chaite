@@ -81,6 +81,26 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
+            // A trained policy for this route replaces only the movement
+            // decision. Route, mount and arena admission above, and the state
+            // bookkeeping just above this point, are all untouched.
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned != null)
+            {
+                int learnedHorizontal, learnedVertical;
+                bool learnedJump, learnedDash;
+                if (learned.TryDecide(in input, player, in boss, arena,
+                        out learnedHorizontal, out learnedVertical,
+                        out learnedJump, out learnedDash))
+                {
+                    output.Horizontal = learnedHorizontal;
+                    output.Vertical = learnedVertical;
+                    output.Jump = learnedJump;
+                    output.Dash = learnedDash;
+                    output.Phase = "fishron-queen-slime-learned";
+                    return output;
+                }
+            }
             var charge = input.NativeState == 1 ||
                 input.NativeState == 6 || input.NativeState == 11;
             if (charge)
