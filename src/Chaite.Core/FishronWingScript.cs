@@ -273,6 +273,21 @@ namespace Chaite.Core
             // bubble hits that cluster there, but every seed then dies to a
             // Cthulhunado at the end of the runway. The unreachable edge is
             // load-bearing and must not be "fixed" without answering that.
+            //
+            // That answer has since been measured twice, and the dwell turns
+            // out to be a timing buffer, not just a hazard. The first attempt
+            // moved the edge to the clamp itself; the second (docs
+            // continuation-20260915.md section 17) moved it to clamp + 260 so
+            // the player never touches the wall at all, on the theory that the
+            // pinned frames are 2.4x more likely to precede a hit. Both scored
+            // far worse: the second went 0 wins in 20 against a 10-in-20
+            // baseline, and it *raised* the hit rate, from about one per 470
+            // ticks to one per 380, shortening runs from 4000 ticks to 3100.
+            // The 2.4x figure is a correlation measured at frames where the
+            // cycle happens to be holding station; removing the station
+            // desynchronises the W cycle from the Boss's attack clock and costs
+            // more than the pinned frames ever did. Do not retry this family
+            // without preserving the cycle timing.
             var leftDistance = player.Center.X - worldLeft;
             var rightDistance = worldRight - player.Center.X;
             if (leftDistance <= rightDistance)
