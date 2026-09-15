@@ -64,10 +64,18 @@ namespace Chaite.Core
         /// <summary>Inferno Potion destroys Detonating Bubbles without any
         /// weapon input at all.</summary>
         public const int InfernoPotionItem = 2348;
-        /// <summary>The buff that potion applies. Its ring of fire destroys
-        /// each Detonating Bubble as it arrives, so the reviewed admission
-        /// condition is this buff being live rather than a weapon slot.</summary>
+        /// <summary>The buff that potion applies. Player.UpdateBuffs resolves
+        /// it as a 200 px radius dealing 20 damage, but only on every sixtieth
+        /// tick, and skipping any NPC with dontTakeDamage. Phase one emits
+        /// twenty bubbles over eighty ticks, so bubbles that arrive inside the
+        /// one-second gap survive the ring. It is an admission baseline, not a
+        /// guarantee that every bubble dies -- a wide, fast weapon is still
+        /// required as the supplement.</summary>
         public const int InfernoBuff = 116;
+        /// <summary>Ring geometry, read from the pinned build.</summary>
+        public const float InfernoRingRadius = 200f;
+        public const int InfernoRingDamage = 20;
+        public const int InfernoRingPeriodTicks = 60;
 
         public static bool IsReviewedBubbleClearer(int itemType) =>
             itemType == GoldenShowerItem ||
