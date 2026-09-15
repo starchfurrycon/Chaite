@@ -669,6 +669,12 @@ namespace Chaite.Core
         /// adapter publishes one. Defaults to unknown, which leaves the rule
         /// inert for synthetic and legacy snapshots.</summary>
         public SharknadoBubbleSnapshot SharknadoBubble;
+        /// <summary>Hotbar slot holding a reviewed bubble-clearing weapon, or
+        /// -1 when none is carried. The Inferno ring is a 200 px radius that
+        /// resolves once every 60 ticks, so it cannot cover the twenty bubbles
+        /// a phase-one attack emits over eighty ticks; the slot is what covers
+        /// the gap.</summary>
+        public int BubbleClearSlot = -1;
         // One unambiguous, exact reviewed staff/whip pair from hotbar slots
         // 0..9. Production refreshes this read-only observation every snapshot;
         // default/legacy adapters remain unknown and therefore cannot enter the

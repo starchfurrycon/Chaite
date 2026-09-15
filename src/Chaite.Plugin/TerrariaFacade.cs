@@ -1529,8 +1529,30 @@ namespace Chaite.Plugin
         /// the launch at sixteen, so this is not a close call.</summary>
         private const float SharknadoLaunchedSpeedSquared = 64f;
 
+        /// <summary>First hotbar slot holding a reviewed bubble clearer. Only
+        /// slots 0..9 are the hotbar; the inventory proper is not usable
+        /// without opening it.</summary>
+        private void ReadBubbleClearSlot(object player, CombatSnapshot snapshot)
+        {
+            snapshot.BubbleClearSlot = -1;
+            var items = _inventory(player);
+            if (items == null) return;
+            var limit = Math.Min(10, items.Length);
+            for (var slot = 0; slot < limit; slot++)
+            {
+                var item = items[slot];
+                if (item == null) continue;
+                if (!FishronThreatCatalog.IsReviewedBubbleClearer(
+                        _itemTypeId(item))) continue;
+                if (_itemStack(item) <= 0) continue;
+                snapshot.BubbleClearSlot = slot;
+                return;
+            }
+        }
+
         private void ReadTargetsAndThreats(object player, CombatSnapshot snapshot)
         {
+            ReadBubbleClearSlot(player, snapshot);
             var playerCenter = snapshot.Player.Center;
             var maxTargetDistanceSquared = _config.MaximumTargetDistancePixels * (float)_config.MaximumTargetDistancePixels;
             var npcs = _npcs();

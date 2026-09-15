@@ -1802,6 +1802,11 @@ public static class ChaiteGameProbe
             // admission requires, so the run can refresh the ring in flight.
             player.inventory[11].SetDefaults(ItemID.InfernoPotion);
             player.inventory[11].stack=Chaite.Core.FishronThreatCatalog.RequiredInfernoPotionStock;
+            // A reviewed bubble clearer in the hotbar. The Golden Shower is a
+            // post-hardmode weapon, which the reviewed sources name outright
+            // and which is enough: the target has one life and no defence.
+            player.inventory[2].SetDefaults(Chaite.Core.FishronThreatCatalog.GoldenShowerItem);
+            player.inventory[2].stack=1;
             scenario.Equipment+="; inferno-potion x"+Chaite.Core.FishronThreatCatalog.RequiredInfernoPotionStock;
         }
         if(scenario.EquipmentTier=="early-hardmode" ||

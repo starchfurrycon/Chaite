@@ -134,6 +134,12 @@ namespace Chaite.Core
                     " 瓶地狱药水用于清泡";
                 return false;
             }
+            // The ring alone cannot clear them: Player.UpdateBuffs resolves it
+            // as a 200 px radius on every sixtieth tick, and phase one emits
+            // twenty bubbles over eighty ticks. A reviewed clearer in the
+            // hotbar is what covers the gap between pulses.
+            if (s.BubbleClearSlot < 0 || s.BubbleClearSlot > 9)
+            { reason = "猪鲨公式需要快捷栏内有一把已审核的清泡武器"; return false; }
             return true;
         }
 

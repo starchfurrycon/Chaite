@@ -844,6 +844,14 @@ namespace Chaite.Core
                 plan.QuickBuff = FishronThreatCatalog.NeedsInfernoRefresh(
                     snapshot.Mobility.InfernoStateKnown,
                     snapshot.Mobility.InfernoTicksLeft);
+                // ai[0] 2 and 7 are the two Detonating Bubble attacks. The
+                // reviewed clearer is selected for exactly those states and the
+                // route's own weapon is restored afterwards, which is why the
+                // slot is chosen from the native state rather than from a
+                // timer.
+                if ((target.Ai0 == 2f || target.Ai0 == 7f) &&
+                    snapshot.BubbleClearSlot >= 0)
+                    plan.PreferredWeaponSlot = snapshot.BubbleClearSlot;
             }
             plan.StrategyId = target.Type == 370 ? "formula-fishron" : "formula-empress";
             plan.PhaseId = script.Phase;

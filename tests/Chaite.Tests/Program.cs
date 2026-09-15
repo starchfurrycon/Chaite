@@ -630,6 +630,9 @@ namespace Chaite.Tests
         {
             var snapshot = new CombatSnapshot
             {
+                // Fishron admission also requires a reviewed bubble clearer in
+                // the hotbar, so the shared fixture carries one.
+                BubbleClearSlot = 0,
                 Player = new PlayerSnapshot
                 {
                     Position = new Vec2(1500, 800), Velocity = new Vec2(0, 0), Width = 20, Height = 42,
