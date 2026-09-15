@@ -60,27 +60,29 @@ namespace Chaite.Core
         /// close to the minimum: every pixel climbed has to be walked back down
         /// before the next charge, and arriving on the ground late is what turns
         /// a dodge into a hit.</summary>
-        private const float EscapeSufficient = 96f;
         /// <summary>Horizontal gap the circuit refuses to give up. A charge is a
         /// fixed 476 px of travel, so a player standing further away than that
         /// is simply never reached and needs no dodge at all.</summary>
         private const float StandoffPixels = 720f;
+        /// <summary>Horizontal half-width kept clear of the remembered Sharknado
+        /// column. A Cthulhunado is 23 tiles wide, so this is column plus body
+        /// plus a full escape.</summary>
+        private const float TornadoClearance = 760f;
+        /// <summary>How long a landed Sharknado keeps its column. The pinned
+        /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
+        private const int TornadoMemoryTicks = 540;
         /// <summary>Centre-to-centre distance inside which the Boss body itself
         /// is the threat. A charge that ends beside the player leaves the Boss
         /// close enough that the next hover starts from contact range, and
         /// running away cannot outpace it: 6.2 px/tick against 8.5.</summary>
         private const float PersonalSpace = 150f;
         /// <summary>Signed offset large enough to count as a committed side.</summary>
-        private const float CommittedOffset = 24f;
         /// <summary>Perpendicular speed large enough to count as a committed
         /// direction when the offset itself is still ambiguous.</summary>
-        private const float CommittedVelocity = 0.25f;
         /// <summary>Height above the verified floor still treated as standing,
         /// so a charge that starts on the landing tick still gets the jump.</summary>
-        private const float GroundedBand = 70f;
         /// <summary>Distance to the floor under which a falling player finishes
         /// the landing instead of trying to out-climb the incoming charge.</summary>
-        private const float LandingBand = 170f;
         /// <summary>Ticks before the predicted charge at which the circuit stops
         /// descending. Wing flight reverses a fall at roughly 0.5 px/tick per
         /// tick, so a charge that finds the player falling cannot be escaped at
@@ -92,24 +94,23 @@ namespace Chaite.Core
         private int _previousState = int.MinValue;
         private int _previousSequence = int.MinValue;
         private int _previousTimer;
-        private bool _escapeLatched;
-        private float _escapeX;
-        private float _escapeY;
+        private int _chargeIndex;
+        private bool _dashIssued;
+        private float _tornadoX;
+        private int _tornadoTicksLeft;
         private float _bandLeft;
         private float _bandRight;
         private float _floorY;
         private float _ceilingY;
-        private float _lineX;
-        private float _lineY;
-        private float _lineDirX;
-        private float _lineDirY;
         // Indexed by native state; only the hover states are used.
         private readonly int[] _hoverLimit = { 30, 30, 80, 90, 180, 30, 30, 120, 90, 180, 30, 30, 30 };
 
         public void Reset()
         {
             _initialized = false;
-            _escapeLatched = false;
+            _chargeIndex = 0;
+            _dashIssued = false;
+            _tornadoTicksLeft = 0;
             _previousState = int.MinValue;
             _previousSequence = int.MinValue;
             _previousTimer = 0;
@@ -142,7 +143,24 @@ namespace Chaite.Core
             var dash = state == 1 || state == 6 || state == 11;
             var stateEdge = state != _previousState ||
                 input.NativeSequence != _previousSequence;
-            if (stateEdge) _escapeLatched = false;
+            if (stateEdge)
+            {
+                // A projectile attack ends the charge group, so the reviewed W
+                // cycle restarts from its horizontal first beat.
+                if (state == 2 || state == 3 || state == 7 || state == 8)
+                    _chargeIndex = 0;
+                if (state == 3 || state == 8)
+                {
+                    // AI_069 fires the Sharknado bolts downwards from its own
+                    // centre, so that is where the column will stand. One
+                    // remembered X is the whole record the circuit keeps: it is
+                    // the position it chose to let the tornado land at, not a
+                    // scan of live projectiles.
+                    _tornadoX = boss.Center.X;
+                    _tornadoTicksLeft = TornadoMemoryTicks;
+                }
+                _dashIssued = false;
+            }
             if (dash && stateEdge)
             {
                 // The hover that just ended tells the circuit its real length,
@@ -150,17 +168,17 @@ namespace Chaite.Core
                 if (_previousState >= 0 && _previousState < _hoverLimit.Length &&
                     _previousTimer > 0 && _hoverLimit[_previousState] != 0)
                     _hoverLimit[_previousState] = _previousTimer + 1;
-                LatchEscape(player, in boss);
             }
 
             output.Accepted = true;
             output.Fire = true;
             int horizontal, vertical;
             string phase;
-            if (dash && _escapeLatched)
+            var dashInput = false;
+            if (dash)
             {
-                ChargeEscape(player, in boss, out horizontal, out vertical,
-                    out phase);
+                ChargeEscape(player, in boss, mobility, out horizontal,
+                    out vertical, out phase, out dashInput);
             }
             else
             {
@@ -168,19 +186,13 @@ namespace Chaite.Core
                     input.NativeTimer, out horizontal, out vertical,
                     out phase);
             }
-            ApplyArena(player, dash && _escapeLatched, ref horizontal,
-                ref vertical);
+            ApplyArena(player, ref horizontal, ref vertical);
             _patrol = horizontal == 0 ? _patrol : horizontal;
 
             output.Horizontal = horizontal;
             output.Vertical = vertical;
             output.Jump = vertical < 0;
-            // The Shield of Cthulhu dash writes velocity.X = +-14.5 and nothing
-            // else. AI_069 hovers 300 px to the side and 200 above, so its
-            // charges are mostly horizontal, which makes the shield edge nearly
-            // parallel to the very charge it would have to dodge. It stays a
-            // reviewed route identity, not a per-charge input.
-            output.Dash = false;
+            output.Dash = dashInput;
             output.Phase = phase;
             _previousState = state;
             _previousSequence = input.NativeSequence;
@@ -244,109 +256,61 @@ namespace Chaite.Core
             _patrol = boss.Center.X >= player.Center.X ? -1 : 1;
         }
 
-        /// <summary>The charge velocity is committed before the first dash tick,
-        /// so the whole problem is the perpendicular axis. The observed offset
-        /// is <em>parallel</em> to that velocity by construction: AI_069 aims
-        /// the charge straight at the player, so the perpendicular component is
-        /// near zero and one of the two perpendicular directions has to be
-        /// chosen on its merits.
+        /// <summary>The reviewed W cycle for charges on flat ground.
         ///
-        /// The side is taken from the signed offset, or from the offset's
-        /// current rate when the offset itself is still ambiguous, and only
-        /// falls back to "upward" when neither is committed. Choosing a fixed
-        /// side instead walks the player back across the charge line whenever
-        /// they were already separating on the other one.</summary>
-        private void LatchEscape(PlayerSnapshot player, in TargetSnapshot boss)
-        {
-            var vx = boss.Velocity.X;
-            var vy = boss.Velocity.Y;
-            var speed = (float)Math.Sqrt(vx * vx + vy * vy);
-            if (!IsFinite(speed) || speed < 0.01f)
-            {
-                _escapeX = 0f;
-                _escapeY = -1f;
-                _escapeLatched = true;
-                return;
-            }
-            vx /= speed;
-            vy /= speed;
-            _lineX = boss.Center.X;
-            _lineY = boss.Center.Y;
-            _lineDirX = vx;
-            _lineDirY = vy;
-            var cross = (player.Center.X - _lineX) * vy -
-                (player.Center.Y - _lineY) * vx;
-            var crossVelocity = player.Velocity.X * vy -
-                player.Velocity.Y * vx;
-            // (dirY, -dirX) adds +1 to the signed offset and (-dirY, dirX)
-            // subtracts one, so the side is the sign of the offset, or of the
-            // offset's rate. Getting this backwards walks the player across the
-            // charge line, which is exactly what the dodge must never do.
-            int side;
-            if (Math.Abs(cross) > CommittedOffset) side = cross > 0f ? 1 : -1;
-            else if (Math.Abs(crossVelocity) > CommittedVelocity)
-                side = crossVelocity > 0f ? 1 : -1;
-            else side = 0;
-            var px = side == 0 ? 0f : side * vy;
-            var py = side == 0 ? 0f : -side * vx;
-            if (side == 0)
-            {
-                // Nothing committed either way: take the upward perpendicular.
-                px = -vy;
-                py = vx;
-                if (py > 0f)
-                {
-                    px = -px;
-                    py = -py;
-                }
-            }
-            // A band edge only ever removes the horizontal component; reversing
-            // it would break the perpendicularity that the dodge depends on.
-            if (px < 0f && player.Position.X - _bandLeft < 320f ||
-                px > 0f && _bandRight - player.Position.X < 320f)
-                px = 0f;
-            _escapeX = px;
-            _escapeY = py;
-            _escapeLatched = true;
-        }
-
+        /// Every reviewed source agrees on why a charge is beatable: AI_069 aims
+        /// it at where the player <em>is</em>, so leaving the line is the whole
+        /// dodge. What the reviewed play adds is that the escape axis is not
+        /// recomputed per charge. The cycle is horizontal, ascend, descend,
+        /// repeating, with a Shield of Cthulhu edge spent on every beat:
+        ///
+        /// <code>
+        ///   beat 0  horizontal away            (+ dash)
+        ///   beat 1  ascend,  dash widens X     (+ dash)
+        ///   beat 2  descend, dash widens X     (+ dash)
+        /// </code>
+        ///
+        /// That is the phase-two "horizontal, ascend, descend" cycle and the
+        /// opening beats of the phase-one five-charge group at once, because
+        /// the group is just this cycle continuing past its third beat. The
+        /// dash is what makes the vertical beats work: it writes 14.5 px/tick
+        /// of horizontal speed in the player's facing direction, so an ascend
+        /// or descend beat leaves the charge line diagonally, which neither
+        /// axis manages alone.</summary>
         private void ChargeEscape(PlayerSnapshot player, in TargetSnapshot boss,
-            out int horizontal, out int vertical, out string phase)
+            MobilitySnapshot mobility, out int horizontal, out int vertical,
+            out string phase, out bool dash)
         {
-            Split(_escapeX, _escapeY, out horizontal, out vertical);
-            var separation = PerpendicularSeparation(player);
-            if (player.OnGround ||
-                player.Center.Y >= _floorY - GroundedBand - player.Height * 0.5f)
+            dash = false;
+            // The dash writes velocity.X in the player's facing direction, so
+            // the horizontal input is also what aims the dash away from the
+            // Boss. Turning back at a band edge is part of the same cycle and
+            // uses the same dash.
+            var away = boss.Center.X >= player.Center.X ? -1 : 1;
+            horizontal = away;
+            switch (_chargeIndex % 3)
             {
-                // A grounded jump is the only input that produces perpendicular
-                // speed on the very first tick of a charge.
-                vertical = -1;
-                phase = "fishron-wing-charge-ground-jump";
-                return;
+                case 0:
+                    vertical = 0;
+                    phase = "fishron-wing-charge-horizontal";
+                    break;
+                case 1:
+                    vertical = -1;
+                    phase = "fishron-wing-charge-ascend";
+                    break;
+                default:
+                    vertical = 1;
+                    phase = "fishron-wing-charge-descend";
+                    break;
             }
-            if (player.Velocity.Y > 3f &&
-                player.Center.Y >= _floorY - LandingBand)
+            if (!_dashIssued && mobility != null && mobility.CanDash &&
+                mobility.DashReady)
             {
-                // Already falling the last few pixels to the floor. Reversing
-                // that with wings costs about twenty ticks and the charge does
-                // not have twenty ticks left; finishing the landing refills the
-                // flight budget and makes the very next tick a ground jump.
-                vertical = 1;
-                phase = "fishron-wing-charge-landing";
-                return;
+                dash = true;
+                _dashIssued = true;
+                phase += "-dash";
             }
-            if (separation >= EscapeSufficient)
-            {
-                // Far enough from the line. The rest of the charge is spent
-                // widening the gap, because the distance at the *next* charge
-                // edge is what decides whether that charge is escapable at all.
-                vertical = 0;
-                horizontal = AwayFromBossAxis(boss.Center.X - player.Center.X);
-                phase = "fishron-wing-charge-glide";
-                return;
-            }
-            if (vertical > 0) vertical = -1;
-            phase = "fishron-wing-charge-ascent";
+            _chargeIndex++;
         }
 
         /// <summary>Everything that is not a charge.
@@ -369,7 +333,19 @@ namespace Chaite.Core
             horizontal = 0;
             vertical = 0;
             phase = null;
+            if (_tornadoTicksLeft > 0) _tornadoTicksLeft--;
             var gap = boss.Center.X - player.Center.X;
+            if (_tornadoTicksLeft > 0 &&
+                Math.Abs(player.Center.X - _tornadoX) < TornadoClearance)
+            {
+                // Still inside the column the last Sharknado left behind.
+                // Sharkrons fired from a fixed tornado have limited range, so
+                // horizontal distance is the whole defence.
+                horizontal = _tornadoX >= player.Center.X ? -1 : 1;
+                vertical = player.OnGround ? 0 : 1;
+                phase = "fishron-wing-tornado-clear";
+                return;
+            }
             var separation = Distance(player, in boss);
             if (separation < PersonalSpace && state >= 0)
             {
@@ -491,28 +467,19 @@ namespace Chaite.Core
             return limit - timer <= PreJumpTicks;
         }
 
-        /// <summary>Perpendicular distance from the committed charge line.</summary>
-        private float PerpendicularSeparation(PlayerSnapshot player) =>
-            Math.Abs((player.Center.X - _lineX) * _lineDirY -
-                (player.Center.Y - _lineY) * _lineDirX);
-
         /// <summary>Keeps the circuit inside the geometry AI_069 reads for its
         /// own enrage test. During a charge an edge only cancels the offending
         /// axis: reversing it would turn the perpendicular escape back into the
         /// charge line.</summary>
-        private void ApplyArena(PlayerSnapshot player, bool chargeEscape,
-            ref int horizontal, ref int vertical)
+        private void ApplyArena(PlayerSnapshot player, ref int horizontal,
+            ref int vertical)
         {
             var x = player.Position.X;
             var y = player.Center.Y;
-            if (x <= _bandLeft)
-            {
-                if (!chargeEscape || horizontal < 0) horizontal = 1;
-            }
-            else if (x >= _bandRight)
-            {
-                if (!chargeEscape || horizontal > 0) horizontal = -1;
-            }
+            // Turning back at a band edge is part of the reviewed W cycle, not
+            // an exception to it: the turnaround charges use the same dash.
+            if (x <= _bandLeft && horizontal < 0) horizontal = 1;
+            else if (x >= _bandRight && horizontal > 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
             else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;
         }

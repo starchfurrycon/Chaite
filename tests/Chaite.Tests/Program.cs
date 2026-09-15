@@ -16,9 +16,9 @@ namespace Chaite.Tests
             if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length != 0) return 2;
             Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
-            Run(nameof(FishronWingChargeEscapeIsPerpendicularAndLatched), FishronWingChargeEscapeIsPerpendicularAndLatched);
+            Run(nameof(FishronWingFollowsReviewedChargeCycle), FishronWingFollowsReviewedChargeCycle);
             Run(nameof(FishronWingKeepsStandoffGap), FishronWingKeepsStandoffGap);
-            Run(nameof(FishronCloseContactDoesNotCounterDash), FishronCloseContactDoesNotCounterDash);
+            Run(nameof(FishronWingRestartsCycleAfterProjectileAttack), FishronWingRestartsCycleAfterProjectileAttack);
             Run(nameof(FishronWingScriptIgnoresThreatListContents), FishronWingScriptIgnoresThreatListContents);
             Run(nameof(FishronFormulaRejectsImpossibleNativeTuples), FishronFormulaRejectsImpossibleNativeTuples);
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
