@@ -7,6 +7,8 @@ namespace Chaite.Core
         public int NativeState;
         public int NativeTimer;
         public int NativeSequence;
+        public int NativeForm;
+        public bool NativeFormKnown;
         public bool PlayerBelowBoss;
         public bool PlayerRightOfBoss;
     }
@@ -42,11 +44,16 @@ namespace Chaite.Core
             var sequence = target.Type == 370 ? target.Ai3 : target.Ai2;
             if (!Integer(target.Ai0, -1, 13) || !Integer(timer, 0, int.MaxValue) ||
                 !Integer(sequence, 0, int.MaxValue)) return false;
+            var form = target.Type == 636 ? target.Ai3 : 0f;
+            var formKnown = target.Type != 636 || target.Ai3Known;
+            if (formKnown && !Integer(form, 0, 3)) return false;
             input = new FormulaScriptInput
             {
                 BossType = target.Type, Route = route,
                 NativeState = (int)target.Ai0, NativeTimer = (int)timer,
                 NativeSequence = (int)sequence,
+                NativeForm = formKnown ? (int)form : 0,
+                NativeFormKnown = formKnown,
                 PlayerBelowBoss = player.Center.Y >= target.Center.Y,
                 PlayerRightOfBoss = player.Center.X >= target.Center.X
             };
@@ -65,6 +72,10 @@ namespace Chaite.Core
                 input.NativeTimer < 0 || input.NativeSequence < 0 ||
                 (input.BossType == 370 ? input.NativeState < -1 || input.NativeState > 12 :
                     input.NativeState < 0 || input.NativeState > 12 || input.NativeState == 3))
+                return output;
+            if (input.BossType == 636 &&
+                (!input.NativeFormKnown || input.NativeForm < 0 ||
+                 input.NativeForm > 3 || input.NativeState == 13))
                 return output;
             output.Accepted = true;
             output.Fire = true;

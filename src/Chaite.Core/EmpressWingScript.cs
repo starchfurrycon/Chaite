@@ -10,6 +10,7 @@ namespace Chaite.Core
         private bool _initialized;
         private bool _dashIssued;
         private int _loopDirection;
+        private int _loopTicks;
         private int _previousState = int.MinValue;
         private int _previousSequence = int.MinValue;
 
@@ -19,19 +20,24 @@ namespace Chaite.Core
             _dashIssued = false;
             _previousState = int.MinValue;
             _previousSequence = int.MinValue;
+            _loopTicks = 0;
         }
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
             PlayerSnapshot player, in TargetSnapshot boss,
-            ArenaSnapshot arena, MobilitySnapshot mobility)
+            ArenaSnapshot arena, MobilitySnapshot mobility,
+            DifficultySnapshot difficulty)
         {
             var output = new FormulaScriptOutput();
             if (input.BossType != 636 ||
                 input.Route != FormulaRoute.EmpressStrongWingsDash ||
                 player == null || arena == null || mobility == null ||
+                difficulty == null ||
                 mobility.MountActive || mobility.Grappling ||
                 mobility.GravityInverted || input.NativeState < 0 ||
                 input.NativeState > 13 || input.NativeState == 3)
+                return output;
+            if (!EmpressFormulaStateContract.IsValid(in input, difficulty))
                 return output;
 
             if (!_initialized)
@@ -43,9 +49,13 @@ namespace Chaite.Core
 
             var attackEdge = input.NativeState != _previousState ||
                 input.NativeSequence != _previousSequence;
+            if (input.NativeState == 1 &&
+                (_previousState == 8 || _previousState == 9))
+                _loopDirection *= -1;
             if (attackEdge) _dashIssued = false;
             _previousState = input.NativeState;
             _previousSequence = input.NativeSequence;
+            _loopTicks++;
 
             output.Accepted = true;
             output.Fire = true;
@@ -63,7 +73,7 @@ namespace Chaite.Core
                     output.Phase = "empress-wing-sun-dance-pivot";
                     break;
                 default:
-                    OrbitQuadrant(input.NativeTimer, _loopDirection,
+                    OrbitQuadrant(_loopTicks, _loopDirection,
                         out output.Horizontal, out output.Vertical);
                     output.Phase = "empress-wing-state-" +
                         input.NativeState;
@@ -88,7 +98,7 @@ namespace Chaite.Core
         private static void OrbitQuadrant(int timer, int loop,
             out int horizontal, out int vertical)
         {
-            switch ((timer / 16) & 3)
+            switch ((timer / 24) & 3)
             {
                 case 1:
                     horizontal = -loop;

@@ -16,10 +16,14 @@ namespace Chaite.Core
 
         private bool _initialized;
         private int _loopDirection;
+        private int _loopTicks;
+        private int _previousState = int.MinValue;
 
         public void Reset()
         {
             _initialized = false;
+            _loopTicks = 0;
+            _previousState = int.MinValue;
         }
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
@@ -32,6 +36,8 @@ namespace Chaite.Core
                 mobility == null || difficulty == null ||
                 input.Route != FormulaRoute.EmpressBroom &&
                 input.Route != FormulaRoute.EmpressRainFishron)
+                return output;
+            if (!EmpressFormulaStateContract.IsValid(in input, difficulty))
                 return output;
 
             var expectedMount = input.Route == FormulaRoute.EmpressBroom
@@ -67,12 +73,13 @@ namespace Chaite.Core
                 if (_loopDirection == 0) _loopDirection = 1;
             }
 
-            if (input.NativeState < 0 || input.NativeState > 13 ||
-                input.NativeState == 3)
-                return Rejected();
-
             output.Accepted = true;
             output.Fire = true;
+            if (input.NativeState == 1 &&
+                (_previousState == 8 || _previousState == 9))
+                _loopDirection *= -1;
+            _previousState = input.NativeState;
+            _loopTicks++;
             if (input.NativeState == 8 || input.NativeState == 9)
             {
                 // The Empress body charge is horizontal. Leave the committed
@@ -92,7 +99,7 @@ namespace Chaite.Core
             }
             else
             {
-                OrbitQuadrant(in input, _loopDirection, out var horizontal,
+                OrbitQuadrant(_loopTicks, _loopDirection, out var horizontal,
                     out var vertical);
                 output.Horizontal = horizontal;
                 output.Vertical = vertical;
@@ -102,10 +109,10 @@ namespace Chaite.Core
             return output;
         }
 
-        private static void OrbitQuadrant(in FormulaScriptInput input,
-            int loop, out int horizontal, out int vertical)
+        private static void OrbitQuadrant(int ticks, int loop,
+            out int horizontal, out int vertical)
         {
-            switch ((input.NativeTimer / 16) & 3)
+            switch ((ticks / 24) & 3)
             {
                 case 1:
                     horizontal = -loop;

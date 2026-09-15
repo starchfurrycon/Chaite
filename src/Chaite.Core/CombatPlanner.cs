@@ -810,7 +810,8 @@ namespace Chaite.Core
                     snapshot.Mobility, snapshot.Difficulty);
             else if (_formulaRoute == FormulaRoute.EmpressStrongWingsDash)
                 script = _empressWingScript.Tick(in input, snapshot.Player,
-                    in target, snapshot.Arena, snapshot.Mobility);
+                    in target, snapshot.Arena, snapshot.Mobility,
+                    snapshot.Difficulty);
             else
                 script = FormulaScriptController.Tick(in input);
             if (!script.Accepted)

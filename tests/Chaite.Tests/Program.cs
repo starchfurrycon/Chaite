@@ -27,6 +27,7 @@ namespace Chaite.Tests
             Run(nameof(FishronQueenSlimeUsesMountAndFixedRunway), FishronQueenSlimeUsesMountAndFixedRunway);
             Run(nameof(EmpressFlightUsesReviewedMountAndRainGate), EmpressFlightUsesReviewedMountAndRainGate);
             Run(nameof(EmpressWingUsesOneRepositionDashEdge), EmpressWingUsesOneRepositionDashEdge);
+            Run(nameof(EmpressFormulaKeepsLoopAcrossAttackBoundaries), EmpressFormulaKeepsLoopAcrossAttackBoundaries);
             Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);

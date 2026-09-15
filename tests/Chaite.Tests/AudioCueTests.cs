@@ -114,7 +114,7 @@ namespace Chaite.Tests
             {
                 BossType = 636, Route = FormulaRoute.EmpressStrongWingsDash,
                 NativeState = 8, NativeTimer = 20, PlayerBelowBoss = true,
-                PlayerRightOfBoss = false
+                PlayerRightOfBoss = false, NativeFormKnown = true
             };
             var a = FormulaScriptController.Tick(in input);
             var b = FormulaScriptController.Tick(in input);
@@ -135,6 +135,7 @@ namespace Chaite.Tests
             True(FormulaScriptController.TryReadInput(in target,
                 FormulaRoute.EmpressBroom, player, out input));
             Equal(39, input.NativeTimer); Equal(2, input.NativeSequence);
+            True(input.NativeFormKnown); Equal(0, input.NativeForm);
             False(FormulaScriptController.TryReadInput(in target,
                 FormulaRoute.FishronQueenSlime, player, out input));
             target.Type = 370; target.Ai0 = 1; target.Ai2 = 27; target.Ai3 = 6;
@@ -154,6 +155,7 @@ namespace Chaite.Tests
                 Route = FormulaRoute.FishronQueenSlime, NativeState = 2 };
             False(FormulaScriptController.Tick(in input).Accepted);
             input.Route = FormulaRoute.EmpressBroom; input.NativeState = 13;
+            input.NativeFormKnown = true;
             False(FormulaScriptController.Tick(in input).Accepted);
             input.NativeState = 3;
             False(FormulaScriptController.Tick(in input).Accepted);

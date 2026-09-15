@@ -303,7 +303,8 @@ namespace Chaite.Tests
             };
             var input = new FormulaScriptInput { BossType = 636,
                 Route = FormulaRoute.EmpressBroom,
-                NativeState = 8, NativeSequence = 1, PlayerBelowBoss = true };
+                NativeState = 8, NativeSequence = 2, PlayerBelowBoss = true,
+                NativeFormKnown = true };
             var mount = broom.Tick(in input, player, in boss, arena,
                 mobility, difficulty);
             True(mount.Accepted); True(mount.ToggleMount); False(mount.Fire);
@@ -347,26 +348,78 @@ namespace Chaite.Tests
                 CanDash = true,
                 DashReady = true
             };
+            var difficulty = new DifficultySnapshot();
             var input = new FormulaScriptInput { BossType = 636,
                 Route = FormulaRoute.EmpressStrongWingsDash,
-                NativeState = 1, NativeTimer = 1, NativeSequence = 2 };
+                NativeState = 1, NativeTimer = 1, NativeSequence = 2,
+                NativeFormKnown = true };
             var edge = script.Tick(in input, player, in boss, arena,
-                mobility);
+                mobility, difficulty);
             True(edge.Accepted); True(edge.Dash); Equal(-1, edge.Horizontal);
             input.NativeTimer++;
             False(script.Tick(in input, player, in boss, arena,
-                mobility).Dash);
+                mobility, difficulty).Dash);
 
             input.NativeState = 8;
             input.NativeTimer = 41;
             input.PlayerBelowBoss = true;
             var charge = script.Tick(in input, player, in boss, arena,
-                mobility);
+                mobility, difficulty);
             False(charge.Dash); Equal(0, charge.Horizontal);
             Equal(-1, charge.Vertical); True(charge.Jump);
             mobility.MountActive = true;
             False(script.Tick(in input, player, in boss, arena,
-                mobility).Accepted);
+                mobility, difficulty).Accepted);
+        }
+
+        private static void EmpressFormulaKeepsLoopAcrossAttackBoundaries()
+        {
+            var player = new PlayerSnapshot { Position = new Vec2(1800, 1000),
+                Width = 20, Height = 40 };
+            var boss = new TargetSnapshot { Type = 636,
+                Position = new Vec2(2200, 800), Width = 80, Height = 80 };
+            var arena = new ArenaSnapshot
+            {
+                ClearanceLeft = 800,
+                ClearanceRight = 1200
+            };
+            var mobility = new MobilitySnapshot();
+            var difficulty = new DifficultySnapshot();
+            var input = new FormulaScriptInput { BossType = 636,
+                Route = FormulaRoute.EmpressStrongWingsDash,
+                NativeState = 2, NativeTimer = 140, NativeSequence = 1,
+                NativeFormKnown = true };
+            var wing = new EmpressWingScript();
+            FormulaScriptOutput before = default(FormulaScriptOutput);
+            for (var tick = 0; tick < 23; tick++)
+                before = wing.Tick(in input, player, in boss, arena,
+                    mobility, difficulty);
+            input.NativeState = 1;
+            input.NativeTimer = 1;
+            input.NativeSequence = 2;
+            mobility.CanDash = false;
+            var after = wing.Tick(in input, player, in boss, arena,
+                mobility, difficulty);
+            True(before.Accepted && after.Accepted);
+            True(before.Horizontal != after.Horizontal ||
+                before.Vertical != after.Vertical,
+                "attack boundary must advance the continuous loop");
+
+            input.Route = FormulaRoute.EmpressBroom;
+            input.NativeState = 8;
+            input.NativeTimer = 100;
+            mobility.MountActive = true;
+            mobility.ActiveMountIdentityKnown = true;
+            mobility.ActiveMountType = 23;
+            var mount = new EmpressFlightScript();
+            mount.Tick(in input, player, in boss, arena, mobility,
+                new DifficultySnapshot());
+            input.NativeState = 1;
+            input.NativeTimer = 1;
+            var reversed = mount.Tick(in input, player, in boss, arena,
+                mobility, new DifficultySnapshot());
+            True(reversed.Accepted);
+            Equal(-1, reversed.Horizontal);
         }
 
         private static void BossMonitoringDoesNotOwnControls()
