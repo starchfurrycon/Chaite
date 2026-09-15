@@ -798,10 +798,11 @@ namespace Chaite.Core
             if (_formulaRoute == FormulaRoute.FishronFairyWingsDash)
                 script = _fishronFairyWingScript.Tick(in input,
                     snapshot.Player, in target, snapshot.Arena,
-                    snapshot.Mobility);
+                    snapshot.Mobility, in snapshot.SharknadoBubble);
             else if (_formulaRoute == FormulaRoute.FishronStrongWingsDash)
                 script = _fishronStrongWingScript.Tick(in input, snapshot.Player,
-                    in target, snapshot.Arena, snapshot.Mobility);
+                    in target, snapshot.Arena, snapshot.Mobility,
+                    in snapshot.SharknadoBubble);
             else if (_formulaRoute == FormulaRoute.FishronTrustyChillet)
                 script = _fishronChilletScript.Tick(in input, snapshot.Player,
                     in target, snapshot.Arena, snapshot.Mobility);

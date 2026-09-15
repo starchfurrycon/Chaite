@@ -1524,6 +1524,11 @@ namespace Chaite.Plugin
             }
         }
 
+        /// <summary>Speed, squared, above which a Sharknado bubble counts as
+        /// launched. The descent phase moves at roughly one pixel per tick and
+        /// the launch at sixteen, so this is not a close call.</summary>
+        private const float SharknadoLaunchedSpeedSquared = 64f;
+
         private void ReadTargetsAndThreats(object player, CombatSnapshot snapshot)
         {
             var playerCenter = snapshot.Player.Center;
@@ -1599,6 +1604,36 @@ namespace Chaite.Plugin
                 if (friendly || life <= 0) continue;
                 var center = new Vec2(position.X + width * .5f, position.Y + height * .5f);
                 var distanceSquared = Vec2.DistanceSquared(center, playerCenter);
+                // The Sharknado-generating bubble is published separately from
+                // the ordinary threat list because its descent phase cannot be
+                // damaged and its launched phase is a straight 16 px/tick line.
+                // A launched bubble is always preferred over a descending one,
+                // and ties go to the nearer.
+                if ((type == FishronThreatCatalog.LargeSharknadoBubbleType ||
+                     type == FishronThreatCatalog.SmallSharknadoBubbleType) &&
+                    !friendly && life > 0)
+                {
+                    var bubbleSpeedSquared = nativeVelocity.X * nativeVelocity.X +
+                        nativeVelocity.Y * nativeVelocity.Y;
+                    var bubbleLaunched =
+                        bubbleSpeedSquared >= SharknadoLaunchedSpeedSquared;
+                    var current = snapshot.SharknadoBubble;
+                    if (!current.Known ||
+                        bubbleLaunched && !current.Launched ||
+                        bubbleLaunched == current.Launched &&
+                        distanceSquared <
+                            Vec2.DistanceSquared(current.Center, playerCenter))
+                    {
+                        snapshot.SharknadoBubble = new SharknadoBubbleSnapshot
+                        {
+                            Known = true,
+                            Type = type,
+                            Center = center,
+                            Velocity = nativeVelocity,
+                            Launched = bubbleLaunched
+                        };
+                    }
+                }
                 var boss = _npcBoss(npc);
                 // A malformed Destroyer whoAmI is kept as a conservative contact
                 // threat but must never become an indexable firing target.

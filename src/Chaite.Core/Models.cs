@@ -364,6 +364,25 @@ namespace Chaite.Core
         public int InfernoPotionStock;
     }
 
+    /// <summary>
+    /// The launched Sharknado-generating bubble (NPC 372/373). It descends
+    /// while dontTakeDamage is set, then locks on and is fired at 16 px/tick
+    /// along a straight line to where the player stood, dying on solid contact
+    /// and spawning the Sharknado there. Only the launched state matters to a
+    /// controller, because a descent-phase bubble cannot be hit at all.
+    /// </summary>
+    public struct SharknadoBubbleSnapshot
+    {
+        public bool Known;
+        public int Type;
+        public Vec2 Center;
+        public Vec2 Velocity;
+        /// <summary>True once the bubble has left its descent and is travelling
+        /// along the launch line. A descent-phase bubble moves at about one
+        /// pixel per tick, so the split is unambiguous.</summary>
+        public bool Launched;
+    }
+
     public sealed class ArenaSnapshot
     {
         public RectF LocalOpenBounds;
@@ -646,6 +665,10 @@ namespace Chaite.Core
         public ArenaSnapshot Arena = new ArenaSnapshot();
         public DifficultySnapshot Difficulty = new DifficultySnapshot();
         public WeaponSnapshot Weapon = new WeaponSnapshot();
+        /// <summary>Nearest launched Sharknado bubble (NPC 372/373), when the
+        /// adapter publishes one. Defaults to unknown, which leaves the rule
+        /// inert for synthetic and legacy snapshots.</summary>
+        public SharknadoBubbleSnapshot SharknadoBubble;
         // One unambiguous, exact reviewed staff/whip pair from hotbar slots
         // 0..9. Production refreshes this read-only observation every snapshot;
         // default/legacy adapters remain unknown and therefore cannot enter the

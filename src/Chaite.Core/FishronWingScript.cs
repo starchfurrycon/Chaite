@@ -71,6 +71,12 @@ namespace Chaite.Core
         /// <summary>How long a landed Sharknado keeps its column. The pinned
         /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
         private const int TornadoMemoryTicks = 540;
+        /// <summary>Speed above which a Sharknado bubble counts as launched.
+        /// The descent phase moves at roughly one pixel per tick, the launch at
+        /// sixteen, so the split is unambiguous.</summary>
+        private const float BubbleLaunchSpeed = 8f;
+        private const float BubbleCommitOffset = 24f;
+        private const float BubbleCommitVelocity = 0.25f;
         /// <summary>Centre-to-centre distance inside which the Boss body itself
         /// is the threat. A charge that ends beside the player leaves the Boss
         /// close enough that the next hover starts from contact range, and
@@ -126,7 +132,13 @@ namespace Chaite.Core
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
             PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
-            MobilitySnapshot mobility)
+            MobilitySnapshot mobility) =>
+            Tick(in input, player, in boss, arena, mobility,
+                default(SharknadoBubbleSnapshot));
+
+        public FormulaScriptOutput Tick(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            MobilitySnapshot mobility, in SharknadoBubbleSnapshot bubble)
         {
             var output = new FormulaScriptOutput();
             if (input.BossType != 370 || player == null || arena == null ||
@@ -175,6 +187,36 @@ namespace Chaite.Core
             int horizontal, vertical;
             string phase;
             var dashInput = false;
+            if (!dash && BubbleEscape(player, in bubble, out horizontal,
+                    out vertical, out phase))
+            {
+                // A launched Sharknado bubble is a straight 16 px/tick line,
+                // faster than the player can run, so it needs the same
+                // perpendicular law a charge does. It yields to the charge
+                // cycle rather than pre-empting it: both are straight-line
+                // threats, the reviewed W cycle already answers one of them,
+                // and letting the bubble override it measurably shortened runs
+                // without reducing hits.
+                var dash2 = !_dashIssued && mobility != null &&
+                    mobility.CanDash && mobility.DashReady && horizontal != 0;
+                if (dash2)
+                {
+                    dashInput = true;
+                    _dashIssued = true;
+                    phase += "-dash";
+                }
+                ApplyArena(player, ref horizontal, ref vertical);
+                _patrol = horizontal == 0 ? _patrol : horizontal;
+                output.Horizontal = horizontal;
+                output.Vertical = vertical;
+                output.Jump = vertical < 0;
+                output.Dash = dashInput;
+                output.Phase = phase;
+                _previousState = state;
+                _previousSequence = input.NativeSequence;
+                _previousTimer = input.NativeTimer;
+                return output;
+            }
             if (dash)
             {
                 ChargeEscape(player, in boss, mobility, out horizontal,
@@ -428,6 +470,51 @@ namespace Chaite.Core
             }
             vertical = 0;
             phase = "fishron-wing-cruise-" + state;
+        }
+
+        /// <summary>Perpendicular escape from a launched Sharknado bubble.
+        /// The side comes from the signed offset against the launch line, the
+        /// same rule the charge escape uses, because the bubble locks on once
+        /// and then travels straight.</summary>
+        private static bool BubbleEscape(PlayerSnapshot player,
+            in SharknadoBubbleSnapshot bubble, out int horizontal,
+            out int vertical, out string phase)
+        {
+            horizontal = 0;
+            vertical = 0;
+            phase = null;
+            if (!bubble.Known || !bubble.Launched) return false;
+            var vx = bubble.Velocity.X;
+            var vy = bubble.Velocity.Y;
+            var speed = (float)Math.Sqrt(vx * vx + vy * vy);
+            if (!IsFinite(speed) || speed < BubbleLaunchSpeed) return false;
+            vx /= speed;
+            vy /= speed;
+            var cross = (player.Center.X - bubble.Center.X) * vy -
+                (player.Center.Y - bubble.Center.Y) * vx;
+            var crossVelocity = player.Velocity.X * vy -
+                player.Velocity.Y * vx;
+            int side;
+            if (Math.Abs(cross) > BubbleCommitOffset) side = cross > 0f ? 1 : -1;
+            else if (Math.Abs(crossVelocity) > BubbleCommitVelocity)
+                side = crossVelocity > 0f ? 1 : -1;
+            else side = 0;
+            var px = side == 0 ? 0f : side * vy;
+            var py = side == 0 ? 0f : -side * vx;
+            if (side == 0)
+            {
+                px = -vy;
+                py = vx;
+                if (py > 0f)
+                {
+                    px = -px;
+                    py = -py;
+                }
+            }
+            Split(px, py, out horizontal, out vertical);
+            if (horizontal == 0 && vertical == 0) vertical = -1;
+            phase = "fishron-wing-sharknado-bubble-escape";
+            return true;
         }
 
         private static float Distance(PlayerSnapshot player,
