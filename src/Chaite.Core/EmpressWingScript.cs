@@ -63,6 +63,28 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
+            // A trained policy for this route replaces only the movement
+            // decision; this route has no mount to summon, so the admission
+            // above is the whole contract and it stays untouched. The state
+            // bookkeeping above also stays, so the fixed branches remain
+            // exactly as reviewed whenever no policy owns this route.
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned != null)
+            {
+                int learnedHorizontal, learnedVertical;
+                bool learnedJump, learnedDash;
+                if (learned.TryDecide(in input, player, in boss, arena,
+                        out learnedHorizontal, out learnedVertical,
+                        out learnedJump, out learnedDash))
+                {
+                    output.Horizontal = learnedHorizontal;
+                    output.Vertical = learnedVertical;
+                    output.Jump = learnedJump;
+                    output.Dash = learnedDash;
+                    output.Phase = "empress-wing-learned";
+                    return output;
+                }
+            }
             switch (input.NativeState)
             {
                 case 8:
