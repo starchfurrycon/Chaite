@@ -95,6 +95,7 @@ namespace Chaite.Core
         private int _previousSequence = int.MinValue;
         private int _previousTimer;
         private int _chargeIndex;
+        private int _chargeBeat;
         private bool _dashIssued;
         private float _tornadoX;
         private int _tornadoTicksLeft;
@@ -109,6 +110,7 @@ namespace Chaite.Core
         {
             _initialized = false;
             _chargeIndex = 0;
+            _chargeBeat = 0;
             _dashIssued = false;
             _tornadoTicksLeft = 0;
             _previousState = int.MinValue;
@@ -176,6 +178,12 @@ namespace Chaite.Core
             }
             if (dash && stateEdge)
             {
+                // The beat is chosen once per charge, not once per tick. The
+                // distance between the Boss and the player is tiny compared to
+                // 14.5 px/tick of dash, so a beat that changes mid-charge walks
+                // the player straight through the Boss body.
+                _chargeBeat = _chargeIndex % 3;
+                _chargeIndex++;
                 // The hover that just ended tells the circuit its real length,
                 // including the shortened enraged clock.
                 if (_previousState >= 0 && _previousState < _hoverLimit.Length &&
@@ -308,7 +316,7 @@ namespace Chaite.Core
                 ? (_tornadoX >= player.Center.X ? -1 : 1)
                 : (boss.Center.X >= player.Center.X ? -1 : 1);
             horizontal = away;
-            switch (_chargeIndex % 3)
+            switch (_chargeBeat)
             {
                 case 0:
                     vertical = 0;
@@ -330,7 +338,6 @@ namespace Chaite.Core
                 _dashIssued = true;
                 phase += "-dash";
             }
-            _chargeIndex++;
         }
 
         /// <summary>Everything that is not a charge.
