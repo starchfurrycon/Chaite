@@ -646,6 +646,10 @@ public static class ChaiteGameProbe
                      {"position",new Dictionary<string,object>{{"x",p.position.X},{"y",p.position.Y}}},
                      {"velocity",new Dictionary<string,object>{{"x",p.velocity.X},{"y",p.velocity.Y}}},
                      {"life",p.statLife},{"dead",p.dead},{"wingTime",p.wingTime},{"wingTimeMax",p.wingTimeMax},
+                     // The mount routes are defined by being mounted, so the
+                     // fixture has to report whether the ride actually happened
+                     // rather than only that the input was pressed.
+                     {"mountActive",p.mount.Active},{"mountType",p.mount.Type},
                      {"poisoned",p.poisoned},
                      {"wingsLogic",p.wingsLogic},{"grapCount",p.grapCount},{"controlUseItem",p.controlUseItem},
                      {"dashType",p.dashType},{"dashDelay",p.dashDelay},{"eocDash",p.eocDash},
