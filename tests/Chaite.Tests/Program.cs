@@ -17,7 +17,9 @@ namespace Chaite.Tests
             if (args.Length != 0) return 2;
             Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
             Run(nameof(FishronWingCircuitKeepsDashDirectionAndLands), FishronWingCircuitKeepsDashDirectionAndLands);
-            Run(nameof(FishronShieldCounterIsAlignedAndSingleEdge), FishronShieldCounterIsAlignedAndSingleEdge);
+            Run(nameof(FishronShieldEdgeIsEarlyAndSingle), FishronShieldEdgeIsEarlyAndSingle);
+            Run(nameof(FishronCloseContactDoesNotCounterDash), FishronCloseContactDoesNotCounterDash);
+            Run(nameof(FishronWingScriptIgnoresThreatListContents), FishronWingScriptIgnoresThreatListContents);
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
             Run(nameof(FishronChilletRejectsWrongMountAndShortRunway), FishronChilletRejectsWrongMountAndShortRunway);
             Run(nameof(FishronChilletLockedRouteAcceptsOnlyItsActiveMount), FishronChilletLockedRouteAcceptsOnlyItsActiveMount);

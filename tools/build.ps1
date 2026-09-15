@@ -88,9 +88,10 @@ if ($Package) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $release
     $packageDocs = Join-Path $release 'docs'
     New-Item -ItemType Directory -Path $packageDocs | Out-Null
-    foreach ($document in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md',
-        'boss-queen-native-policy.md', 'boss-prime-native-policy.md', 'native-flight-policy.md',
-        'native-witch-broom-policy.md', 'native-dash-source-audit.md')) {
+    foreach ($document in @('formula-routes.md',
+        'formula-source-review-20260914.md', 'weapon-profile-policy.md',
+        'native-flight-policy.md', 'native-witch-broom-policy.md',
+        'native-dash-source-audit.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot ('docs\' + $document)) -Destination $packageDocs
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $release

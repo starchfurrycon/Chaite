@@ -16,54 +16,108 @@ namespace Chaite.Tests
             var arena = new ArenaSnapshot();
             var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash, NativeState = 0 };
             var opening = controller.Tick(in input, player, in boss, arena);
-            Equal(-1, opening.Horizontal); // Move away from the emerging Boss.
+            True(opening.Horizontal == -1,
+                "opening horizontal=" + opening.Horizontal);
             input.NativeState = 1; input.NativeTimer = 1;
             player.OnGround = false; player.Velocity = new Vec2(-6, -5);
             var escape = controller.Tick(in input, player, in boss, arena);
-            Equal(-1, escape.Vertical); False(escape.Dash);
+            True(escape.Horizontal == -1,
+                "escape horizontal=" + escape.Horizontal);
+            True(escape.Vertical == -1,
+                "escape vertical=" + escape.Vertical);
+            False(escape.Dash);
             boss.Position = new Vec2(1500, 1200);
             player.Velocity = new Vec2(-6, 2); input.NativeTimer = 15;
             var crossed = controller.Tick(in input, player, in boss, arena);
-            Equal(escape.Horizontal, crossed.Horizontal); Equal(escape.Vertical, crossed.Vertical);
+            Equal(escape.Horizontal, crossed.Horizontal);
+            Equal(escape.Vertical, crossed.Vertical);
             input.NativeState = 0;
             player.Position = new Vec2(1200, 500);
             var landing = controller.Tick(in input, player, in boss, arena);
             Equal(1, landing.Vertical); False(landing.Jump);
             player.Position = new Vec2(1000, 1000); player.OnGround = true; player.WingTime = 130;
             var launched = controller.Tick(in input, player, in boss, arena);
-            Equal(1, launched.Horizontal); Equal(-1, launched.Vertical);
+            True(launched.Horizontal == 1,
+                "launched horizontal=" + launched.Horizontal);
+            True(launched.Vertical == -1,
+                "launched vertical=" + launched.Vertical);
             controller.Reset();
             var reset = controller.Tick(in input, player, in boss, arena);
-            Equal(-1, reset.Horizontal);
+            True(reset.Horizontal == -1,
+                "reset horizontal=" + reset.Horizontal);
         }
 
-        private static void FishronShieldCounterIsAlignedAndSingleEdge()
+        private static void FishronShieldEdgeIsEarlyAndSingle()
         {
             var controller = new FishronWingScript();
             var player = new PlayerSnapshot { Position = new Vec2(2000, 1000), Width = 20, Height = 40,
                 WorldLeft = 0, WorldRight = 5000, WingTime = 130 };
-            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2090, 970), Width = 150,
+            var boss = new TargetSnapshot { Type = 370, Position = new Vec2(2500, 970), Width = 150,
                 Height = 100, Velocity = new Vec2(-17, 0) };
             var arena = new ArenaSnapshot();
             var input = new FormulaScriptInput { BossType = 370, Route = FormulaRoute.FishronFairyWingsDash,
                 NativeState = 1, NativeTimer = 1 };
             var counter = controller.Tick(in input, player, in boss, arena, true);
-            True(counter.Dash); Equal(1, counter.Horizontal);
+            True(counter.Dash); Equal(-1, counter.Horizontal);
             input.NativeTimer++;
             False(controller.Tick(in input, player, in boss, arena, true).Dash);
             controller.Reset();
             False(controller.Tick(in input, player, in boss, arena, false).Dash);
-            controller.Reset(); boss.Position.Y -= 200;
-            False(controller.Tick(in input, player, in boss, arena, true).Dash);
-            controller.Reset(); boss.Position.Y += 200; boss.Velocity.X = 17;
-            False(controller.Tick(in input, player, in boss, arena, true).Dash);
-            controller.Reset();
-            boss.Position = new Vec2(1940, 1040); boss.Velocity = new Vec2(-13, -10);
-            // X has passed, but the diagonal body still approaches from below.
-            var diagonal = controller.Tick(in input, player, in boss, arena, true);
-            True(diagonal.Dash); Equal(1, diagonal.Horizontal);
-            controller.Reset(); boss.Velocity.Y = 10;
-            False(controller.Tick(in input, player, in boss, arena, true).Dash);
+        }
+
+        private static void FishronCloseContactDoesNotCounterDash()
+        {
+            var controller = new FishronWingScript();
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000),
+                Width = 20, Height = 40, WorldRight = 5000 };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2100, 1000), Width = 150, Height = 100,
+                Velocity = new Vec2(-17, 0) };
+            var arena = new ArenaSnapshot();
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash,
+                NativeState = 1, NativeTimer = 1 };
+            var mobility = new MobilitySnapshot
+            {
+                CanDash = true,
+                DashReady = true
+            };
+            var close = controller.Tick(in input, player, in boss, arena,
+                mobility);
+            False(close.Dash);
+            Equal(1, close.Vertical);
+        }
+
+        private static void FishronWingScriptIgnoresThreatListContents()
+        {
+            var player = new PlayerSnapshot { Position = new Vec2(2000, 1000),
+                Width = 20, Height = 40, WorldRight = 5000 };
+            var boss = new TargetSnapshot { Type = 370,
+                Position = new Vec2(2600, 900), Width = 150, Height = 100,
+                Velocity = new Vec2(-17, 4) };
+            var input = new FormulaScriptInput { BossType = 370,
+                Route = FormulaRoute.FishronFairyWingsDash,
+                NativeState = 3, NativeTimer = 4 };
+            var mobility = new MobilitySnapshot
+            {
+                CanDash = true,
+                DashReady = true
+            };
+            var emptyArena = new ArenaSnapshot();
+            var populatedArena = new ArenaSnapshot
+            {
+                LocalOpenBounds = new RectF(100, 100, 40, 40),
+                ClearanceLeft = 1,
+                ClearanceRight = 9999
+            };
+            var first = new FishronWingScript().Tick(in input, player,
+                in boss, emptyArena, mobility);
+            var second = new FishronWingScript().Tick(in input, player,
+                in boss, populatedArena, mobility);
+            Equal(first.Horizontal, second.Horizontal);
+            Equal(first.Vertical, second.Vertical);
+            Equal(first.Dash, second.Dash);
+            Equal("fishron-wing-hazard-run-edge", first.Phase);
         }
 
         private static void FishronChilletUsesReviewedNativeDashCadence()

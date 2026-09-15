@@ -6,21 +6,22 @@ namespace Chaite.Core
     /// escape axis; no threat scoring, candidate search or equipment switching.</summary>
     public sealed class FishronWingScript
     {
-        private bool _initialized, _ascending, _counterDashIssued;
-        private int _direction, _dashVertical, _previousState = -99, _previousTimer;
+        private bool _initialized, _ascending, _dashIssued;
+        private int _direction, _dashHorizontal, _dashVertical;
+        private int _previousState = -99, _previousTimer;
         private float _left, _right, _top;
 
         public void Reset()
         {
             _initialized = false;
-            _counterDashIssued = false;
+            _dashIssued = false;
             _previousState = -99;
             _previousTimer = 0;
         }
 
         public FormulaScriptOutput Tick(in FormulaScriptInput input,
             PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
-            bool shieldReady = false)
+            MobilitySnapshot mobility)
         {
             var output = new FormulaScriptOutput();
             if (input.BossType != 370 || player == null || arena == null ||
@@ -44,7 +45,10 @@ namespace Chaite.Core
                 _top = player.Center.Y - 400f;
             }
             var dash = input.NativeState == 1 || input.NativeState == 6 || input.NativeState == 11;
-            var dashEdge = dash && (input.NativeState != _previousState || input.NativeTimer < _previousTimer);
+            var stateEdge = input.NativeState != _previousState ||
+                input.NativeTimer < _previousTimer;
+            var dashEdge = dash && stateEdge;
+            if (stateEdge) _dashIssued = false;
             if (player.OnGround && !_ascending)
                 _ascending = true;
             if (player.Center.Y <= _top || (!player.OnGround && player.WingTime <= 0f))
@@ -56,54 +60,92 @@ namespace Chaite.Core
             }
             if (dashEdge)
             {
-                _counterDashIssued = false;
-                // Preserve existing vertical momentum to leave a committed
-                // charge line. Reversing after the Boss crosses us is too late.
-                _dashVertical = player.Velocity.Y < -1f ? -1 : player.Velocity.Y > 1f ? 1 :
-                    _ascending ? -1 : 1;
+                _dashHorizontal = _direction;
+                // Leave the charge line vertically. The side is selected once
+                // from the committed charge velocity and held for the entire
+                // native state, including after the Boss crosses the player.
+                _dashVertical = boss.Velocity.Y > 1f ? -1 :
+                    boss.Velocity.Y < -1f ? 1 : _ascending ? -1 : 1;
             }
             _previousState = input.NativeState;
             _previousTimer = input.NativeTimer;
             output.Accepted = true;
             output.Fire = true;
-            output.Horizontal = _direction;
-            output.Vertical = dash ? _dashVertical : _ascending ? -1 : 1;
+            if (dash)
+            {
+                // During a charge, the runway direction is not an escape. Move
+                // diagonally away from the Boss center on the charge entry and
+                // hold that side until the native state ends.
+                output.Horizontal = _dashHorizontal;
+                output.Vertical = _dashVertical;
+            }
+            else
+            {
+                var hazardRun = input.NativeState == 2 ||
+                    input.NativeState == 3 || input.NativeState == 7 ||
+                    input.NativeState == 8;
+                var postDashSeparation = (input.NativeState == 0 ||
+                    input.NativeState == 5 || input.NativeState == 10) &&
+                    input.NativeTimer <= 10;
+                if (hazardRun)
+                {
+                    output.Horizontal = _direction;
+                    output.Vertical = -1;
+                }
+                else if (postDashSeparation)
+                {
+                    output.Horizontal = boss.Center.X >= player.Center.X
+                        ? -1 : 1;
+                    output.Vertical = boss.Center.Y >= player.Center.Y
+                        ? -1 : 1;
+                }
+                else
+                {
+                    output.Horizontal = _direction;
+                    output.Vertical = _ascending ? -1 : 1;
+                }
+            }
             output.Jump = output.Vertical < 0;
-            // A shield collision needs its own timed, aligned counter-dash.
-            // Do not press it continuously or with no explicit direction.
+            // The shield is a mobility source, not a required contact parry.
+            // Emit at most one early horizontal edge while the Boss is still
+            // distant; close-body counter-dashes proved order-dependent in the
+            // pinned native update and can take damage before the bounce.
             output.Dash = false;
-            if (dash && shieldReady && !_counterDashIssued && !boss.Invulnerable)
+            var shieldReady = mobility != null && mobility.CanDash &&
+                mobility.DashReady;
+            var hazardEdge = (input.NativeState == 2 ||
+                input.NativeState == 3 || input.NativeState == 7 ||
+                input.NativeState == 8) && input.NativeTimer <= 8;
+            if ((dash || hazardEdge) && shieldReady && !_dashIssued &&
+                !boss.Invulnerable)
             {
                 var dx = boss.Center.X - player.Center.X;
-                var towardBoss = dx < 0f ? -1 : 1;
-                var closingSpeed = 14.5f - boss.Velocity.X * towardBoss;
                 var gap = Math.Abs(dx) - (boss.Width + player.Width) * .5f;
-                // Native type-2 dash has a 15-tick contact window. Only
-                // request the single edge for an incoming, aligned body;
-                // never dash toward a receding Boss or a distant diagonal.
-                var contactTicks = closingSpeed > 0f ? Math.Max(0f, gap) / closingSpeed : 99f;
-                var contactDy = boss.Center.Y - player.Center.Y +
-                    (boss.Velocity.Y - player.Velocity.Y) * contactTicks;
-                var dy = boss.Center.Y - player.Center.Y;
-                var verticalClosing = dy * (boss.Velocity.Y - player.Velocity.Y) < 0f;
-                // Diagonal charges can overlap X before Y. The old gap>=-12
-                // test rejected the entire remaining contact window as though
-                // horizontal passage meant the body could no longer hit us.
-                var overlappingDiagonal = gap < 0f && verticalClosing &&
-                    Math.Abs(dy) <= (boss.Height + player.Height) * .5f + 20f;
-                if (overlappingDiagonal || boss.Velocity.X * towardBoss < -1f && gap >= -12f &&
-                    contactTicks <= 4f &&
-                    Math.Abs(contactDy) < (boss.Height + player.Height) * .5f - 8f)
+                if (hazardEdge || gap >= 220f && input.NativeTimer <= 8)
                 {
-                    output.Horizontal = towardBoss;
+                    output.Horizontal = _dashHorizontal;
                     output.Dash = true;
-                    _counterDashIssued = true;
-                    output.Phase = "fishron-wing-shield-contact";
+                    _dashIssued = true;
+                    output.Phase = hazardEdge
+                        ? "fishron-wing-hazard-run-edge"
+                        : "fishron-wing-early-lateral-edge";
                 }
             }
             if (!output.Dash) output.Phase = dash ? "fishron-wing-committed-escape" :
                 _ascending ? "fishron-wing-ascent" : "fishron-wing-landing";
             return output;
+        }
+
+        public FormulaScriptOutput Tick(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss,
+            ArenaSnapshot arena, bool shieldReady = false)
+        {
+            var mobility = new MobilitySnapshot
+            {
+                CanDash = shieldReady,
+                DashReady = shieldReady
+            };
+            return Tick(in input, player, in boss, arena, mobility);
         }
     }
 }
