@@ -42,6 +42,14 @@ namespace Chaite.Tests
             True(FishronThreatCatalog.IsReviewedBubbleClearer(
                 FishronThreatCatalog.RazorbladeTyphoonItem));
             False(FishronThreatCatalog.IsReviewedBubbleClearer(757));
+            Equal(116, FishronThreatCatalog.InfernoBuff);
+            Equal(2348, FishronThreatCatalog.InfernoPotionItem);
+            // The admission gate is fail-closed and is not a promise that
+            // every bubble dies: higher difficulties can still leak one.
+            True(FishronThreatCatalog.SatisfiesBubbleClearance(true, true));
+            False(FishronThreatCatalog.SatisfiesBubbleClearance(true, false));
+            False(FishronThreatCatalog.SatisfiesBubbleClearance(false, true));
+            False(FishronThreatCatalog.SatisfiesBubbleClearance(false, false));
             Equal(1, FishronThreatCatalog.DetonatingBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleDefense);

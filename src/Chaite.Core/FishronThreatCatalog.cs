@@ -64,10 +64,27 @@ namespace Chaite.Core
         /// <summary>Inferno Potion destroys Detonating Bubbles without any
         /// weapon input at all.</summary>
         public const int InfernoPotionItem = 2348;
+        /// <summary>The buff that potion applies. Its ring of fire destroys
+        /// each Detonating Bubble as it arrives, so the reviewed admission
+        /// condition is this buff being live rather than a weapon slot.</summary>
+        public const int InfernoBuff = 116;
 
         public static bool IsReviewedBubbleClearer(int itemType) =>
             itemType == GoldenShowerItem ||
             itemType == RazorbladeTyphoonItem ||
             itemType == RazorpineItem;
+
+        /// <summary>Whether a run satisfies the bubble-clearance admission
+        /// condition. The Inferno buff is the reviewed baseline because it
+        /// needs no aim and no weapon input.
+        ///
+        /// It is deliberately reported separately from a weapon slot: at higher
+        /// difficulties the bubbles are not guaranteed to all die to the ring,
+        /// so a wide weapon stays a useful supplement even when this is true.
+        /// The value is therefore an admission gate, not a promise that no
+        /// bubble will ever survive to reach the player.</summary>
+        public static bool SatisfiesBubbleClearance(bool infernoBuffKnown,
+            bool infernoBuffActive) =>
+            infernoBuffKnown && infernoBuffActive;
     }
 }
