@@ -7,6 +7,33 @@ namespace Chaite.Tests
 {
     internal static partial class Program
     {
+        /// <summary>The threats a wing circuit cannot answer by moving. The
+        /// split that matters is the removal cost, not the homing, so the
+        /// one-life bubble and the two armoured ones must stay distinct.</summary>
+        private static void FishronThreatIdentitiesSeparateByRemovalCost()
+        {
+            True(FishronThreatCatalog.IsHomingBubble(
+                FishronThreatCatalog.DetonatingBubbleType));
+            True(FishronThreatCatalog.IsHomingBubble(
+                FishronThreatCatalog.LargeSharknadoBubbleType));
+            True(FishronThreatCatalog.IsHomingBubble(
+                FishronThreatCatalog.SmallSharknadoBubbleType));
+            False(FishronThreatCatalog.IsHomingBubble(
+                FishronThreatCatalog.SharknadoType));
+            False(FishronThreatCatalog.IsHomingBubble(
+                FishronThreatCatalog.SharknadoBoltType));
+            False(FishronThreatCatalog.IsArmouredBubble(
+                FishronThreatCatalog.DetonatingBubbleType));
+            True(FishronThreatCatalog.IsArmouredBubble(
+                FishronThreatCatalog.LargeSharknadoBubbleType));
+            True(FishronThreatCatalog.IsArmouredBubble(
+                FishronThreatCatalog.SmallSharknadoBubbleType));
+            Equal(1, FishronThreatCatalog.DetonatingBubbleLife);
+            Equal(100, FishronThreatCatalog.SharknadoBubbleLife);
+            Equal(100, FishronThreatCatalog.SharknadoBubbleDefense);
+            Equal(540, FishronThreatCatalog.SharknadoLifetimeTicks);
+        }
+
         /// <summary>The reviewed W cycle: horizontal, ascend, descend,
         /// repeating, with one Shield-of-Cthulhu edge spent per charge.</summary>
         private static void FishronWingFollowsReviewedChargeCycle()
