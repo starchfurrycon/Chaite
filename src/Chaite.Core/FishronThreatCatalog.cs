@@ -74,17 +74,27 @@ namespace Chaite.Core
             itemType == RazorbladeTyphoonItem ||
             itemType == RazorpineItem;
 
-        /// <summary>Whether a run satisfies the bubble-clearance admission
-        /// condition. The Inferno buff is the reviewed baseline because it
-        /// needs no aim and no weapon input.
-        ///
-        /// It is deliberately reported separately from a weapon slot: at higher
-        /// difficulties the bubbles are not guaranteed to all die to the ring,
-        /// so a wide weapon stays a useful supplement even when this is true.
-        /// The value is therefore an admission gate, not a promise that no
-        /// bubble will ever survive to reach the player.</summary>
-        public static bool SatisfiesBubbleClearance(bool infernoBuffKnown,
-            bool infernoBuffActive) =>
-            infernoBuffKnown && infernoBuffActive;
+        /// <summary>Potions that must be carried before takeover may start. The
+        /// admission test is a stock count, not a live buff: the reviewed play
+        /// is to drink before the fight and then refresh from the inventory
+        /// with the quick-buff key as the buff runs out, so what has to be true
+        /// up front is that enough stock exists to cover the whole fight.</summary>
+        public const int RequiredInfernoPotionStock = 3;
+        /// <summary>Buff time left, in ticks, at which the circuit refreshes.
+        /// Deliberately generous: a refresh that arrives late is a window with
+        /// no ring, which is exactly when the bubbles reach the player.</summary>
+        public const int InfernoRefreshTicks = 900;
+
+        /// <summary>Whether the carried stock can cover a fight. Zero or an
+        /// unreadable count fails closed.</summary>
+        public static bool HasSufficientInfernoStock(int potionCount) =>
+            potionCount >= RequiredInfernoPotionStock;
+
+        /// <summary>Whether the quick-buff key should be pulsed this tick.
+        /// Unknown buff state fails closed, because a fight started without a
+        /// live ring is one the circuit cannot finish unhit.</summary>
+        public static bool NeedsInfernoRefresh(bool buffStateKnown,
+            int buffTicksLeft) =>
+            !buffStateKnown || buffTicksLeft <= InfernoRefreshTicks;
     }
 }

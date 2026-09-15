@@ -44,12 +44,17 @@ namespace Chaite.Tests
             False(FishronThreatCatalog.IsReviewedBubbleClearer(757));
             Equal(116, FishronThreatCatalog.InfernoBuff);
             Equal(2348, FishronThreatCatalog.InfernoPotionItem);
-            // The admission gate is fail-closed and is not a promise that
-            // every bubble dies: higher difficulties can still leak one.
-            True(FishronThreatCatalog.SatisfiesBubbleClearance(true, true));
-            False(FishronThreatCatalog.SatisfiesBubbleClearance(true, false));
-            False(FishronThreatCatalog.SatisfiesBubbleClearance(false, true));
-            False(FishronThreatCatalog.SatisfiesBubbleClearance(false, false));
+            // Admission is a stock count, and it fails closed on a short or
+            // unreadable inventory.
+            True(FishronThreatCatalog.HasSufficientInfernoStock(3));
+            False(FishronThreatCatalog.HasSufficientInfernoStock(2));
+            False(FishronThreatCatalog.HasSufficientInfernoStock(0));
+            // The refresh is fail-closed on unknown buff state and fires with
+            // margin before the ring actually lapses.
+            True(FishronThreatCatalog.NeedsInfernoRefresh(false, 99999));
+            True(FishronThreatCatalog.NeedsInfernoRefresh(true, 900));
+            True(FishronThreatCatalog.NeedsInfernoRefresh(true, 10));
+            False(FishronThreatCatalog.NeedsInfernoRefresh(true, 3600));
             Equal(1, FishronThreatCatalog.DetonatingBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleLife);
             Equal(100, FishronThreatCatalog.SharknadoBubbleDefense);

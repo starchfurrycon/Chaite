@@ -43,12 +43,20 @@
 
 ## 准入要求（新增）
 
-猪鲨战斗的准入条件除已声明的机动路线之外，**还要求狱火（Inferno）增益在战斗期间
-处于激活状态**（Buff 116，由地狱药水 item 2348 施加）。狱火火环会在泡泡抵达前把
-它们烧掉，不需要瞄准、不需要武器输入，所以它是最稳的基线手段。
+猪鲨战斗的准入条件除已声明的机动路线之外，**还要求背包中携带足够的地狱药水**
+（item 2348，施加 Buff 116）。判定的是**库存数量**而不是当前增益是否激活：已审核的
+打法是战前喝一瓶，之后在增益将尽时用**快捷增益键**从背包续药，所以战前需要成立的
+是"备货够打完全程"。
 
-代码侧对应 `FishronThreatCatalog.SatisfiesBubbleClearance`，判定是 fail-closed
-的：读取不到增益状态一律按不满足处理。
+代码侧对应：
+
+- `FishronThreatCatalog.HasSufficientInfernoStock(potionCount)` —— 库存门槛，
+  数量不足或读取失败一律不满足。
+- `FishronThreatCatalog.NeedsInfernoRefresh(buffStateKnown, buffTicksLeft)` ——
+  剩余时间低于 `InfernoRefreshTicks`（900 帧）时按一次快捷增益键，留足余量；
+  增益状态未知时 fail-closed 按需要续药处理。
+
+两个门槛都是 fail-closed 的。
 
 **这条准入不是一个"泡泡必然全清"的承诺。** 高难度下泡泡数值可能变化，狱火不一定
 全部拦住；届时仍需用武器补掉威胁最大的那几个。因此武器仍然留在允许范围内（见上表），
