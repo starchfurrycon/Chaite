@@ -71,11 +71,6 @@ namespace Chaite.Core
         /// <summary>How long a landed Sharknado keeps its column. The pinned
         /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
         private const int TornadoMemoryTicks = 540;
-        /// <summary>Speed above which a Sharknado bubble counts as launched.
-        /// AI_069 sets the launch velocity once, at tick 90 of the descent, so
-        /// the descent (about one pixel per tick) and the launch (sixteen) are
-        /// never close.</summary>
-        private const float BubbleLaunchSpeed = 8f;
         /// <summary>Centre-to-centre distance inside which the Boss body itself
         /// is the threat. A charge that ends beside the player leaves the Boss
         /// close enough that the next hover starts from contact range, and
@@ -139,6 +134,13 @@ namespace Chaite.Core
             PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
             MobilitySnapshot mobility, in SharknadoBubbleSnapshot bubble)
         {
+            // bubble is published but deliberately not acted on. Two candidate
+            // rules were implemented and measured, and both came out at or
+            // worse than the seed-to-seed spread: a perpendicular escape
+            // (7-9 hits) and a steer-to-the-nearer-edge placement (8-10 hits)
+            // against 7-9 without either. The observation is kept because it
+            // is the right shape for the next attempt; the input is not,
+            // because nothing yet shows it helps.
             var output = new FormulaScriptOutput();
             if (input.BossType != 370 || player == null || arena == null ||
                 (input.Route != FormulaRoute.FishronFairyWingsDash &&
@@ -186,26 +188,6 @@ namespace Chaite.Core
             int horizontal, vertical;
             string phase;
             var dashInput = false;
-            string placement;
-            if (!dash && BubblePlacement(player, in bubble, out horizontal,
-                    out placement))
-            {
-                // The vertical axis stays whatever the circuit already chose;
-                // only the horizontal direction is set, so the placement steers
-                // the contact point without taking the charge cycle's axes.
-                vertical = player.OnGround ? 0 : 1;
-                ApplyArena(player, ref horizontal, ref vertical);
-                _patrol = horizontal == 0 ? _patrol : horizontal;
-                output.Horizontal = horizontal;
-                output.Vertical = vertical;
-                output.Jump = vertical < 0;
-                output.Dash = false;
-                output.Phase = placement;
-                _previousState = state;
-                _previousSequence = input.NativeSequence;
-                _previousTimer = input.NativeTimer;
-                return output;
-            }
             if (dash)
             {
                 ChargeEscape(player, in boss, mobility, out horizontal,
@@ -459,37 +441,6 @@ namespace Chaite.Core
             }
             vertical = 0;
             phase = "fishron-wing-cruise-" + state;
-        }
-
-        /// <summary>Places the inbound Sharknado bubble's contact point at an
-        /// arena edge.
-        ///
-        /// This is not a dodge, and deliberately does not try to be one. The
-        /// reviewed play accepts the contact and chooses where it happens,
-        /// because the tornado is created at the contact's horizontal
-        /// coordinate: an edge contact leaves the arena's whole width to run
-        /// into, and a mid-arena contact leaves a column in the middle of the
-        /// only ground the circuit has. Steering to the nearer edge is that
-        /// choice expressed as input.
-        ///
-        /// It stays a placement rather than an escape so it cannot fight the
-        /// charge cycle for the same axes: it only picks the horizontal
-        /// direction, and the vertical axis keeps whatever the circuit was
-        /// already doing.</summary>
-        private bool BubblePlacement(PlayerSnapshot player,
-            in SharknadoBubbleSnapshot bubble, out int horizontal,
-            out string phase)
-        {
-            horizontal = 0;
-            phase = null;
-            if (!bubble.Known || !bubble.Launched) return false;
-            var speed = (float)Math.Sqrt(bubble.Velocity.X * bubble.Velocity.X +
-                bubble.Velocity.Y * bubble.Velocity.Y);
-            if (!IsFinite(speed) || speed < BubbleLaunchSpeed) return false;
-            horizontal = _bandRight - player.Position.X <=
-                player.Position.X - _bandLeft ? 1 : -1;
-            phase = "fishron-wing-sharknado-bubble-placement";
-            return true;
         }
 
         private static float Distance(PlayerSnapshot player,
