@@ -60,6 +60,7 @@
     <Compile Include="FishronFormulaStateContract.cs" />
     <Compile Include="FishronThreatCatalog.cs" />
     <Compile Include="EmpressFlightScript.cs" />
+    <Compile Include="LearnedPolicy.cs" />
     <Compile Include="EmpressWingScript.cs" />
     <Compile Include="EmpressFormulaStateContract.cs" />
     <Compile Include="ClassicSecondaryBossContract.cs" />

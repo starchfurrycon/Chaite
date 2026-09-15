@@ -85,6 +85,27 @@ namespace Chaite.Core
                 _dashVertical = input.PlayerBelowBoss ? -1 : 1;
             _previousState = input.NativeState;
             _loopTicks++;
+            // A trained policy for this route replaces only the movement
+            // decision. Everything above -- route, form, mount identity, mount
+            // release, grapple and gravity admission -- is untouched, because
+            // that part is already verified.
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned != null)
+            {
+                int learnedHorizontal, learnedVertical;
+                bool learnedJump, learnedDash;
+                if (learned.TryDecide(in input, player, in boss, arena,
+                        out learnedHorizontal, out learnedVertical,
+                        out learnedJump, out learnedDash))
+                {
+                    output.Horizontal = learnedHorizontal;
+                    output.Vertical = learnedVertical;
+                    output.Jump = learnedJump;
+                    output.Dash = learnedDash;
+                    output.Phase = "empress-flight-learned";
+                    return output;
+                }
+            }
             if (input.NativeState == 8 || input.NativeState == 9)
             {
                 // The Empress body charge is horizontal. Leave the committed
