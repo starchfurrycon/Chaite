@@ -63,28 +63,6 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
-            // A trained policy for this route replaces only the movement
-            // decision; this route has no mount to summon, so the admission
-            // above is the whole contract and it stays untouched. The state
-            // bookkeeping above also stays, so the fixed branches remain
-            // exactly as reviewed whenever no policy owns this route.
-            var learned = LearnedPolicy.ForRoute(input.Route);
-            if (learned != null)
-            {
-                int learnedHorizontal, learnedVertical;
-                bool learnedJump, learnedDash;
-                if (learned.TryDecide(in input, player, in boss, arena,
-                        out learnedHorizontal, out learnedVertical,
-                        out learnedJump, out learnedDash))
-                {
-                    output.Horizontal = learnedHorizontal;
-                    output.Vertical = learnedVertical;
-                    output.Jump = learnedJump;
-                    output.Dash = learnedDash;
-                    output.Phase = "empress-wing-learned";
-                    return output;
-                }
-            }
             switch (input.NativeState)
             {
                 case 8:
@@ -118,7 +96,39 @@ namespace Chaite.Core
                 output.Phase = "empress-wing-reposition-dash-edge";
             }
             output.Jump = output.Vertical < 0;
+            DecideMovement(in input, player, in boss, arena, output);
             return output;
+        }
+
+        /// <summary>
+        /// Applies the trained residual to the scripted decision computed just
+        /// above, including the single-shot reposition dash edge. The script is
+        /// the base and the network may only correct it, so zero weights
+        /// reproduce the fixed circuit exactly and the search starts from that
+        /// circuit's measured behaviour rather than from a random walk.
+        /// Admission and the state bookkeeping are not reachable from here. A
+        /// policy exception is deliberately not caught: a configured-but-broken
+        /// policy must fail loudly rather than silently revert to the fixed
+        /// machine.
+        /// </summary>
+        private static void DecideMovement(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            FormulaScriptOutput output)
+        {
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned == null) return;
+            int horizontal, vertical;
+            bool jump, dash;
+            if (!learned.Adjust(in input, player, in boss, arena,
+                    output.Horizontal, output.Vertical, output.Jump,
+                    output.Dash, out horizontal, out vertical, out jump,
+                    out dash))
+                return;
+            output.Horizontal = horizontal;
+            output.Vertical = vertical;
+            output.Jump = jump;
+            output.Dash = dash;
+            output.Phase = "empress-wing-learned";
         }
 
         private static void OrbitQuadrant(int timer, int loop,

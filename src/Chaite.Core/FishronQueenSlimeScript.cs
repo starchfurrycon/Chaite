@@ -81,26 +81,6 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
-            // A trained policy for this route replaces only the movement
-            // decision. Route, mount and arena admission above, and the state
-            // bookkeeping just above this point, are all untouched.
-            var learned = LearnedPolicy.ForRoute(input.Route);
-            if (learned != null)
-            {
-                int learnedHorizontal, learnedVertical;
-                bool learnedJump, learnedDash;
-                if (learned.TryDecide(in input, player, in boss, arena,
-                        out learnedHorizontal, out learnedVertical,
-                        out learnedJump, out learnedDash))
-                {
-                    output.Horizontal = learnedHorizontal;
-                    output.Vertical = learnedVertical;
-                    output.Jump = learnedJump;
-                    output.Dash = learnedDash;
-                    output.Phase = "fishron-queen-slime-learned";
-                    return output;
-                }
-            }
             var charge = input.NativeState == 1 ||
                 input.NativeState == 6 || input.NativeState == 11;
             if (charge)
@@ -117,7 +97,38 @@ namespace Chaite.Core
                 output.Jump = output.Vertical < 0;
                 output.Phase = Phase(in input);
             }
+            DecideMovement(in input, player, in boss, arena, output);
             return output;
+        }
+
+        /// <summary>
+        /// Applies the trained residual to the scripted decision computed just
+        /// above. The script is the base and the network may only correct it,
+        /// so zero weights reproduce the fixed circuit exactly and the search
+        /// starts from that circuit's measured behaviour rather than from a
+        /// random walk. Route, mount and arena admission are not reachable from
+        /// here. A policy exception is deliberately not caught: a
+        /// configured-but-broken policy must fail loudly rather than silently
+        /// revert to the fixed machine.
+        /// </summary>
+        private static void DecideMovement(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            FormulaScriptOutput output)
+        {
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned == null) return;
+            int horizontal, vertical;
+            bool jump, dash;
+            if (!learned.Adjust(in input, player, in boss, arena,
+                    output.Horizontal, output.Vertical, output.Jump,
+                    output.Dash, out horizontal, out vertical, out jump,
+                    out dash))
+                return;
+            output.Horizontal = horizontal;
+            output.Vertical = vertical;
+            output.Jump = jump;
+            output.Dash = dash;
+            output.Phase = "fishron-queen-slime-learned";
         }
 
         private static string Phase(in FormulaScriptInput input)

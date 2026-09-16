@@ -225,35 +225,47 @@ namespace Chaite.Core
             // A trained policy for this route replaces only the movement
             // decision. Route, form and mount admission above are untouched,
             // because that part is already verified.
-            var learned = LearnedPolicy.ForRoute(input.Route);
-            if (learned != null)
-            {
-                int learnedHorizontal, learnedVertical;
-                bool learnedJump, learnedDash;
-                if (learned.TryDecide(in input, player, in boss, arena,
-                        out learnedHorizontal, out learnedVertical,
-                        out learnedJump, out learnedDash))
-                {
-                    output.Horizontal = learnedHorizontal;
-                    output.Vertical = learnedVertical;
-                    output.Jump = learnedJump;
-                    output.Dash = learnedDash;
-                    output.Phase = "fishron-wing-learned";
-                    _previousState = state;
-                    _previousSequence = input.NativeSequence;
-                    _previousTimer = input.NativeTimer;
-                    return output;
-                }
-            }
             output.Horizontal = horizontal;
             output.Vertical = vertical;
             output.Jump = vertical < 0;
             output.Dash = dashInput;
             output.Phase = phase;
+            DecideMovement(in input, player, in boss, arena, output);
             _previousState = state;
             _previousSequence = input.NativeSequence;
             _previousTimer = input.NativeTimer;
             return output;
+        }
+
+        /// <summary>
+        /// Applies the trained residual to the scripted decision computed just
+        /// above, and only to that decision. The script is the base and the
+        /// network may only correct it, so zero weights reproduce the fixed
+        /// circuit exactly and the search starts from that circuit's measured
+        /// behaviour rather than from a random walk. Route, form and mount
+        /// admission, the charge-beat bookkeeping and the hover-limit learning
+        /// above are not reachable from here. A policy exception is
+        /// deliberately not caught: a configured-but-broken policy must fail
+        /// loudly rather than silently revert to the fixed machine.
+        /// </summary>
+        private static void DecideMovement(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            FormulaScriptOutput output)
+        {
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned == null) return;
+            int horizontal, vertical;
+            bool jump, dash;
+            if (!learned.Adjust(in input, player, in boss, arena,
+                    output.Horizontal, output.Vertical, output.Jump,
+                    output.Dash, out horizontal, out vertical, out jump,
+                    out dash))
+                return;
+            output.Horizontal = horizontal;
+            output.Vertical = vertical;
+            output.Jump = jump;
+            output.Dash = dash;
+            output.Phase = "fishron-wing-learned";
         }
 
         /// <summary>Compatibility overload retained for synthetic adapters which

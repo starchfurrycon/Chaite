@@ -242,30 +242,8 @@ namespace Chaite.Core
             return scaled;
         }
 
-        /// <summary>Evaluates the network and writes the movement decision.
-        /// Returns false only when the geometry is missing.</summary>
-        public bool TryDecide(in FormulaScriptInput input, PlayerSnapshot player,
-            in TargetSnapshot boss, ArenaSnapshot arena, out int horizontal,
-            out int vertical, out bool jump, out bool dash)
-        {
-            horizontal = 0;
-            vertical = 0;
-            jump = false;
-            dash = false;
-            if (!Evaluate(in input, player, in boss, arena)) return false;
-            // Retired absolute mapping. It is kept only so the existing call
-            // sites keep compiling while they are moved behind the scripted
-            // decision; under it zero weights mean "always left and up", which
-            // is a random walk, not a starting point.
-            horizontal = ArgMax(0, 3) - 1;
-            vertical = ArgMax(3, 3) - 1;
-            jump = ArgMax(6, 2) == 1;
-            dash = ArgMax(8, 2) == 1;
-            return true;
-        }
-
-        /// <summary>Residual form of the same network, and the form training
-        /// uses. The scripted decision is the base and the network may only
+        /// <summary>Residual form of the same network, and the only form any
+        /// caller uses. The scripted decision is the base and the network may only
         /// correct it, with class zero of each head meaning "leave it alone".
         /// Zero weights therefore reproduce the fixed state machine exactly,
         /// so the search starts from competence instead of from noise. The ten

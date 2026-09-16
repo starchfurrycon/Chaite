@@ -91,30 +91,44 @@ namespace Chaite.Core
                     _dashIssued = true;
                 }
             }
-            // A trained policy for this route replaces only the movement
-            // decision. It sits after the mount release and mount identity
-            // admission above, because that path has its own early return and
-            // taking it over would stop the mount from ever being summoned.
-            var learned = LearnedPolicy.ForRoute(input.Route);
-            if (learned != null)
-            {
-                int learnedHorizontal, learnedVertical;
-                bool learnedJump, learnedDash;
-                if (learned.TryDecide(in input, player, in boss, arena,
-                        out learnedHorizontal, out learnedVertical,
-                        out learnedJump, out learnedDash))
-                {
-                    output.Horizontal = learnedHorizontal;
-                    output.Vertical = learnedVertical;
-                    output.Jump = learnedJump;
-                    output.Dash = learnedDash;
-                    output.Phase = "fishron-chillet-learned";
-                    return output;
-                }
-            }
+            // A trained policy for this route sits after the mount release and mount
+            // identity admission above, because that path has its own early
+            // return and taking it over would stop the mount from ever being
+            // summoned.
             output.Horizontal = _runDirection;
             output.Phase = Phase(in input, counter, output.Dash);
+            DecideMovement(in input, player, in boss, arena, output);
             return output;
+        }
+
+        /// <summary>
+        /// Applies the trained residual to the scripted decision computed just
+        /// above. The script is the base and the network may only correct it,
+        /// so zero weights reproduce the fixed circuit exactly and the search
+        /// starts from that circuit's measured behaviour rather than from a
+        /// random walk. The mount summon path above returns before reaching
+        /// this point. A policy exception is deliberately not caught: a
+        /// configured-but-broken policy must fail loudly rather than silently
+        /// revert to the fixed machine.
+        /// </summary>
+        private static void DecideMovement(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            FormulaScriptOutput output)
+        {
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned == null) return;
+            int horizontal, vertical;
+            bool jump, dash;
+            if (!learned.Adjust(in input, player, in boss, arena,
+                    output.Horizontal, output.Vertical, output.Jump,
+                    output.Dash, out horizontal, out vertical, out jump,
+                    out dash))
+                return;
+            output.Horizontal = horizontal;
+            output.Vertical = vertical;
+            output.Jump = jump;
+            output.Dash = dash;
+            output.Phase = "fishron-chillet-learned";
         }
 
         private static bool ShouldCounterDash(in FormulaScriptInput input)
