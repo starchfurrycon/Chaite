@@ -29,6 +29,11 @@ param(
     [int]$Population = 16,
     [int]$SeedsPerCandidate = 4,
     [double]$Sigma = 0.10,
+    # Fraction of Sigma the mean may move in one generation. The rank-weighted
+    # gradient estimate is an average of standard normal perturbations, so its
+    # magnitude is about 1 and eta*Sigma is the step the mean actually takes.
+    [double]$LearningRate = 0.30,
+    [int]$Seed = 20260915,
     [int]$MaxGenerations = 100,
     [int]$Parallel = 1,
     [int]$ValidationEvery = 5,
@@ -89,8 +94,12 @@ function Read-Params([string]$Path) {
 }
 
 function Get-ResultFor([string]$RunTag) {
+    # The trailing dash is load bearing. runprobe.ps1 names each run
+    # game-probe-rt-<tag>-<MMdd-HHmmss>, so without it a tag of g1 also matches
+    # g11 and one generation silently absorbs another's rows. Nothing collided
+    # yet only because no run has reached generation 11.
     $dirs = Get-ChildItem (Join-Path $Root 'artifacts') -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "game-probe-rt-$RunTag*" }
+        Where-Object { $_.Name -like "game-probe-rt-$RunTag-*" }
     $rows = @()
     foreach ($d in $dirs) {
         $f = Join-Path $d.FullName 'result.json'
@@ -127,15 +136,27 @@ function Get-Fitness($row) {
 # One candidate on one seed. Each candidate needs its own parameter file, so
 # each evaluation is its own helper process carrying its own environment.
 function Invoke-Evaluation([string]$ParamsPath, [int[]]$SeedList, [string]$RunTag) {
-    if ($RunTag.Length -gt 0) { Remove-Item (Join-Path $Root 'artifacts') -Recurse -Force -ErrorAction SilentlyContinue -Filter "game-probe-rt-$RunTag*" }
     $csv = ($SeedList -join ',')
     $log = Join-Path $TrainDir "wave-$RunTag.log"
-    $cmd = "`$env:CHAITE_POLICY_FILE='$ParamsPath'; `$env:CHAITE_POLICY_ROUTES='$PolicyRoute'; & '$Runwave' -Scenario $Scenario -Route $Route -Seeds $csv -Tag $RunTag *> '$log'"
-    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-Command', $cmd -PassThru -WindowStyle Hidden
-    $p.WaitForExit()
-    $rows = Get-ResultFor $RunTag
-    if ($rows.Count -eq 0) { throw "evaluation $RunTag produced no results (see $log)" }
-    return , $rows
+    # A probe can legitimately produce nothing when it hits its own wall-clock
+    # cap, and with several evaluations in flight that is a contention
+    # artefact rather than a broken policy. Retrying a bounded number of times
+    # keeps a ten-hour run from dying on one slow seed, while still failing
+    # loudly once the retries are exhausted instead of quietly scoring the
+    # missing seeds as losses.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if ($RunTag.Length -gt 0) { Remove-Item (Join-Path $Root 'artifacts') -Recurse -Force -ErrorAction SilentlyContinue -Filter "game-probe-rt-$RunTag-*" }
+        $cmd = "`$env:CHAITE_POLICY_FILE='$ParamsPath'; `$env:CHAITE_POLICY_ROUTES='$PolicyRoute'; & '$Runwave' -Scenario $Scenario -Route $Route -Seeds $csv -Tag $RunTag *> '$log'"
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-Command', $cmd -PassThru -WindowStyle Hidden
+        $p.WaitForExit()
+        $rows = Get-ResultFor $RunTag
+        if ($rows.Count -gt 0) { return , $rows }
+        if ($attempt -lt 3) {
+            Write-Host "  evaluation $RunTag produced no results, retry $attempt of 3"
+            Start-Sleep -Seconds 20
+        }
+    }
+    throw "evaluation $RunTag produced no results after 3 attempts (see $log)"
 }
 
 function Measure-Candidate([string]$ParamsPath, [int[]]$SeedList, [string]$RunTag) {
@@ -202,9 +223,14 @@ if ($Mode -eq 'eval') {
 }
 
 # --------------------------------------------------------------- train mode
-$rng = New-Object System.Random 20260915
+$rng = New-Object System.Random $Seed
+# The mean starts at zero, not at small random weights. The network is a
+# residual: class zero of every head means leave the scripted decision alone,
+# so zero weights reproduce the fixed state machine exactly. Starting from
+# noise instead would have the search begin below the hand-written controller
+# it is meant to improve on, which is what the first run's 14-of-16-candidates-
+# worse-than-parent generation actually measured.
 $mean = New-Object double[] $WeightCount
-for ($i = 0; $i -lt $WeightCount; $i++) { $mean[$i] = ($rng.NextDouble() * 2.0 - 1.0) * 0.05 }
 Write-Params (Join-Path $TrainDir 'params-gen000.txt') $mean
 if (Test-Path $LogFile) { } else { Set-Content -Path $LogFile -Value 'gen,candidate,seeds,fitness,note' -Encoding ASCII }
 
@@ -214,16 +240,19 @@ $bestFitness = [double]::NegativeInfinity
 $bestPath = Join-Path $TrainDir 'params-best.txt'
 
 for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
-    # Fresh seeds every generation, identical across candidates so the
-    # comparison inside a generation is fair and the policy cannot memorise one
-    # fixed seed set.
-    $picked = New-Object System.Collections.Generic.List[int]
-    while ($picked.Count -lt $SeedsPerCandidate) {
-        $s = $TrainSeeds[$rng.Next(0, $TrainSeeds.Count)]
-        if (-not $picked.Contains($s)) { $picked.Add($s) }
-    }
-    $seedList = $picked.ToArray()
+    # A fixed seed set for the whole run, not a fresh draw per generation.
+    # Fresh seeds made consecutive generations incomparable: the second
+    # generation of the first attempt scored a higher parent on different seeds,
+    # which looks like progress and is not, so no curve could be read off it.
+    # The candidates still only ever meet training seeds and validation still
+    # uses the disjoint EvalSeeds, so nothing here leaks into the holdout.
+    $seedList = @($TrainSeeds | Select-Object -First $SeedsPerCandidate)
     $seedCsv = ($seedList -join ',')
+    # A snapshot of the mean as it was scored. The population update below moves
+    # the mean, so the weights that earned parentFitness must be copied now or
+    # the next generation would score a mean that no measurement describes.
+    $parentVector = New-Object double[] $WeightCount
+    [Array]::Copy($mean, $parentVector, $WeightCount)
 
     Write-Params $parentPath $mean
     $parentFitness = Measure-Candidate $parentPath $seedList "$Tag-g$gen-p"
@@ -237,6 +266,10 @@ for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
     $bestCandidateFitness = [double]::NegativeInfinity
     $batch = New-Object System.Collections.Generic.List[object]
     $pending = New-Object System.Collections.Generic.List[object]
+    # Every perturbation is kept, because the update step below weights all of
+    # them rather than keeping only the winner.
+    $perturbations = @{}
+    $scored = New-Object System.Collections.Generic.List[object]
 
     for ($c = 1; $c -le $Population; $c++) {
         # Mirrored sampling: draw one Gaussian vector for each odd candidate and
@@ -255,6 +288,7 @@ for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
         for ($i = 0; $i -lt $WeightCount; $i++) {
             $vector[$i] = $mean[$i] + $sign * $Sigma * $g[$i]
         }
+        $perturbations[$c] = $vector
         $path = Join-Path $TrainDir ("params-c$c.txt")
         Write-Params $path $vector
         $tagC = "$Tag-g$gen-c$c"
@@ -282,24 +316,78 @@ for ($gen = 1; $gen -le $MaxGenerations; $gen++) {
         foreach ($r in $rows) { $sum += (Get-Fitness $r) }
         $fit = $sum / $rows.Count
         Add-Content -Path $LogFile -Value "$gen,$($item.c),$seedCsv,$([math]::Round($fit,5)),wins=$wins,noHit=$noHit,hits=$hitsum"
-        if ($fit -gt $bestCandidateFitness) { $bestCandidateFitness = $fit; $bestCandidate = $item.c }
+        $scored.Add([pscustomobject]@{ c = $item.c; fit = $fit })
     }
 
+    # Rank-weighted population update. The old scheme kept the single best
+    # candidate, and only when it beat the parent, which threw away fifteen of
+    # the sixteen rollouts the generation had already paid for. Here every
+    # candidate moves the mean in proportion to how it ranked against the rest,
+    # so a generation whose best only ties the parent still carries signal --
+    # which is the common case while climbing, and it is exactly the case the
+    # old rule discarded outright.
+    $utilities = @{}
+    $utilitySum = 0.0
+    $updateNorm = 0.0
+    if ($scored.Count -ge 2) {
+        $ordered = @($scored | Sort-Object -Property fit)
+        $half = $scored.Count / 2.0
+        for ($r = 0; $r -lt $ordered.Count; $r++) {
+            # Centred rank in [-1, 1]. Utilities sum to zero, so a generation
+            # with nothing to learn -- all candidates equal, flat landscape --
+            # produces a zero update instead of dragging the mean sideways.
+            $u = ($r / ($ordered.Count - 1.0)) * 2.0 - 1.0
+            $utilities[[int]$ordered[$r].c] = $u
+            $utilitySum += [math]::Abs($u)
+        }
+        if ($utilitySum -gt 0.0) {
+            $gradient = New-Object double[] $WeightCount
+            foreach ($c in $utilities.Keys) {
+                $u = $utilities[$c]
+                if ($u -eq 0.0) { continue }
+                $v = $perturbations[$c]
+                for ($i = 0; $i -lt $WeightCount; $i++) {
+                    $gradient[$i] += $u * ($v[$i] - $mean[$i])
+                }
+            }
+            for ($i = 0; $i -lt $WeightCount; $i++) {
+                $gradient[$i] = $gradient[$i] * $LearningRate / $half
+                $mean[$i] += $gradient[$i]
+                $updateNorm += $gradient[$i] * $gradient[$i]
+            }
+            $updateNorm = [math]::Sqrt($updateNorm)
+        }
+    }
+
+    $bestCandidate = $null
+    $bestCandidateFitness = [double]::NegativeInfinity
+    foreach ($s in $scored) {
+        if ($s.fit -gt $bestCandidateFitness) { $bestCandidateFitness = $s.fit; $bestCandidate = $s.c }
+    }
+    Add-Content -Path $LogFile -Value "$gen,update,$seedCsv,,sigma=$([math]::Round($Sigma,5)),step=$([math]::Round($updateNorm,5)),n=$($scored.Count),best=$bestCandidate"
+
+    # Sigma shrinks on a generation whose winner failed to beat the parent,
+    # rather than growing on success as the old rule did. Growing the
+    # perturbation after a step that worked is only correct if the update
+    # itself is trusted, and a rank-weighted step of eta*Sigma is roughly a
+    # tenth of the distance the weights still have to travel, so the useful
+    # adaptation here is decay. The step count is small and the search is
+    # bounded by patch admission, so an occasional slower generation is
+    # cheaper than an exploratory one that never converges.
     if ($bestCandidate -ne $null -and $bestCandidateFitness -gt $parentFitness) {
-        $mean = Read-Params (Join-Path $TrainDir "params-c$bestCandidate.txt")
-        Write-Params (Join-Path $TrainDir 'params-parent.txt') $mean
-        $Sigma = [math]::Min(0.5, $Sigma * 1.2)
-        Write-Host "  accepted candidate $bestCandidate ($([math]::Round($bestCandidateFitness,4)) > $([math]::Round($parentFitness,4))), sigma $([math]::Round($Sigma,4))"
+        Write-Host "  generation best candidate $bestCandidate ($([math]::Round($bestCandidateFitness,4)) > parent $([math]::Round($parentFitness,4))), sigma $([math]::Round($Sigma,4))"
     } else {
-        $Sigma = [math]::Max(0.01, $Sigma * 0.85)
-        Write-Host "  no improvement, sigma $([math]::Round($Sigma,4))"
+        $Sigma = [math]::Max(0.02, $Sigma * 0.92)
+        Write-Host "  generation best did not beat parent, sigma $([math]::Round($Sigma,4))"
     }
 
     if ($parentFitness -gt $bestFitness) {
         $bestFitness = $parentFitness
-        Write-Params $bestPath $mean
+        Write-Params $bestPath $parentVector
     }
-    Set-Content -Path (Join-Path $TrainDir ("params-gen{0:D3}.txt" -f $gen)) -Value (Get-Content (Join-Path $TrainDir 'params-parent.txt') -Raw) -Encoding ASCII
+    # The mean just moved, so this must write the mean and not re-read
+    # params-parent.txt, which still holds the previous generation's weights.
+    Write-Params (Join-Path $TrainDir ("params-gen{0:D3}.txt" -f $gen)) $mean
 
     if ($ValidationEvery -gt 0 -and ($gen % $ValidationEvery) -eq 0) {
         Write-Host "  validating on held-out seeds..."

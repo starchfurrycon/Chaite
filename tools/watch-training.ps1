@@ -51,18 +51,39 @@ while ($true) {
         }
 
         $gen = 0; $parentLast = ''; $candScored = 0; $best = ''; $noHit = 0; $wins = 0
+        $hits = 0; $sigma = ''; $step = ''; $scoredInGen = 0
         if (Test-Path $LogFile) {
             foreach ($row in @(Get-Content $LogFile | Select-Object -Skip 1)) {
-                if ($row -match '^(\d+),(parent|\d+),.*,(-?\d+\.?\d*),wins=(\d+),noHit=(\d+)$') {
-                    $g = [int]$Matches[1]
-                    if ($g -gt $gen) { $gen = $g }
-                    $wins += [int]$Matches[4]
-                    $noHit += [int]$Matches[5]
-                    if ($Matches[2] -eq 'parent') { $parentLast = $Matches[3] }
-                    else {
-                        $candScored++
-                        if ($best -eq '' -or [double]$Matches[3] -gt [double]$best) { $best = $Matches[3] }
-                    }
+                # The note field gained hits= for candidates and the update rows
+                # carry sigma/step, so match the prefix and read the note
+                # separately rather than anchoring on the exact tail. Anchoring
+                # on wins=..,noHit=.. silently stopped matching once hits= was
+                # appended, which would have read as a stalled run.
+                $parts = $row -split ','
+                if ($parts.Count -lt 5) { continue }
+                $g = 0
+                if (-not [int]::TryParse($parts[0], [ref]$g)) { continue }
+                if ($g -gt $gen) {
+                    # Counters describe the newest generation only; totalling
+                    # across the whole run would make every number grow forever
+                    # and hide whether this generation is going anywhere.
+                    $gen = $g; $wins = 0; $noHit = 0; $hits = 0; $scoredInGen = 0; $best = ''
+                }
+                if ($parts[1] -eq 'update') {
+                    $sigma = if ($parts[4] -match 'sigma=([\d.]+)') { $Matches[1] } else { $sigma }
+                    $step = if ($parts[4] -match 'step=([\d.]+)') { $Matches[1] } else { $step }
+                    continue
+                }
+                if ($g -ne $gen) { continue }
+                $note = $parts[4]
+                if ($note -match 'wins=(\d+)') { $wins += [int]$Matches[1] }
+                if ($note -match 'noHit=(\d+)') { $noHit += [int]$Matches[1] }
+                if ($note -match 'hits=(\d+)') { $hits += [int]$Matches[1] }
+                if ($parts[1] -eq 'parent') { $parentLast = $parts[3] }
+                elseif ($note -match '^(wins=|noHit=|hits=)') {
+                    $candScored++
+                    $scoredInGen++
+                    if ($best -eq '' -or [double]$parts[3] -gt [double]$best) { $best = $parts[3] }
                 }
             }
         }
@@ -93,9 +114,10 @@ while ($true) {
 
         $lastRuns = $runs
         $stamp = Get-Date -Format 'MM-dd HH:mm:ss'
-        Write-Line ("[{0}] cyc={1} {2} gen={3} candScored={4} best={5} parent={6} noHit={7} wins={8} runs={9} new={10} evals={11} accepted={12} guard={13} procs={14}" -f `
-            $stamp, $cycle, $verdict, $gen, $candScored, $(if ($best -eq '') { 'na' } else { $best }), `
-            $(if ($parentLast -eq '') { 'na' } else { $parentLast }), $noHit, $wins, $runs, $newRuns, $evals, $accepted, $guard, $procs)
+        Write-Line ("[{0}] cyc={1} {2} gen={3} scored={4}/{5} best={6} parent={7} noHit={8} wins={9} hits={10} runs={11} new={12} evals={13} accepted={14} guard={15} procs={16} sigma={17} step={18}" -f `
+            $stamp, $cycle, $verdict, $gen, $scoredInGen, $candScored, $(if ($best -eq '') { 'na' } else { $best }), `
+            $(if ($parentLast -eq '') { 'na' } else { $parentLast }), $noHit, $wins, $hits, $runs, $newRuns, $evals, $accepted, $guard, $procs, `
+            $(if ($sigma -eq '') { 'na' } else { $sigma }), $(if ($step -eq '') { 'na' } else { $step }))
     }
     catch {
         Write-Line ("[{0}] cyc={1} ERROR {2}" -f (Get-Date -Format 'MM-dd HH:mm:ss'), $cycle, $_.Exception.Message)
