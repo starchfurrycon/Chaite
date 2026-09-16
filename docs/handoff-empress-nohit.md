@@ -1,4 +1,118 @@
-# 交接：光女 empress-broom 无伤训练（第 25 轮起的当前状态）
+# 交接：光女 empress-broom 无伤训练
+
+> **当前权威状态见下节「Current state (v3)」。**
+> 本文档其余部分是第 25 轮写下的历史内容，其中「正在运行的东西」一节已经过期
+> （那是指 `nohit-v1`），保留它是因为它记录了当时的口径与判断依据。
+> 适应度定义、禁止事项、证据位置几节至今有效。
+
+## Current state (v3) — 覆盖下文的运行状态
+
+Written to be read by someone with no memory of the session that produced it.
+Authority in force: **train toward 无伤** — a win with zero hits — and accept on
+the same basis. The earlier ≥40-seed Wilson lower bound ≥90% criterion is
+demoted to reference information by the round-25 directive above.
+
+### What is running
+
+| Thing | Value |
+| --- | --- |
+| Trainer | `artifacts/_run-train-nohit-v3.ps1`, WMI-detached (parent `WmiPrvSE.exe`) |
+| Tag | `empress-broom-nohit-v3` |
+| Scheme | rank-weighted population ES, mean initialised to zero, eta 0.30, sigma 0.10 |
+| Size | population 16, 6 seeds per candidate, 6 in flight, 24 generations, validate every 4 |
+| Build guard | `8BBFAC33E3DBE64C`, in `artifacts/training/empress-broom-nohit-v3/build.txt` |
+| Watcher | `tools/watch-training.ps1`, detached, one line per 30 min to `.../watch.log` |
+| Console | `artifacts/_train-console-nohit-v3.log` |
+
+Both processes are WMI-detached on purpose: a harness-managed background job is
+killed when the session that started it is torn down, which is how `nohit-v1`
+died seven minutes after its session ended.
+
+### Why zero weights are the starting point
+
+`LearnedPolicy.Adjust` treats the scripted decision as the base and lets the
+network only correct it, with class zero of each head meaning "leave it alone".
+Zero weights therefore reproduce the fixed state machine **exactly**, and the
+search starts at that machine's measured behaviour instead of at random weights
+that score below it. Verified three ways:
+
+* offline, `Adjust` returns the scripted values bit-for-bit under a zero policy;
+* offline, the same call under a random policy returns different values, so the
+  entry point is live and not merely accepted;
+* in the engine on seed 1, a zero-weight policy is identical to no policy at
+  all — 5985 ticks, 13 hits, 79874 damage.
+
+`artifacts/_check/policy-zero.txt` (798 tokens, 794 weights, all zero) is the
+definition of that control. Keep it: it is the reference every future candidate
+is measured against.
+
+### The constraint that decides everything
+
+**One probe costs 250–273 s on this machine with nothing else running**,
+measured three times, and the user's own game holds roughly five cores
+throughout. That is about **fourteen probes per hour**.
+
+A generation costs `1 + Population` waves of `SeedsPerCandidate` seeds, which at
+the current size is about seventy minutes, so a day buys roughly twenty
+generations.
+
+The distance to the goal does not fit in that budget. Zero weights start at the
+fixed machine's no-hit fitness of **−0.0264**; acceptance needs about **+0.94**.
+A derivative-free search over **794 parameters** cannot cover that ground in a
+few hundred rollouts, and no choice of population, seed count or learning rate
+changes that arithmetic.
+
+The v3 run is therefore sized to answer one question honestly — **does the
+residual scheme climb, and how fast** — rather than to promise a finished
+policy. If the curve is flat, the conclusion is that this representation and
+this probe budget are wrong together, and the fix is a smaller parameterisation
+or a cheaper probe, not another learning-rate sweep.
+
+### The cheapest known lever, not yet used
+
+Every doomed probe runs to its tick limit even though it is already a failure
+the moment it takes a hit. A stop-on-first-hit flag in `tools/GameProbe.cs`
+would end those runs early. Under a no-hit objective the full-length runs are
+exactly the successes, so this is close to free speedup on everything that
+fails. It costs one rebuild and a re-verification, and it is the first thing to
+build if the curve is too shallow to read.
+
+### Judgement criteria, fixed before the result is known
+
+* **Climbing** — parent no-hit fitness rises across generations and the best
+  candidate exceeds the parent by more than seed noise. Continue.
+* **Flat** — parent fitness stays near −0.0264 with no trend over ≥8
+  generations. The scheme is not learning; change the representation or the
+  probe, and do not tune the rate.
+* **No-hit reached** — any row with `noHit` greater than zero on a training
+  seed, then confirm on the disjoint `EvalSeeds` before any acceptance claim.
+
+### One correction worth carrying forward
+
+A control that reports "the numbers are identical, so the branch never ran" is
+only valid if the control **cannot** be a no-op. The first version of the
+verification used large random weights as its control and got a bit-identical
+fight, which looked like a dead hook. It was not: offline, at the probed input
+and at every input tried, that policy returned the scripted decision unchanged.
+The standing rule is exactly right, and it cuts the other way too — when the
+unmodified and modified runs agree, establish that the modification was capable
+of disagreeing before concluding anything about the code.
+
+### One trap in the code itself
+
+`CombatPlanner` owns a route-specific script per route and dispatches to it by
+`FormulaRoute`, so for example `empress-broom` goes to `_empressBroomScript`.
+`FormulaScriptController.Tick` holds a **second, independent** implementation of
+the empress and fishron decisions, and it is only reached by the final `else`
+branch of that chain. An early grep in this session suggested the route scripts
+were dead code; a direct grep disproved it, and the wrong version of that
+conclusion briefly went into this document. The lesson is the same one as
+above: establish the dispatch empirically before hooking or trusting a path, and
+check the fix rather than the first plausible reading.
+
+---
+
+## 第 25 轮的历史记录（运行状态已过期，其余仍有效）
 
 > 本文件是**当前权威状态的压缩版**，供上下文重置后直接接手，不必重新推导。
 
