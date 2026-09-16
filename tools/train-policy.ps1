@@ -39,7 +39,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $InputCount = 38
-$HiddenCount = 32
+$HiddenCount = 16
 $WeightCount = $HiddenCount * $InputCount + $HiddenCount + 10 * $HiddenCount + 10
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)

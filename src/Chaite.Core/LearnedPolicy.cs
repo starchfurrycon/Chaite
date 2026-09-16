@@ -23,7 +23,10 @@ namespace Chaite.Core
     public sealed class LearnedPolicy
     {
         public const int InputCount = 38;
-        public const int HiddenCount = 32;
+        // Halved from 32. The policy reads a 38-dimensional input and emits
+        // ten logits, and a derivative-free search pays for every parameter,
+        // so the previous width was habit rather than measurement.
+        public const int HiddenCount = 16;
         public const int HeadCount = 10;
 
         public const string FileVariable = "CHAITE_POLICY_FILE";
