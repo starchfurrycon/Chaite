@@ -71,6 +71,28 @@
 
 **能**：只读分析现有证据、写文档、写不参与编译的新脚本。
 
+## 进度窥视器（第 40 轮加入，**只读**，可随时启动）
+
+```powershell
+& 'tools\watch-training.ps1' -Tag empress-broom-nohit-v1 -IntervalMinutes 30
+```
+
+每 30 分钟往 `artifacts/training/<tag>/watch.log` 追加**一行**并同时打印，包含：
+代数、已评分候选数、最好候选、最近父代、**`noHit` / `wins` 累计**、
+已完成运行数、新增运行数、验证文件数、`params-gen001` 是否存在、构建守卫、探针进程数。
+
+**判定值**：`OK`（有进展）/ `BASELINE`（第一轮，无参照）/
+`SLOW`→`STALL`（连续无新运行）/ `DEAD`（连续无新运行**且无探针进程**）/
+`GUARD-MISMATCH`（构建被污染，实验作废）/ `BREAKTHROUGH`（**出现无伤结果**）。
+
+**它是只读的**：不编译、不编辑、不起 wave、不碰 Release，所以不可能干扰实验——
+这正是它存在的理由，因为运行期间其它所有动作都不安全。
+
+**注意**：它是无限循环的作业，**不会"完成"因而不会主动通知**；
+要读它就用 `job_output`，或直接 `Get-Content watch.log`。
+第 1 轮曾误报 `DEAD`（首轮无参照且赶上批次空隙），已修正为需要**连续两轮无新运行且无进程**才判 `DEAD`；
+那行误报仍保留在 `watch.log` 里，没有删除。
+
 ## 已完成的其余工作（无需重做）
 
 - 学习策略类型 `src/Chaite.Core/LearnedPolicy.cs`（38→32→10，参数从文件读入）
