@@ -252,6 +252,54 @@ namespace Chaite.Core
             vertical = 0;
             jump = false;
             dash = false;
+            if (!Evaluate(in input, player, in boss, arena)) return false;
+            // Retired absolute mapping. It is kept only so the existing call
+            // sites keep compiling while they are moved behind the scripted
+            // decision; under it zero weights mean "always left and up", which
+            // is a random walk, not a starting point.
+            horizontal = ArgMax(0, 3) - 1;
+            vertical = ArgMax(3, 3) - 1;
+            jump = ArgMax(6, 2) == 1;
+            dash = ArgMax(8, 2) == 1;
+            return true;
+        }
+
+        /// <summary>Residual form of the same network, and the form training
+        /// uses. The scripted decision is the base and the network may only
+        /// correct it, with class zero of each head meaning "leave it alone".
+        /// Zero weights therefore reproduce the fixed state machine exactly,
+        /// so the search starts from competence instead of from noise. The ten
+        /// head offsets are unchanged; only their meaning is.</summary>
+        public bool Adjust(in FormulaScriptInput input, PlayerSnapshot player,
+            in TargetSnapshot boss, ArenaSnapshot arena, int scriptedHorizontal,
+            int scriptedVertical, bool scriptedJump, bool scriptedDash,
+            out int horizontal, out int vertical, out bool jump, out bool dash)
+        {
+            horizontal = scriptedHorizontal;
+            vertical = scriptedVertical;
+            jump = scriptedJump;
+            dash = scriptedDash;
+            if (!Evaluate(in input, player, in boss, arena)) return false;
+            var hx = ArgMax(0, 3);
+            if (hx == 1) horizontal = ClampStep(scriptedHorizontal - 1);
+            else if (hx == 2) horizontal = ClampStep(scriptedHorizontal + 1);
+            var vy = ArgMax(3, 3);
+            if (vy == 1) vertical = ClampStep(scriptedVertical - 1);
+            else if (vy == 2) vertical = ClampStep(scriptedVertical + 1);
+            if (ArgMax(6, 2) == 1) jump = !scriptedJump;
+            if (ArgMax(8, 2) == 1) dash = !scriptedDash;
+            return true;
+        }
+
+        private static int ClampStep(int value)
+        {
+            return value < -1 ? -1 : (value > 1 ? 1 : value);
+        }
+
+        /// <summary>Forward pass shared by both entry points.</summary>
+        private bool Evaluate(in FormulaScriptInput input, PlayerSnapshot player,
+            in TargetSnapshot boss, ArenaSnapshot arena)
+        {
             if (player == null) return false;
             FillFeatures(in input, player, in boss, arena, _features);
             for (var h = 0; h < HiddenCount; h++)
@@ -270,10 +318,6 @@ namespace Chaite.Core
                     sum += _headWeights[offset + h] * _hidden[h];
                 _logits[k] = sum;
             }
-            horizontal = ArgMax(0, 3) - 1;
-            vertical = ArgMax(3, 3) - 1;
-            jump = ArgMax(6, 2) == 1;
-            dash = ArgMax(8, 2) == 1;
             return true;
         }
 
