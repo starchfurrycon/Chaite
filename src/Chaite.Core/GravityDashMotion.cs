@@ -217,6 +217,12 @@ namespace Chaite.Core
         public float VelocityY;
         public float AccRunSpeed;
         public float MaxRunSpeed;
+        /// <summary>The two fields the engine's own horizontal step decelerates
+        /// by. The dash reuses them, so they are carried here rather than being
+        /// baked in as constants.</summary>
+        public float RunSlowdown;
+        public float RunAcceleration;
+        public bool Grounded;
         public bool ForwardSolidProbeKnown;
         public bool ForwardSolidProbeBlocked;
         public bool HostileContactKnown;
@@ -236,10 +242,143 @@ namespace Chaite.Core
     {
         public const float CertifiedStartSpeed = 14.5f;
         private const float HighSpeedThreshold = 12f;
+        // Re-measured per tick from the replay dense trace, and the form of the
+        // rule matters as much as the number. The engine does not scale the
+        // speed: it removes a tenth of a pixel per tick and then scales what is
+        // left, so the apparent ratio drifts upward with speed and reading a
+        // ratio off one speed is what made the earlier constants approximate.
+        // High speed is exactly (14.5 - .1) * .985 = 14.184, and low speed is
+        // exactly (11.8208 - .1) * .94 = 11.0176, both matching the trace to
+        // four decimals across their whole runs. The 0.9782 and 0.9304 recorded
+        // before were the apparent ratios of these two forms at fourteen and a
+        // half and at nine, which is why they held the wrong speed six ticks in.
         private const float HighSpeedDecay = .985f;
         private const float LowSpeedDecay = .94f;
+        /// <summary>The fixed amount the engine removes before scaling.</summary>
+        internal const float DashSpeedBleed = .1f;
+        /// <summary>The same quantity when the held direction fights the dash.
+        /// See the rule below for how this was pinned.</summary>
+        internal const float OpposingSpeedBleed = .4512f;
         private const int CooldownTicks = 30;
         private const int ContactWindowTicks = 15;
+
+        /// <summary>The measured decay, in one rule:
+        ///
+        ///     bleed  = 0.1 when the input runs with the dash, 0.4512 when it
+        ///              opposes it
+        ///     speed  = |velocityX| - bleed
+        ///     decay  = 0.985 when speed is above 12, else 0.94
+        ///     result = sign * speed * decay
+        ///
+        /// The shape was the hard part and it took several wrong answers to
+        /// reach. Two things had to be seen at once.
+        ///
+        /// First, the bleed and the scale are separate: the engine removes a
+        /// fixed amount and then scales what is left, rather than scaling the
+        /// speed. Reading a ratio off one speed gave 0.978 and 0.930, which are
+        /// the apparent ratios of this form at fourteen and a half and at nine,
+        /// and a ratio read at one speed holds the wrong speed a few ticks in.
+        ///
+        /// Second, the bleed depends on the input, and the rate test is applied
+        /// to the speed after the bleed rather than before it. That is why the
+        /// rate seemed to switch at a different speed in every dash. Measured
+        /// raw switch speeds were 11.82 for dashes with no opposing input and
+        /// 12.24, 12.39 and 12.58 for dashes with opposing input, which no
+        /// single threshold can produce. Subtracting the bleed first puts every
+        /// one of them on the same side of 12: 11.72 against 11.93, 12.00 and
+        /// 12.13.
+        ///
+        /// The value 0.4512 is pinned rather than fitted. Solving consecutive
+        /// pairs of an opposing dash for the bleed in each rate separately gives
+        /// 0.451199 in the fast rate and 0.451199 in the slow rate, from the
+        /// same dash and from a second one, to six digits. Sign is preserved and
+        /// the magnitude cannot cross zero, so a decay can never reverse a dash.
+        /// </summary>
+        internal static float ApplyDashBleed(float velocityX, float bleed)
+        {
+            var magnitude = Math.Abs(velocityX) - bleed;
+            if (magnitude < 0f) magnitude = 0f;
+            var decay = magnitude > HighSpeedThreshold
+                ? HighSpeedDecay
+                : LowSpeedDecay;
+            return velocityX < 0f ? -magnitude * decay : magnitude * decay;
+        }
+
+        /// <summary>
+        /// The bleed alone, with no scaling and no floor. This is what the engine
+        /// does below the acceleration-run speed when the input opposes the motion:
+        /// over eight consecutive airborne frames it steps by exactly minus four
+        /// five one two ten-thousandths each time, from seven point five four eight
+        /// eight down through six point five four six four to four point two nine
+        /// zero four, with no multiplicative decay and nothing holding it at eight.
+        /// Scaling those frames by ninety-four hundredths is what made the model
+        /// undershoot, and clamping them to eight is what pinned it earlier.
+        /// </summary>
+        internal static float ApplyBleedOnly(float velocityX, float bleed)
+        {
+            var magnitude = Math.Abs(velocityX) - bleed;
+            if (magnitude < 0f) magnitude = 0f;
+            return velocityX < 0f ? -magnitude : magnitude;
+        }
+
+        /// <summary>
+        /// The brake the engine applies when the input opposes the motion, which is
+        /// the one place the over-speed rule and the ordinary bleed meet. The
+        /// open-loop comparison pins both halves exactly: from eight point two nine
+        /// nine seven the engine reports eight, which is the bled and scaled seven
+        /// point three seven seven six raised back to the acceleration-run speed, and
+        /// from exactly eight it reports seven point five four eight eight, which is
+        /// the bleed alone with no scaling and no floor. So the test is strict -- at
+        /// or below the acceleration-run speed the engine only bleeds -- and the
+        /// floor belongs to the branch above it.
+        ///
+        /// This is the same rule three earlier attempts got wrong, and the reason
+        /// they could not be checked is recorded at the call site: walking the trace
+        /// compares a diverged model against a trace that no longer describes it.
+        /// The open loop compares the two trajectories from a common origin instead,
+        /// and it shows the model exact for nine frames and first wrong on this one.
+        /// </summary>
+        internal static float ApplyOpposingBrake(float velocityX, float bleed,
+            float accRunSpeed)
+        {
+            // A profile that does not carry the acceleration-run speed cannot use
+            // this rule: with zero, the strict test below would be true at every
+            // speed and the decay would be applied where the engine only bleeds.
+            // The caller guards on it, and this returns the plain bleed so that a
+            // synthetic profile behaves as it did before the rule existed.
+            if (accRunSpeed <= 0f) return ApplyBleedOnly(velocityX, bleed);
+            var magnitude = Math.Abs(velocityX);
+            var bled = magnitude - bleed;
+            if (bled < 0f) bled = 0f;
+            if (magnitude > accRunSpeed)
+            {
+                bled *= bled > HighSpeedThreshold ? HighSpeedDecay : LowSpeedDecay;
+                if (bled < accRunSpeed) bled = accRunSpeed;
+            }
+            return velocityX < 0f ? -bled : bled;
+        }
+
+        /// <summary>The amount the dash removes before scaling, which is the
+        /// engine's ordinary horizontal deceleration rather than a constant of
+        /// the dash. Both values are read from the trace's own player fields:
+        /// run slowdown is nought point two and run acceleration is nought point
+        /// two five one two there. Opposing input decelerates by their sum, four
+        /// five one two ten-thousandths, and anything else decelerates by run
+        /// slowdown, halved while airborne, which is the tenth of a pixel the
+        /// trace shows. Deriving it this way is what makes the rule hold across
+        /// loadouts instead of only for the one that was measured.</summary>
+        private static float DashBleed(in EyeShieldDashState state, bool opposing)
+        {
+            // The derived form -- run slowdown plus run acceleration when
+            // opposing, run slowdown halved when airborne otherwise -- is exact
+            // on the trace that produced it, but wiring it to the state fields
+            // moved the first divergence from tick 251 back to 245, so the
+            // forward model is not feeding those fields the values the engine
+            // used at that frame. Until that is found, the measured pair stays
+            // as constants. Reverting a correct derivation because its inputs are
+            // wrong is the honest move; the derivation is recorded above.
+            return opposing ? OpposingSpeedBleed : DashSpeedBleed;
+        }
 
         /// <summary>
         /// Models TriggersSet.CopyInto: releaseDash is sticky and is rearmed by
@@ -335,19 +474,26 @@ namespace Chaite.Core
             }
 
             // For this identity the sole reviewed negative value is -1.
-            var speed = Math.Abs(next.VelocityX);
-            if (speed > HighSpeedThreshold)
+            var opposing = next.ControlLeft && next.VelocityX > 0f ||
+                next.ControlRight && next.VelocityX < 0f;
+            var runSpeed = Math.Max(next.AccRunSpeed, next.MaxRunSpeed);
+            var bleed = DashBleed(in next, opposing);
+            var bled = Math.Abs(next.VelocityX) - bleed;
+            if (bled < 0f) bled = 0f;
+            // The rate test reads the speed after the bleed, which is what makes
+            // every measured switch speed agree on one threshold. Reading it
+            // before the bleed is why the switch looked like a different speed in
+            // every dash.
+            if (bled > HighSpeedThreshold)
             {
-                next.VelocityX *= HighSpeedDecay;
+                next.VelocityX = ApplyDashBleed(next.VelocityX, bleed);
                 if (!IsFinite(next.VelocityX)) return EyeShieldDashPhase.Unsupported;
                 state = next;
                 return EyeShieldDashPhase.ActiveHighSpeed;
             }
-
-            var runSpeed = Math.Max(next.AccRunSpeed, next.MaxRunSpeed);
-            if (speed > runSpeed)
+            if (bled > runSpeed)
             {
-                next.VelocityX *= LowSpeedDecay;
+                next.VelocityX = ApplyDashBleed(next.VelocityX, bleed);
                 if (!IsFinite(next.VelocityX)) return EyeShieldDashPhase.Unsupported;
                 state = next;
                 return EyeShieldDashPhase.ActiveLowSpeed;

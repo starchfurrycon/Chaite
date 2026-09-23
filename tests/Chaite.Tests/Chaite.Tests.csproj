@@ -28,6 +28,8 @@
     <Compile Include="BossMonitoringTests.cs" />
     <Compile Include="AudioCueTests.cs" />
     <Compile Include="SupportedBossPolicyTests.cs" />
+    <Compile Include="ExportedPolicyTests.cs" />
+    <Compile Include="ChaiteObservationConformanceTests.cs" />
     <Compile Include="SafetyTests.cs" />
     <Compile Include="BeamTests.cs" />
     <Compile Include="HostileProjectileMotionTests.cs" />
@@ -36,6 +38,11 @@
     <Compile Include="FlightMotionTests.cs" />
     <Compile Include="GravityDashMotionTests.cs" />
     <Compile Include="NativeMotionTraceTests.cs" />
+    <Compile Include="ForwardModelTraceTests.cs" />
+    <Compile Include="RouteEnumeratorTests.cs" />
+    <Compile Include="LoopDecompositionTests.cs" />
+    <Compile Include="LoopCompositionTests.cs" />
+    <Compile Include="LoopSearchTraceTests.cs" />
     <Compile Include="NativeFlightTraceTests.cs" />
     <Compile Include="NativeJumpReaderTests.cs" />
     <Compile Include="NativeFlightReaderTests.cs" />
@@ -56,7 +63,6 @@
     <Compile Include="PriorityBossActiveRecoveryTests.cs" />
     <Compile Include="PriorityBossNativeStrategyTests.cs" />
     <Compile Include="QueenBeeContactRegressionTests.cs" />
-    <Compile Include="PriorityEmpressMoonStrategyTests.cs" />
     <Compile Include="PriorityGroundFishronTrajectoryTests.cs" />
     <Compile Include="WallOfFleshStrategyTests.cs" />
     <Compile Include="PriorityBossNativeContextTests.cs" />
@@ -87,6 +93,7 @@
     <Compile Include="SnowballCannonProfileTests.cs" />
     <Compile Include="RocketProductionTests.cs" />
     <Compile Include="MeleeProjectileProfileTests.cs" />
+    <Compile Include="RouteCatalogContractTests.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Chaite.Core\Chaite.Core.csproj">

@@ -1,7 +1,7 @@
 param(
     [string]$TargetExe,
     [string[]]$TargetArguments = @(),
-    [ValidateRange(120, 960)][int]$TimeoutSeconds = 120,
+    [ValidateRange(120, 86400)][int]$TimeoutSeconds = 120,
     [switch]$Probe,
     [string]$OutputDirectory
 )
@@ -350,6 +350,7 @@ if ($Probe) {
     # require an explicit review here AND in ChaiteGameProbe.ValidateLaunch.
     $savedirSeen = $false
     $skipBeam = $false
+    $stopOnHit = $false
     $fixtureArguments = [ordered]@{}
     $priorityPhases = @{
         'deerclops' = @('summon','spawn-settle','opening','forward-spikes','rubble','slow-roar','double-spikes','shadow-hands','return-home','teleport-home')
@@ -357,8 +358,6 @@ if ($Probe) {
         'queen-bee' = @('summon','choose','charge-align','charge','charge-brake','bee-wave','move-above','stinger','reacquire')
         'wall-of-flesh' = @('runway','accelerating','low-health','critical','eye-laser')
         'duke-fishron' = @('summon','monitor','spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
-        'empress-night' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
-        'empress-day' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
         'moon-lord' = @('intro','synchronize-eyes','head-bolts','head-tongue','head-deathray-telegraph','left-sphere-release','right-sphere-release')
     }
     for ($index = 0; $index -lt $TargetArguments.Count; $index++) {
@@ -373,14 +372,20 @@ if ($Probe) {
                 if ($skipBeam) { throw 'Duplicate -skipbeam.' }
                 $skipBeam = $true
             }
+            '-stoponhit' {
+                # A switch, so it carries no value and must not consume the
+                # next argument.
+                if ($stopOnHit) { throw 'Duplicate -stoponhit.' }
+                $stopOnHit = $true
+            }
             '-scenario' {
                 if ($fixtureArguments.Contains('-scenario') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -scenario.' }
                 $value = $TargetArguments[$index]
                 if ($value -cnotin @('eye-baseline', 'eye', 'king-slime', 'queen-slime', 'destroyer', 'twins', 'prime',
-                    'deerclops', 'skeletron', 'queen-bee', 'wall-of-flesh', 'duke-fishron', 'empress-night', 'empress-day', 'moon-lord',
+                    'deerclops', 'skeletron', 'queen-bee', 'wall-of-flesh', 'duke-fishron', 'moon-lord',
                     'scope-negative-unsupported-summon', 'scope-negative-existing-unsupported',
-                    'scope-negative-fishron-mixed', 'scope-negative-empress-mixed',
-                    'scope-negative-fishron-duplicate', 'scope-negative-empress-duplicate',
+                    'scope-negative-fishron-mixed', 'scope-negative-kingslime-mixed',
+                    'scope-negative-fishron-duplicate', 'scope-negative-kingslime-duplicate',
                     'motion-jump', 'motion-flight')) { throw 'Unreviewed fixture scenario.' }
                 $fixtureArguments['-scenario'] = $value
             }
@@ -402,7 +407,8 @@ if ($Probe) {
             '-motioncase' {
                 if ($fixtureArguments.Contains('-motioncase') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -motioncase.' }
                 $value = $TargetArguments[$index]
-                if ($value -cnotin @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press')) { throw 'Unreviewed motion case.' }
+                if ($value -cnotin @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press',
+                    'lilith-balloon-hold', 'lilith-balloon-multijump', 'lilith-plain-hold', 'lilith-plain-multijump')) { throw 'Unreviewed motion case.' }
                 $fixtureArguments['-motioncase'] = $value
             }
             '-flightcase' {
@@ -427,10 +433,19 @@ if ($Probe) {
             '-formularoute' {
                 if ($fixtureArguments.Contains('-formularoute') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -formularoute.' }
                 $value = $TargetArguments[$index]
-                if ($value -cnotin @('fishron-fairy-wing','fishron-strong-wing','fishron-queen-slime',
-                    'fishron-trusty-chillet','fishron-trusty-chillet-ignis','empress-strong-wing',
-                    'empress-broom','empress-rain-fishron')) { throw 'Unreviewed formula route.' }
+                if ($value -cnotin @('fishron-fairy-wing','fishron-strong-wing',
+                    'fishron-trusty-chillet','fishron-trusty-chillet-ignis','fishron-lilith-wolf')) { throw 'Unreviewed formula route.' }
                 $fixtureArguments['-formularoute'] = $value
+            }
+            '-startside' {
+                # Which end of its runway Duke Fishron's fight opens from. The
+                # real fight starts the player about twenty tiles in from one
+                # end and which end varies, so both are reviewed openings and the
+                # plugin mirrors its route from what it observes.
+                if ($fixtureArguments.Contains('-startside') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -startside.' }
+                $value = $TargetArguments[$index]
+                if ($value -cnotin @('left', 'right')) { throw 'Unreviewed start side.' }
+                $fixtureArguments['-startside'] = $value
             }
             '-maxticks' {
                 if ($fixtureArguments.Contains('-maxticks') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -maxticks.' }
@@ -443,7 +458,15 @@ if ($Probe) {
                 if ($fixtureArguments.Contains('-wallseconds') -or ++$index -ge $TargetArguments.Count) { throw 'Duplicate or incomplete -wallseconds.' }
                 $value = $TargetArguments[$index]
                 $limit = 0
-                if ($value -cnotmatch '^[1-9][0-9]{1,2}$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 15 -or $limit -gt 900) { throw '-wallseconds must be an integer in 15..900.' }
+                # Episode mode is a training session: one process runs many
+                # fights, so the wall budget covers the whole session. The
+                # game-side ReadSettings applies the same condition to its own
+                # bound, and CHAITE_EPISODES is the switch both sides share.
+                $wallCeiling = 900
+                $episodeText = [Environment]::GetEnvironmentVariable('CHAITE_EPISODES')
+                $episodeCount = 0
+                if ([int]::TryParse($episodeText, [ref]$episodeCount) -and $episodeCount -gt 0) { $wallCeiling = 86400 }
+                if ($value -cnotmatch '^[1-9][0-9]{1,5}$' -or -not [int]::TryParse($value, [ref]$limit) -or $limit -lt 15 -or $limit -gt $wallCeiling) { throw "-wallseconds must be an integer in 15..$wallCeiling." }
                 $fixtureArguments['-wallseconds'] = $limit.ToString([Globalization.CultureInfo]::InvariantCulture)
             }
             default { throw "Unreviewed target argument: $($TargetArguments[$index])" }
@@ -454,14 +477,12 @@ if ($Probe) {
     $scenarioId = if ($fixtureArguments.Contains('-scenario')) { $fixtureArguments['-scenario'] } else { 'eye-baseline' }
     if ($fixtureArguments.Contains('-formularoute')) {
         if (-not $fixtureArguments.Contains('-phase') -or $fixtureArguments['-phase'] -cne 'monitor' -or
-            $scenarioId -cnotin @('duke-fishron','empress-night','empress-day')) {
-            throw '-formularoute requires a Fishron/Empress monitor fixture.'
+            $scenarioId -cne 'duke-fishron') {
+            throw '-formularoute requires the Duke Fishron monitor fixture.'
         }
-        $route = $fixtureArguments['-formularoute']
-        if (($scenarioId -ceq 'duke-fishron' -and $route -cnotlike 'fishron-*') -or
-            ($scenarioId -cin @('empress-night','empress-day') -and $route -cnotlike 'empress-*')) {
-            throw '-formularoute does not belong to the selected Boss.'
-        }
+    }
+    if ($fixtureArguments.Contains('-startside') -and $scenarioId -cne 'duke-fishron') {
+        throw '-startside selects an end of the Duke Fishron runway and is valid only for that fixture.'
     }
     $scopeNegative = $scenarioId -clike 'scope-negative-*'
     $phaseSpecified = $fixtureArguments.Contains('-phase')
@@ -500,6 +521,7 @@ if ($Probe) {
     }
     $TargetArguments = @('-savedirectory', $save)
     if ($skipBeam) { $TargetArguments += '-skipbeam' }
+    if ($stopOnHit) { $TargetArguments += '-stoponhit' }
     foreach ($key in $fixtureArguments.Keys) { $TargetArguments += @($key, $fixtureArguments[$key]) }
 }
 

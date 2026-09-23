@@ -101,8 +101,38 @@ namespace Chaite.Tests
             return result;
         }
 
-        private static void CheckTraceValue(bool condition, int index, string field)
+        /// <summary>Reads a JSON array field. The serialiser hands back either a
+        /// typed array or an ArrayList depending on the shape, so both are
+        /// accepted rather than one being assumed.</summary>
+        private static object[] ArrayField(Dictionary<string, object> value, string name)
         {
+            if (!value.ContainsKey(name)) return null;
+            var raw = value[name];
+            var typed = raw as object[];
+            if (typed != null) return typed;
+            var list = raw as System.Collections.ArrayList;
+            if (list != null) return list.ToArray();
+            return null;
+        }
+
+        /// <summary>Reads one element of a numeric array field, which is how the
+        /// Boss's attack state reaches the trace: it lives in the NPC's own ai
+        /// array rather than in a named field.</summary>
+        private static float Number(Dictionary<string, object> value, string name, int index)
+        {
+            var array = ArrayField(value, name);
+            if (array == null || index < 0 || index >= array.Length)
+                throw new InvalidDataException("Missing array element " + name + "[" + index + "]");
+            var raw = array[index];
+            if (!(raw is int) && !(raw is long) && !(raw is decimal) && !(raw is double) && !(raw is float))
+                throw new InvalidDataException("Non-numeric " + name + "[" + index + "]");
+            var result = Convert.ToSingle(raw, CultureInfo.InvariantCulture);
+            if (float.IsNaN(result) || float.IsInfinity(result))
+                throw new InvalidDataException("Non-finite " + name + "[" + index + "]");
+            return result;
+        }
+
+        private static void CheckTraceValue(bool condition, int index, string field)        {
             if (!condition) throw new InvalidDataException("Native mismatch at tick " + (index + 1) + ": " + field);
         }
     }

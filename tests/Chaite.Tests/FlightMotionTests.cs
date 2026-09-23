@@ -9,7 +9,7 @@ namespace Chaite.Tests
         {
             Run(nameof(DemonGroundLaunchConvertsRocketAfterJump), DemonGroundLaunchConvertsRocketAfterJump);
             Run(nameof(DemonFinalHeldTickStartsWingsImmediately), DemonFinalHeldTickStartsWingsImmediately);
-            Run(nameof(DemonThrustUsesPostSubtractionBranch), DemonThrustUsesPostSubtractionBranch);
+            Run(nameof(DemonThrustUsesMeasuredConstantDecrement), DemonThrustUsesMeasuredConstantDecrement);
             Run(nameof(DemonLastFuelTickSkipsGravity), DemonLastFuelTickSkipsGravity);
             Run(nameof(DemonEmptyWingsConvertFuelWithoutRetroactivePower), DemonEmptyWingsConvertFuelWithoutRetroactivePower);
             Run(nameof(DemonReleaseKeepsInertiaAndResource), DemonReleaseKeepsInertiaAndResource);
@@ -59,15 +59,24 @@ namespace Chaite.Tests
             var flight = DemonFlight(false); var jump = OrdinaryJump(); var vy = -4.61f;
             jump.RemainingTicks = 1; jump.ReleaseReady = false;
             Equal(FlightPhase.WingPowered, FlightTick(ref flight, ref jump, ref vy, true));
-            Equal(0, jump.RemainingTicks); Equal(99f, flight.WingTime); MotionNear(-5.11f, vy);
+            Equal(0, jump.RemainingTicks); Equal(99f, flight.WingTime); MotionNear(-5.135f, vy);
         }
 
-        private static void DemonThrustUsesPostSubtractionBranch()
+        private static void DemonThrustUsesMeasuredConstantDecrement()
         {
-            MotionNear(-.15f, FlightMotion.DemonThrust(.05f, 5.01f));
-            MotionNear(-.45f, FlightMotion.DemonThrust(.15f, 5.01f));
-            MotionNear(-2.55f, FlightMotion.DemonThrust(-2.45f, 5.01f));
+            // The totals are engine-measured arithmetic progressions, an eighth
+            // of a pixel per tick while rising and seven eighths while falling.
+            // The traced sequence 0.385 to -0.49 settles the branch: a rule that
+            // subtracted a tenth and then tested the sign would give -0.215.
+            MotionNear(-.225f, FlightMotion.DemonThrust(.05f, 5.01f));
+            MotionNear(-.725f, FlightMotion.DemonThrust(.15f, 5.01f));
+            MotionNear(-2.725f, FlightMotion.DemonThrust(-2.45f, 5.01f));
             MotionNear(-7.515f, FlightMotion.DemonThrust(-8f, 5.01f));
+            // The threshold is the jump speed itself, so both sides of it are
+            // pinned here: above it the decrement is eleven fortieths, at or
+            // below it an eighth.
+            MotionNear(-6.775f, FlightMotion.DemonThrust(-6.5f, 6.61f));
+            MotionNear(-6.825f, FlightMotion.DemonThrust(-6.7f, 6.61f));
         }
 
         private static void DemonLastFuelTickSkipsGravity()
@@ -75,9 +84,9 @@ namespace Chaite.Tests
             var flight = DemonFlight(false); flight.WingTime = 1f;
             var jump = OrdinaryJump(); var vy = -5f;
             Equal(FlightPhase.WingPowered, FlightTick(ref flight, ref jump, ref vy, true));
-            Equal(0f, flight.WingTime); MotionNear(-5.1f, vy);
+            Equal(0f, flight.WingTime); MotionNear(-5.275f, vy);
             Equal(FlightPhase.Ballistic, FlightTick(ref flight, ref jump, ref vy, true));
-            MotionNear(-4.7f, vy);
+            MotionNear(-4.875f, vy);
         }
 
         private static void DemonEmptyWingsConvertFuelWithoutRetroactivePower()
@@ -116,7 +125,7 @@ namespace Chaite.Tests
             var jump = OrdinaryJump(); jump.ReleaseReady = false; jump.SlowFall = true;
             var vy = 2f;
             Equal(FlightPhase.WingPowered, FlightTick(ref flight, ref jump, ref vy, true));
-            MotionNear(1.4f, vy);
+            MotionNear(1.125f, vy);
             Equal(99f, flight.WingTime);
             Equal(0, flight.RocketTime);
         }
@@ -248,7 +257,7 @@ namespace Chaite.Tests
                 scene.Player.Jump, scene.Player.Flight, scene.Player.Position, scene.Player.Velocity,
                 false, default(SupportSpan), scene.Player.Position.Y };
             method.Invoke(null, args);
-            MotionNear(-5.1f, ((Vec2)args[9]).Y); Equal(99f, ((FlightSnapshot)args[7]).WingTime);
+            MotionNear(-5.275f, ((Vec2)args[9]).Y); Equal(99f, ((FlightSnapshot)args[7]).WingTime);
         }
 
         private static void DemonCandidateTrajectoryUsesFeatherFallDownBypass()

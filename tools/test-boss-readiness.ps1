@@ -124,15 +124,9 @@ Assert-ReadyThrows { Get-Wilson95LowerBound 2 1 } 'invalid Wilson counts rejecte
 $project = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $coverageCatalog = (Get-Content -LiteralPath (Join-Path $project 'docs\boss-readiness-coverage-v1.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
 Assert-BrCoverageCatalog -CoverageCatalog $coverageCatalog | Out-Null
-Assert-ReadyTest ($coverageCatalog.cells.Count -eq 63) 'fixed catalog declares every 63 required non-event core-Boss cells'
-Assert-ReadyTest (@($coverageCatalog.cells | Where-Object goal -ceq 'priority-near-certain').Count -eq 24) 'eight priority encounter variants are present at all three difficulties'
+Assert-ReadyTest ($coverageCatalog.cells.Count -eq 57) 'fixed catalog declares every 57 required non-event core-Boss cells'
+Assert-ReadyTest (@($coverageCatalog.cells | Where-Object goal -ceq 'priority-near-certain').Count -eq 18) 'six priority encounter variants are present at all three difficulties'
 Assert-ReadyTest (@($coverageCatalog.cells | Where-Object goal -ceq 'secondary-majority').Count -eq 39) 'every remaining declared Boss/variant/difficulty cell has its independent majority gate'
-Assert-ReadyTest (@($coverageCatalog.cells | Where-Object {
-    $_.boss -ceq 'empress-night' -and $_.variant -ceq 'night'
-}).Count -eq 3) 'night Empress remains a separate three-difficulty stratum'
-Assert-ReadyTest (@($coverageCatalog.cells | Where-Object {
-    $_.boss -ceq 'empress-day' -and $_.variant -ceq 'day'
-}).Count -eq 3) 'day Empress remains a separate three-difficulty stratum'
 Assert-ReadyTest (@($coverageCatalog.cells | Where-Object {
     $_.boss -ceq 'eater-of-worlds'
 }).Count -eq 3 -and @($coverageCatalog.cells | Where-Object {
@@ -150,7 +144,7 @@ $catalogPlan = New-BrCatalogBoundTargetDocument -CoverageCatalog $coverageCatalo
     -ProfileDocument $catalogProfiles -PlannedSeeds (1..40) `
     -SamplingPlanId 'synthetic-v3-preregistered' `
     -SamplingPlanDescription 'Independent synthetic seeds, plan fixed before observation'
-Assert-ReadyTest ($catalogPlan.targets.Count -eq 63 -and
+Assert-ReadyTest ($catalogPlan.targets.Count -eq 57 -and
     $catalogPlan.coverageCatalogSha256 -ceq (Get-BrHash $coverageCatalog)) `
     'shared catalog target factory generates exactly one preregistered target per required cell'
 $missingProfile = Copy-ReadyJsonObject $catalogProfiles
@@ -180,12 +174,12 @@ Assert-ReadyThrows {
         -SamplingPlanId 'synthetic' -SamplingPlanDescription 'synthetic'
 } 'target factory refuses fewer than forty preregistered seeds'
 $catalogSmoke = Measure-BossReadiness -TargetDocument $catalogPlan -Summaries @() -CoverageCatalog $coverageCatalog
-Assert-ReadyTest (-not $catalogSmoke.ready -and $catalogSmoke.schema -ceq 'chaite-boss-readiness/v3' -and $catalogSmoke.cells.Count -eq 63) 'catalog-bound V3 reports every unverified Boss stratum rather than a partial aggregate'
-Assert-ReadyTest ($catalogSmoke.coverageCatalog.id -ceq 'terraria-1.4.5.8-core-bosses-v1' -and $catalogSmoke.coverageCatalog.cells -eq 63) 'V3 report carries the exact validated coverage catalog identity'
+Assert-ReadyTest (-not $catalogSmoke.ready -and $catalogSmoke.schema -ceq 'chaite-boss-readiness/v3' -and $catalogSmoke.cells.Count -eq 57) 'catalog-bound V3 reports every unverified Boss stratum rather than a partial aggregate'
+Assert-ReadyTest ($catalogSmoke.coverageCatalog.id -ceq 'terraria-1.4.5.8-core-bosses-v1' -and $catalogSmoke.coverageCatalog.cells -eq 57) 'V3 report carries the exact validated coverage catalog identity'
 Assert-ReadyTest (@($catalogSmoke.cells | Where-Object {
     $_.goal -ceq 'priority-near-certain' -and $_.requiredObservedSuccessFraction -eq .95 -and
     $_.requiredWilson95TwoSidedLowerBound -eq .90
-}).Count -eq 24) 'every catalog priority cell retains its near-certain statistical gate in V3'
+}).Count -eq 18) 'every catalog priority cell retains its near-certain statistical gate in V3'
 Assert-ReadyTest (@($catalogSmoke.cells | Where-Object {
     $_.goal -ceq 'secondary-majority' -and $_.observedThresholdIsStrict -and
     $_.wilsonThresholdIsStrict

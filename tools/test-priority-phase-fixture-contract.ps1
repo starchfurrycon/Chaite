@@ -25,10 +25,15 @@ $phases = [ordered]@{
     # must nevertheless agree exactly.  In particular, a fixture-only phase
     # must never disappear from one layer and make a mid-fight takeover look
     # tested when the test copy cannot actually stage it.
+    #
+    # The Fishron catalog below carries the two shared leading phases 'summon'
+    # and 'monitor'. They are the probe's two non-staged entries: 'summon'
+    # drives the native summon path and 'monitor' is the passive F8 arrival
+    # fixture. Both are real production phases, so the probe, runner and
+    # launcher all list them; this catalog had drifted without them since the
+    # monitor fixture landed.
     'wall-of-flesh' = @('runway','accelerating','low-health','critical','eye-laser')
-    'duke-fishron' = @('spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
-    'empress-night' = @('p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
-    'empress-day' = @('p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
+    'duke-fishron' = @('summon','monitor','spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
     'moon-lord' = @('intro','synchronize-eyes','head-bolts','head-tongue','head-deathray-telegraph','left-sphere-release','right-sphere-release')
 }
 
@@ -58,27 +63,6 @@ $tuples = [ordered]@{
         'p2-sharknado'=@(8,50,0); 'p3-transition-fade'=@(9,60,0)
         'p3-transition-hidden'=@(9,140,0); 'p3-reposition'=@(10,0,1)
         'p3-dash'=@(11,0,0); 'p3-teleport'=@(12,10,1)
-    }
-    EmpressClassicNightStageTuples = [ordered]@{
-        'p1-reposition'=@(1,0,0,0); 'p1-bolts'=@(2,1,1,0)
-        'p1-rainbow'=@(5,5,5,0); 'p1-sun-dance'=@(6,3,3,0)
-        'p1-dash'=@(8,50,2,0); 'transition'=@(10,20,1,0)
-        'p2-reposition'=@(1,0,0,1); 'p2-lance-wall'=@(7,80,1,1)
-        'p2-predictive-lances'=@(11,40,4,3); 'p2-spiral'=@(12,70,9,1)
-    }
-    EmpressExpertNightStageTuples = [ordered]@{
-        'p1-reposition'=@(1,0,0,0); 'p1-bolts'=@(2,1,1,0)
-        'p1-rainbow'=@(5,5,5,0); 'p1-sun-dance'=@(6,3,3,0)
-        'p1-dash'=@(8,50,2,0); 'transition'=@(10,20,1,0)
-        'p2-reposition'=@(1,0,0,1); 'p2-lance-wall'=@(7,80,1,1)
-        'p2-predictive-lances'=@(11,40,4,1); 'p2-spiral'=@(12,70,10,1)
-    }
-    EmpressDayStageTuples = [ordered]@{
-        'p1-reposition'=@(1,0,0,2); 'p1-bolts'=@(2,1,1,2)
-        'p1-rainbow'=@(5,5,5,2); 'p1-sun-dance'=@(6,3,3,2)
-        'p1-dash'=@(8,50,2,2); 'transition'=@(10,20,1,2)
-        'p2-reposition'=@(1,0,0,3); 'p2-lance-wall'=@(7,80,1,3)
-        'p2-predictive-lances'=@(11,40,4,3); 'p2-spiral'=@(12,70,10,3)
     }
 }
 
@@ -153,11 +137,6 @@ $requiredSourceContracts = @(
     'StageWall(root,mutation)',
     'StageFishronMotion(root,state)',
     'FishronMotionMatches(root,fishTuple[0])',
-    'SetNativeAi(root,tuple[0],tuple[1],tuple[2],tuple[3])',
-    'Near(root.ai[0],empressTuple[0],0.001f)',
-    'Near(root.ai[1],empressTuple[1],0.001f)',
-    'Near(root.ai[2],empressTuple[2],0.001f)',
-    'Near(root.ai[3],empressTuple[3],0.001f)',
     'StageMoonLord(root,mutation)',
     'test-copy NPC life/ai/localAI/position/velocity only'
 )
@@ -177,14 +156,9 @@ foreach ($contract in @('A staged priority phase fixture must not be labeled as 
 }
 foreach ($tableName in $tuples.Keys) {
     $uses = [regex]::Matches($probe, [regex]::Escape($tableName + '.TryGetValue')).Count
-    $expectedUses = if ($tableName.StartsWith('Empress', [StringComparison]::Ordinal)) { 1 } else { 2 }
-    if ($uses -ne $expectedUses) { throw "$tableName tuple lookup count drifted; expected $expectedUses, actual $uses" }
-}
-$empressResolverUses = [regex]::Matches($probe,
-    'TryGetEmpressStageTuple\(out\s+(?:tuple|empressTuple)\)').Count
-if ($empressResolverUses -ne 2) {
-    throw "The resolved Empress ai0..ai3 tuple must drive both staging and PhaseMatches; actual uses: $empressResolverUses"
+    if ($uses -ne 2) { throw "$tableName tuple lookup count drifted; expected 2, actual $uses" }
 }
 
 Write-Output ("PASS priority phase fixture source contract: {0} scenarios, {1} exact tuples, synchronized runner/launcher catalogs, no native process." -f `
     $phases.Count, (($tuples.Values | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum))
+exit 0

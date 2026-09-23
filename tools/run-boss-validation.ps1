@@ -31,26 +31,23 @@ $scenarioPhases = [ordered]@{
     'queen-bee' = @('summon','choose','charge-align','charge','charge-brake','bee-wave','move-above','stinger','reacquire')
     'wall-of-flesh' = @('runway','accelerating','low-health','critical','eye-laser')
     'duke-fishron' = @('summon','monitor','spawn-fade','spawn-emerge','p1-hover','p1-dash','p1-bubbles','p1-sharknado','p2-transition-fade','p2-transition-emerge','p2-hover','p2-dash','p2-bubbles','p2-sharknado','p3-transition-fade','p3-transition-hidden','p3-reposition','p3-dash','p3-teleport')
-    'empress-night' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
-    'empress-day' = @('summon','monitor','p1-reposition','p1-bolts','p1-rainbow','p1-sun-dance','p1-dash','transition','p2-reposition','p2-lance-wall','p2-predictive-lances','p2-spiral')
     'moon-lord' = @('intro','synchronize-eyes','head-bolts','head-tongue','head-deathray-telegraph','left-sphere-release','right-sphere-release')
 }
 $scenarios = @($scenarioPhases.Keys)
-$priorityScenarios = @('deerclops','skeletron','queen-bee','wall-of-flesh','duke-fishron','empress-night','empress-day','moon-lord')
-$hardModeScenarios = @('queen-slime','destroyer','twins','prime','duke-fishron','empress-night','empress-day','moon-lord')
+$priorityScenarios = @('deerclops','skeletron','queen-bee','wall-of-flesh','duke-fishron','moon-lord')
+$hardModeScenarios = @('queen-slime','destroyer','twins','prime','duke-fishron','moon-lord')
 $expectedBossTypes = @{
     'eye'=@(4); 'king-slime'=@(50); 'queen-slime'=@(657); 'destroyer'=@(134); 'twins'=@(125,126); 'prime'=@(127)
     'deerclops'=@(668); 'skeletron'=@(35); 'queen-bee'=@(222); 'wall-of-flesh'=@(113,114)
-    'duke-fishron'=@(370); 'empress-night'=@(636); 'empress-day'=@(636); 'moon-lord'=@(396,397,398)
+    'duke-fishron'=@(370); 'moon-lord'=@(396,397,398)
 }
 $expectedSummonTypes = @{
     'eye'=43; 'king-slime'=560; 'queen-slime'=4988; 'destroyer'=556; 'twins'=544; 'prime'=557
-    'deerclops'=5120; 'queen-bee'=1133; 'duke-fishron'=2673; 'empress-night'=4961; 'empress-day'=4961
+    'deerclops'=5120; 'queen-bee'=1133; 'duke-fishron'=2673
 }
 $scenarioVariants = @{
     'eye'='standard'; 'king-slime'='standard'; 'queen-slime'='standard'; 'destroyer'='standard'; 'twins'='standard'; 'prime'='standard'
     'deerclops'='standard'; 'skeletron'='standard'; 'queen-bee'='standard'; 'wall-of-flesh'='standard'; 'duke-fishron'='standard'; 'moon-lord'='standard'
-    'empress-night'='night'; 'empress-day'='day'
     # Reserved native encounter identities. They are not silently accepted as
     # ordinary standard evidence when future reviewed fixtures are added.
     'mechanical-mayhem'='simultaneous-mechanical-trio'; 'mechdusa'='getfixedboi-mechdusa'
@@ -189,17 +186,15 @@ function Assert-VariantEvidence($Result, $Case, [bool]$ValidBattle) {
                 }
             }
             'night' {
-                if ((Read-Field $Case 'Scenario') -cne 'empress-night' -or
-                    (Require-Boolean (Read-Field $native 'dayTime') 'variant native dayTime') -or
+                if ((Require-Boolean (Read-Field $native 'dayTime') 'variant native dayTime') -or
                     -not (Test-StandardWorldRules $native) -or $mechanicalExpected -or $mechanicalObserved) {
-                    throw 'Night Empress variant evidence is inconsistent with the native world state.'
+                    throw 'Night variant evidence is inconsistent with the native world state.'
                 }
             }
             'day' {
-                if ((Read-Field $Case 'Scenario') -cne 'empress-day' -or
-                    -not (Require-Boolean (Read-Field $native 'dayTime') 'variant native dayTime') -or
+                if (-not (Require-Boolean (Read-Field $native 'dayTime') 'variant native dayTime') -or
                     -not (Test-StandardWorldRules $native) -or $mechanicalExpected -or $mechanicalObserved) {
-                    throw 'Day Empress variant evidence is inconsistent with the native world state.'
+                    throw 'Day variant evidence is inconsistent with the native world state.'
                 }
             }
             'simultaneous-mechanical-trio' {
@@ -544,9 +539,9 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
     if ($Case.Phase -ceq 'monitor') {
         $routeMap = @{
             'fishron-fairy-wing'='FishronFairyWingsDash'; 'fishron-strong-wing'='FishronStrongWingsDash'
-            'fishron-queen-slime'='FishronQueenSlime'; 'fishron-trusty-chillet'='FishronTrustyChillet'
-            'fishron-trusty-chillet-ignis'='FishronTrustyChilletIgnis'; 'empress-strong-wing'='EmpressStrongWingsDash'
-            'empress-broom'='EmpressBroom'; 'empress-rain-fishron'='EmpressRainFishron'
+            'fishron-trusty-chillet'='FishronTrustyChillet'
+            'fishron-trusty-chillet-ignis'='FishronTrustyChilletIgnis'
+            'fishron-lilith-wolf'='FishronLilithWolf'
         }
         if ((Require-String (Read-Field $Result 'formulaRoute') 'result formulaRoute') -cne $Case.FormulaRoute -or
             (Require-String (Read-Field $Result 'observedFormulaRoute') 'result observedFormulaRoute') -cne $routeMap[$Case.FormulaRoute] -or
@@ -572,7 +567,7 @@ function Read-ValidatedResultEnvelope($Result, $Case, [bool]$BattleStartedFromLo
     ) 'result'
     $directSpawn = Require-Boolean (Read-Field $Result 'directSpawn') 'result directSpawn'
     $monitorFixture = $Case.Phase -ceq 'monitor'
-    $organicPriority = $Case.Scenario -cin @('deerclops','queen-bee','duke-fishron','empress-night','empress-day') -and $Case.Phase -ceq 'summon'
+    $organicPriority = $Case.Scenario -cin @('deerclops','queen-bee','duke-fishron') -and $Case.Phase -ceq 'summon'
     $expectedDirectSpawn = $Case.Scenario -cin $priorityScenarios -and -not $organicPriority
     if ($directSpawn -ne $expectedDirectSpawn) { throw 'Result direct-spawn mode disagrees with the reviewed scenario catalog.' }
     $variant = Assert-VariantEvidence $Result $Case $validBattle
@@ -885,7 +880,7 @@ if ($PSBoundParameters.ContainsKey('Cases')) {
     if ($Suite -eq 'priority24') {
         $priorityOpening = @{
             'deerclops'='opening'; 'skeletron'='hover'; 'queen-bee'='choose'; 'wall-of-flesh'='runway'
-            'duke-fishron'='p1-hover'; 'empress-night'='p1-reposition'; 'empress-day'='p1-reposition'; 'moon-lord'='intro'
+            'duke-fishron'='p1-hover'; 'moon-lord'='intro'
         }
         $rawCases = @(foreach ($scenario in $priorityScenarios) { foreach ($difficulty in @('classic','expert','master')) {
             [pscustomobject]@{ scenario=$scenario; phase=$priorityOpening[$scenario]; takeoverTick=240; seed=20260910; difficulty=$difficulty }
@@ -906,7 +901,7 @@ if ($PSBoundParameters.ContainsKey('Cases')) {
 if ($rawCases.Count -lt 1 -or $rawCases.Count -gt $MaximumCases) { throw "Plan must contain 1..$MaximumCases cases; larger batches require an explicit bounded MaximumCases (at most 180)." }
 $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     $case = $rawCases[$index]
-    foreach ($property in $case.PSObject.Properties.Name) { if ($property -cnotin @('scenario', 'variant', 'phase', 'takeoverTick', 'seed', 'difficulty', 'formulaRoute', 'maxTicks', 'wallSeconds')) { throw "Unknown case field: $property" } }
+    foreach ($property in $case.PSObject.Properties.Name) { if ($property -cnotin @('scenario', 'variant', 'phase', 'takeoverTick', 'seed', 'difficulty', 'formulaRoute', 'startSide', 'maxTicks', 'wallSeconds')) { throw "Unknown case field: $property" } }
     $scenario = Read-Field $case 'scenario'
     if ($scenario -cnotin $scenarios) { throw 'Case scenario is not in the reviewed fixture catalog; legacy eye-baseline is deliberately excluded.' }
     $seed = Require-Integer (Read-Field $case 'seed') 0 2147483647 'seed'
@@ -924,17 +919,27 @@ $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     if ($phase -isnot [string] -or $phase -cnotin $scenarioPhases[$scenario]) { throw 'Case phase is not reviewed for the selected scenario.' }
     $formulaRoute = Read-Field $case 'formulaRoute' $null
     if ($phase -ceq 'monitor') {
+        # Every reviewed route must be accepted here. This list had drifted
+        # behind the route catalog when 'fishron-lilith-wolf' was admitted: the
+        # mapping table below already knew the name, so only this allowlist
+        # rejected it, and the schema gate failed on a route the catalog
+        # considers reviewed.
         if ($formulaRoute -isnot [string] -or $formulaRoute -cnotin @(
-            'fishron-fairy-wing','fishron-strong-wing','fishron-queen-slime',
+            'fishron-fairy-wing','fishron-strong-wing',
             'fishron-trusty-chillet','fishron-trusty-chillet-ignis',
-            'empress-strong-wing','empress-broom','empress-rain-fishron')) {
+            'fishron-lilith-wolf')) {
             throw 'Monitor cases require one reviewed formulaRoute.'
         }
-        if (($scenario -ceq 'duke-fishron' -and $formulaRoute -cnotlike 'fishron-*') -or
-            ($scenario -cin @('empress-night','empress-day') -and $formulaRoute -cnotlike 'empress-*')) {
-            throw 'Case formulaRoute does not belong to its scenario.'
-        }
     } elseif ($null -ne $formulaRoute) { throw 'formulaRoute is valid only for monitor cases.' }
+    # Duke Fishron's fight opens about twenty tiles in from one end of its
+    # runway, and which end varies, so the side is part of a case rather than a
+    # constant. Both are legal openings; the plugin mirrors its route from what
+    # it observes, and the fixture has to be able to present either.
+    $startSide = Read-Field $case 'startSide' $null
+    if ($null -ne $startSide) {
+        if ($startSide -isnot [string] -or $startSide -cnotin @('left', 'right')) { throw 'Case startSide must be left or right.' }
+        if ($scenario -cne 'duke-fishron') { throw 'startSide is valid only for the Duke Fishron runway.' }
+    }
     $takeoverTick = Require-Integer (Read-Field $case 'takeoverTick' 120) 120 23880 'takeoverTick'
     $maxTicks = Require-Integer (Read-Field $case 'maxTicks' 24000) 600 24000 'maxTicks'
     if ($takeoverTick -ge $maxTicks - 120) { throw 'takeoverTick must leave at least 120 native frames before maxTicks.' }
@@ -943,12 +948,13 @@ $plan = @(for ($index = 0; $index -lt $rawCases.Count; $index++) {
     }
     [pscustomobject]@{
         Id = ('case{0:D3}' -f ($index + 1)); Scenario = $scenario; Phase = $phase; TakeoverTick = $takeoverTick
-        Seed = $seed; Difficulty = $difficulty; Variant = $variant; FormulaRoute = $formulaRoute; MaxTicks = $maxTicks
+        Seed = $seed; Difficulty = $difficulty; Variant = $variant; FormulaRoute = $formulaRoute
+        StartSide = $startSide; MaxTicks = $maxTicks
         WallSeconds = (Require-Integer (Read-Field $case 'wallSeconds' 90) 15 900 'wallSeconds')
     }
 })
 Write-Output ("Plan: $($plan.Count) serial cases from $planSource")
-$plan | Format-Table Id, Scenario, Variant, FormulaRoute, Phase, TakeoverTick, Seed, Difficulty, MaxTicks, WallSeconds | Out-String | Write-Output
+$plan | Format-Table Id, Scenario, Variant, FormulaRoute, StartSide, Phase, TakeoverTick, Seed, Difficulty, MaxTicks, WallSeconds | Out-String | Write-Output
 Write-Output 'Results measure only these fixture/loadout/seed combinations. Overall attempted success and started-battle success use separate denominators.'
 if (-not $Run) {
     Write-Output 'PLAN ONLY: no output files, preparation, game processes or desktop windows were created. Pass -Run to execute this explicit plan.'
@@ -1088,6 +1094,9 @@ foreach ($case in $plan) {
             '-skipbeam')
         if ($null -ne $case.FormulaRoute) {
             $arguments += @('-formularoute', $case.FormulaRoute)
+        }
+        if ($null -ne $case.StartSide) {
+            $arguments += @('-startside', $case.StartSide)
         }
         $record.Classification = 'host-error'
         try {

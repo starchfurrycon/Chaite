@@ -26,10 +26,6 @@ namespace Chaite.Tests
                 FishronPhaseComesFromNativeStateNotLifeGuess);
             Run(nameof(ChargeControllersLeaveVerticalAndDiagonalAttackLines),
                 ChargeControllersLeaveVerticalAndDiagonalAttackLines);
-            Run(nameof(EmpressUsesNativeAttackTableAndRageLatch),
-                EmpressUsesNativeAttackTableAndRageLatch);
-            Run(nameof(EmpressDayPreDashReservesPerpendicularClearance),
-                EmpressDayPreDashReservesPerpendicularClearance);
             Run(nameof(MoonLordBalancesEyesAndReadsPreSpawnClocks),
                 MoonLordBalancesEyesAndReadsPreSpawnClocks);
             Run(nameof(WallDistinguishesChargeClockFromActiveLaserBurst),
@@ -485,132 +481,6 @@ namespace Chaite.Tests
             // that the discrete intent is perpendicular to this 45-degree dash.
             var worldY = -diagonal.VerticalIntent;
             Equal(0, diagonal.HorizontalIntent + worldY);
-        }
-
-        private static void EmpressUsesNativeAttackTableAndRageLatch()
-        {
-            var scene = CombatScenario(636);
-            var empress = scene.Targets[0];
-            empress.Ai0 = 1f;
-            empress.Ai1 = 4f;
-            empress.Ai2 = 2f; // P1 table entry 2 => Sun Dance
-            empress.Ai3 = 0f;
-            scene.Difficulty.DayTime = true;
-            scene.Targets[0] = empress;
-            RefreshPriorityNativeContext(scene);
-            var lethal = new BossStrategyEngine().Evaluate(scene).Directive;
-            True(lethal.PhaseId.Contains(
-                "day-lethal-p1-reposition-before-sun-dance"),
-                lethal.PhaseId);
-
-            // In Remix the native predicate is spatial. Being underground
-            // keeps the encounter non-lethal even while Main.dayTime is true.
-            scene.Difficulty.Remix = true;
-            RefreshPriorityNativeContext(scene);
-            var night = new BossStrategyEngine().Evaluate(scene).Directive;
-            True(night.PhaseId.Contains(
-                "night-p1-reposition-before-sun-dance"), night.PhaseId);
-
-            empress.Ai3 = 2f;
-            scene.Difficulty.DayTime = false;
-            scene.Difficulty.Remix = false;
-            scene.Targets[0] = empress;
-            RefreshPriorityNativeContext(scene);
-            var rage = new BossStrategyEngine().Evaluate(scene).Directive;
-            True(rage.PhaseId.Contains("day-rage-p1"));
-
-            empress.Ai0 = 8f;
-            empress.Ai1 = 8f;
-            empress.Velocity = new Vec2(0f, 0f);
-            scene.Targets[0] = empress;
-            RefreshPriorityNativeContext(scene);
-            var dash = new BossStrategyEngine().Evaluate(scene).Directive;
-            True(dash.PhaseId.Contains("horizontal-dash-telegraph"));
-            Equal(BossPattern.PerpendicularDashDodge, dash.Pattern);
-        }
-
-        private static void EmpressDayPreDashReservesPerpendicularClearance()
-        {
-            // State 1 with the next attack selected as a horizontal 8/9 body
-            // charge. In the daytime contract the Empress contact is lethal,
-            // so the inter-attack reposition must step off the horizontal
-            // charge lane rather than run along it into the native state 8/9
-            // transition. The night contract keeps its historical horizontal
-            // reposition behaviour.
-            var day = CombatScenario(636);
-            day.Difficulty.DayTime = true;
-            var target = day.Targets[0];
-            target.Ai0 = 1f;
-            target.Ai1 = 4f;
-            target.Ai2 = 1f; // PhaseOneAttacks[1] == 8, horizontal dash.
-            target.Ai3 = 2f; // Phase one plus genuinely enraged.
-            day.Targets[0] = target;
-            RefreshPriorityNativeContext(day);
-
-            var dayDecision = new BossStrategyEngine().Evaluate(day).Directive;
-            True(dayDecision.PhaseId.Contains(
-                "day-rage-p1-reposition-before-horizontal-dash"),
-                dayDecision.PhaseId);
-            False(dayDecision.HorizontalIntent == 0,
-                "daytime pre-dash did not step away from the approaching Empress");
-            False(dayDecision.VerticalIntent == 0,
-                "daytime pre-dash did not choose a perpendicular escape");
-            True(dayDecision.ForceContinuousMovement,
-                "daytime pre-dash did not reserve continuous clearance");
-            False(dayDecision.OwnsMovementClosure,
-                "daytime pre-dash locked the vertical lane against the homing streak");
-            True(dayDecision.OwnsHorizontalClosure,
-                "daytime pre-dash did not lock the horizontal escape direction");
-
-            var withStreak = CombatScenario(636);
-            withStreak.Difficulty.DayTime = true;
-            var streakTarget = withStreak.Targets[0];
-            streakTarget.Ai0 = 1f;
-            streakTarget.Ai1 = 4f;
-            streakTarget.Ai2 = 1f;
-            streakTarget.Ai3 = 2f;
-            withStreak.Targets[0] = streakTarget;
-            withStreak.Threats.Add(new ThreatSnapshot
-            {
-                Kind = ThreatKind.Projectile,
-                Geometry = ThreatGeometry.Body,
-                Trajectory = ThreatTrajectory.EmpressRainbowStreak,
-                Type = 873,
-                NativeIdentity = 17,
-                TrajectoryAi0Known = true,
-                TrajectoryAi0 = 0f,
-                NativeTargetPlayerKnown = true,
-                NativeTargetPlayerIndex = 0,
-                Position = new Vec2(34000f, 7600f),
-                Velocity = new Vec2(0f, -5f),
-                Width = 30,
-                Height = 30,
-                TimeLeft = 190,
-                Damage = 120
-            });
-            RefreshPriorityNativeContext(withStreak);
-            var withStreakDecision =
-                new BossStrategyEngine().Evaluate(withStreak).Directive;
-            True(withStreakDecision.OwnsHorizontalClosure,
-                "daytime pre-dash did not keep horizontal escape away from the Empress with a live streak");
-            False(withStreakDecision.OwnsMovementClosure,
-                "daytime pre-dash locked the vertical lane with a live streak");
-
-            var night = CombatScenario(636);
-            night.Difficulty.DayTime = false;
-            var nightTarget = night.Targets[0];
-            nightTarget.Ai0 = 1f;
-            nightTarget.Ai1 = 4f;
-            nightTarget.Ai2 = 1f;
-            nightTarget.Ai3 = 0f;
-            night.Targets[0] = nightTarget;
-            RefreshPriorityNativeContext(night);
-            var nightDecision = new BossStrategyEngine().Evaluate(night).Directive;
-            True(dayDecision.ExtraContactMargin >
-                nightDecision.ExtraContactMargin + 120f,
-                "daytime pre-dash did not widen its lethal contact margin");
-            False(nightDecision.OwnsMovementClosure,
-                "nighttime pre-dash unexpectedly locked its vertical lane");
         }
 
         private static void MoonLordBalancesEyesAndReadsPreSpawnClocks()
@@ -1076,15 +946,6 @@ namespace Chaite.Tests
             True(new BossStrategyEngine().Evaluate(fishron).Directive.
                 RequestControlReturn,
                 "production Fishron accepted a contradictory enrage result");
-
-            var empress = CombatScenario(636);
-            var target = empress.Targets[0];
-            target.Ai0 = 8f;
-            empress.Targets[0] = target;
-            // The duplicate source must match the NPC array from the same tick.
-            True(new BossStrategyEngine().Evaluate(empress).Directive.
-                RequestControlReturn,
-                "production Empress accepted stale independent AI metadata");
 
             var wall = CombatScenario(113, 114);
             wall.PriorityBoss.WallOfFleshEyes.Clear();

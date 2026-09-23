@@ -1,8 +1,10 @@
 using Chaite.Core;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace Chaite.Plugin
 {
@@ -33,19 +35,54 @@ namespace Chaite.Plugin
         private static int _authorizedBossGeneration = -1;
         private static bool _authorizedBossObserved;
         private static bool _authorizedBossContinuityBroken;
+        // Set when the authorized Boss's kill is drained; the live-scope check
+        // must not reject the session for the missing root after a real kill.
+        private static bool _authorizedBossKilled;
         private static string _pendingScopeRejection;
         private static bool _authorizedSessionIdentityKnown;
+        // A composed route replayed through the real game. Null unless the
+        // environment names a file, so the ordinary planner is untouched.
+        private static readonly RouteReplay _replay =
+            RouteReplay.LoadFromEnvironment();
+        private static int _replayFrames;
+        // Set while a frame of this tick has read the route. The index advances
+        // once per tick at the entry below, not once per read: a tick that runs
+        // the plan twice -- the handoff path does -- consumed two route entries
+        // and put the replay permanently one entry ahead of the model, which no
+        // constant skip can undo.
+        private static bool _replayTickRead;
         private static object _authorizedWorldToken;
         private static object _authorizedPlayerToken;
         private static Guid _authorizedWorldUniqueId;
         private static int _authorizedWorldId;
         private static int _authorizedNetMode = -1;
         private static int _authorizedPlayerIndex = -1;
-        private static int _weaponIssueCooldown;
+        // Throttles the training-bridge notice about ignoring a formula-table
+        // control-return request, so a fight that hits it every tick cannot flood
+        // chat. Only ever non-zero while CHAITE_BRIDGE_FILE names a route.
+        private static int _bridgeGateCooldown;
+
+        /// <summary>True when something other than the planner's formula script
+        /// owns the movement channels this tick.
+        ///
+        /// Either the training bridge's replay or an exported policy overwrites
+        /// Horizontal/Jump/Drop/Dash before ApplyPlan, so when one of them is
+        /// loaded the planner's mobility contract no longer guards a real output:
+        /// it only decides whether the episode -- or the real fight -- continues.
+        /// The formula-state whitelist is a review artifact of the hand-written
+        /// formula era and whitelists Fishron state 8 only for sequence 0, while
+        /// the native AI also reaches sequence 1, so acting on it here would stop
+        /// the policy exactly where it does most of its flying.</summary>
+        private static bool MovementAuthorityIsExternal
+        {
+            get { return _replay != null || _exportedPolicy != null; }
+        }
         private static FormulaRoute _monitorFishronRoute;
-        private static FormulaRoute _monitorEmpressRoute;
-        private static readonly CombatWeaponSelectionHandoff
-            CombatWeaponSelection = new CombatWeaponSelectionHandoff();
+        // CombatWeaponSelectionHandoff used to live here, driving the hotbar
+        // switch that served the planner's latched output route. The takeover is
+        // movement-only now, so the plugin never selects a slot and the handoff
+        // has no caller. The type itself stays in Chaite.Core: it is a standalone
+        // contract with its own regression, and deleting it is a separate call.
         // Retained for the standalone contract regression. Runtime now owns a
         // short, explicit native-release handoff instead of asking the player
         // to manually leave a mount or grapple before an active Boss can join.
@@ -54,6 +91,33 @@ namespace Chaite.Plugin
                 new ActiveEncounterObservationWindow(300);
         private static readonly ActiveNativeMobilityHandoff
             ActiveNativeMobilityHandoff = new ActiveNativeMobilityHandoff();
+        // The in-process driver for an exported policy. Null unless
+        // CHAITE_POLICY_FORMAT=exported names one, so every existing
+        // configuration runs the planner exactly as it did before this existed.
+        private static ChaitePolicyDriver _exportedPolicy;
+
+        /// <summary>The absolute game tick a tick-keyed route is indexed by.
+        /// This is <c>Main.GameUpdateCount</c>, the same counter the probe
+        /// publishes and the trainer writes into its action file, and it is what
+        /// makes a tick-keyed replay reproducible: the applied-frame counter is
+        /// not the game tick, because it only advances on ticks the plugin
+        /// actually applied a plan for. Measured drift inside one session:
+        /// 240 -> 96965.
+        /// </summary>
+        private static long CurrentGameTick()
+        {
+            try
+            {
+                return _game.GameTick();
+            }
+            catch (Exception)
+            {
+                // A route that cannot read the tick must not take the session
+                // down; the positional path below still covers frame-indexed
+                // files, and a tick-keyed file simply reports no coverage.
+                return -1L;
+            }
+        }
 
         public static void Tick(object player, int playerIndex)
         {
@@ -63,6 +127,13 @@ namespace Chaite.Plugin
             _pendingInput = false;
             _frameApplied = false;
             _pendingPlayer = null;
+            // The route advances here, at most once per tick, and only for a
+            // tick in which the previous frame actually read it.
+            if (_replayTickRead)
+            {
+                _replayFrames++;
+                _replayTickRead = false;
+            }
             if (_faulted || player == null)
                 return;
             long tickStarted = 0;
@@ -86,7 +157,7 @@ namespace Chaite.Plugin
                     return;
                 }
                 _game.BeginInputFrame();
-                if (_weaponIssueCooldown > 0) _weaponIssueCooldown--;
+                if (_bridgeGateCooldown > 0) _bridgeGateCooldown--;
                 _pendingPlayer = player;
                 tickStarted = Stopwatch.GetTimestamp();
 
@@ -165,8 +236,23 @@ namespace Chaite.Plugin
                 if (!TryValidateAuthorizedBossScope(liveObservation,
                         out liveScopeReason))
                 {
-                    RejectUnsupportedBoss(player, liveScopeReason);
-                    return;
+                    // The Boss root disappears the moment it is killed, so a
+                    // legitimate kill leaves this check with nothing to verify.
+                    // Rejecting it cancelled the encounter instead of letting it
+                    // complete: measured on an isolated probe whose simulated
+                    // output killed Duke Fishron at tick 474, the run ended
+                    // "FINISH Cancelled battlePassed=False bossLife=0
+                    // win=false", and the plugin log read "Unsupported Boss
+                    // rejected: no verifiable active Boss root". The training
+                    // reward then charged a timeout for killing the Boss, so a
+                    // win was unreachable. Once the authorized Boss has been
+                    // killed, let the encounter controller observe the kill and
+                    // finish the session itself.
+                    if (!_authorizedBossKilled)
+                    {
+                        RejectUnsupportedBoss(player, liveScopeReason);
+                        return;
+                    }
                 }
                 var update = _encounter.Update(liveObservation);
                 HandleCue(update.Cue);
@@ -190,8 +276,14 @@ namespace Chaite.Plugin
                     return;
                 }
 
-                if (!EnsureCombatWeaponSelected(player))
-                    return;
+                // The takeover is MOVEMENT ONLY, so the plugin no longer selects
+                // a hotbar slot or clears the player's combat controls. It used
+                // to do both, through EnsureCombatWeaponSelected, to serve the
+                // planner's latched output route -- which also meant suppressing
+                // whatever the user was attacking with, exactly what the
+                // movement-only rule says to leave alone. The plan's weapon
+                // fields are still cleared before ApplyPlan, so nothing the
+                // planner decided about a shot can reach vanilla.
                 var snapshot = _game.BuildCombatSnapshot(player);
                 string planScopeReason;
                 var plan = _planner.PlanSupported(snapshot,
@@ -214,17 +306,209 @@ namespace Chaite.Plugin
                     // use the ordinary finish path to clear pending replay,
                     // restore the original weapon and restore any summon item
                     // transaction. This must not globally fault the plugin.
-                    _encounter.Cancel();
-                    var detail = string.IsNullOrEmpty(plan.ControlReturnReason)
-                        ? "策略安全条件持续丢失" : plan.ControlReturnReason;
-                    Finish(player, "安全条件持续丢失，已自动归还操作权（" + detail + "）。", AudioCue.None);
-                    return;
+                    //
+                    // EXCEPT when something else already owns the movement
+                    // channels this tick: the training bridge's replay, or an
+                    // exported policy. Both overwrite Horizontal/Jump/Drop/Dash
+                    // below, so a contract ending then guards only outputs that
+                    // are discarded -- while acting on it either destroys a
+                    // training rollout or hands a real fight back to the user
+                    // mid-flight.
+                    //
+                    // MEASURED 2026-09-21: under the bridge this ended 7.2% of
+                    // fsw121d's fights and 30.5% of fsw121p's, essentially always
+                    // at the endgame, because the reviewed formula table
+                    // whitelists Fishron state 8 only for sequence 0 and the
+                    // native AI also reaches sequence 1. In a real fight the same
+                    // gate would block exactly the states the trained policy flies
+                    // in, so the policy could not be deployed through it at all.
+                    // See docs/safety-abort-misclassified-2026-09-21.md 12.7-12.9
+                    // and 15.3.
+                    if (MovementAuthorityIsExternal)
+                    {
+                        if (_bridgeGateCooldown == 0)
+                        {
+                            var ignored = string.IsNullOrEmpty(
+                                plan.ControlReturnReason)
+                                ? "策略安全条件持续丢失"
+                                : plan.ControlReturnReason;
+                            _game.Chat((_replay != null
+                                ? "训练桥接：忽略公式表归还请求，移动仍由策略驱动（"
+                                : "走位已由导出策略接管：忽略公式表归还请求（")
+                                + ignored + "）。", 255, 220, 120);
+                            _bridgeGateCooldown = 600;
+                        }
+                    }
+                    else
+                    {
+                        _encounter.Cancel();
+                        var detail = string.IsNullOrEmpty(plan.ControlReturnReason)
+                            ? "策略安全条件持续丢失" : plan.ControlReturnReason;
+                        Finish(player, "安全条件持续丢失，已自动归还操作权（" + detail + "）。", AudioCue.None);
+                        return;
+                    }
                 }
-                if (!string.IsNullOrEmpty(plan.WeaponIssue) && _weaponIssueCooldown == 0)
+                // The planner still reports plan.WeaponIssue, but the takeover no
+                // longer fires, so "auto-fire paused" would be a claim about a
+                // shot this plugin is not taking. The field is dropped with the
+                // rest of the weapon commands below and its notice is gone.
+                // The replay replaces the plan's movement controls for the
+                // frames it covers. Everything else the planner decided -- the
+                // weapon route, the consumables, the aim -- is left alone,
+                // because the route is a claim about movement and forcing the
+                // rest would be a different claim.
+                // Published every frame, not only while a route covers it, so the
+                // observation can tell "no route" apart from "route frame zero".
+                plan.ReplayFrame = _replay != null ? _replayFrames : -1;
+                if (_replay != null)
                 {
-                    _game.Chat("自动射击暂停：" + plan.WeaponIssue + "；仍在避险，F9 可归还操作。", 255, 155, 110);
-                    _weaponIssueCooldown = 600;
+                    int replayDirection;
+                    bool replayJump;
+                    bool replayUp;
+                    bool replayDown;
+                    bool replayDash;
+                    if (_replay.TryRead(_replayFrames, CurrentGameTick(),
+                            out replayDirection, out replayJump, out replayUp,
+                            out replayDown, out replayDash))
+                    {
+                        plan.Horizontal = replayDirection;
+                        plan.Jump = replayJump;
+                        plan.Dash = replayDash;
+                        // Holding DOWN is its own input in Terraria, not a
+                        // consequence of the horizontal direction: it makes the
+                        // broom descend fast, folds wings into a drop instead
+                        // of a glide, changes the Featherfall descent and
+                        // changes mount descent. Forcing it false here is what
+                        // kept the trained action space horizontal-only, so the
+                        // route's own down bit now owns controlDown.
+                        plan.Drop = replayDown;
+                        // UP drives BOTH channels, deliberately. Lift is carried
+                        // by plan.Jump -> controlJump, which is also how mounts
+                        // ascend, so broom/chillet/queen-slime/lilith keep their
+                        // ascent; plan.FeatherFallUp carries the independent up
+                        // key that feather fall reads (controlUp is separate
+                        // from controlJump). controlUp is left subject to the
+                        // facade's featherfall-premise gate
+                        // (TerrariaFacade.cs:3941-3955) rather than bypassed:
+                        // that gate is the project's fail-closed discipline, and
+                        // the route channel may not claim a mobility premise the
+                        // game does not actually satisfy. Lift is not gated.
+                        // Gravity reversal stays out of scope, so GravityControl
+                        // remains zero.
+                        plan.FeatherFallUp = replayUp;
+                        plan.GravityControl = 0;
+                        plan.ToggleMount = false;
+                        plan.Hook = false;
+                        plan.HoldNeutralControls = false;
+                        // The action has to follow the route, not be pinned to
+                        // Hold. JumpAction.Hold forces the requested value true
+                        // inside the resolver, so a route that releases the jump
+                        // key still held it, and every enumerated candidate that
+                        // differed in its jump channel produced the same run.
+                        // Release is the action that actually yields false.
+                        plan.JumpAction = replayJump
+                            ? JumpAction.Hold
+                            : JumpAction.Release;
+                        // The takeover is a movement claim only. Weapon use,
+                        // aiming and firing are deliberately out of scope, and
+                        // the boss's health is driven by the probe's simulated
+                        // player output instead, so nothing here may emit a
+                        // shot: the plan's output certificate is dropped and
+                        // the fire gate is closed explicitly.
+                        plan.Fire = false;
+                        plan.OutputRouteKind = OutputRouteKind.Unspecified;
+                        plan.ExpectedWeaponId = 0;
+                        plan.ExpectedAmmoId = 0;
+                        plan.ExpectedProjectileId = 0;
+                    }
+                    // Marked, not counted. The counter moves at the tick entry
+                    // so that a tick which reads the route more than once still
+                    // consumes one entry, and a tick that never reads it consumes
+                    // none. Counting here instead left the replay an entry ahead
+                    // of the model from the very first tick.
+                    _replayTickRead = true;
                 }
+                // The exported policy, when one is configured, owns the same
+                // movement channels the replay above overwrites: it is applied
+                // after the replay so that selecting the exported format is an
+                // unambiguous statement about who is flying. Everything else
+                // the planner decided is left alone, for the same reason the
+                // replay leaves it alone.
+                if (_exportedPolicy != null)
+                {
+                    var tick = CurrentGameTick();
+                    var policyTarget = default(TargetSnapshot);
+                    var policyTargetFound = false;
+                    // The formula-table contract returns before the planner
+                    // stamps its target (CombatPlanner.NewPlan leaves TargetKey at
+                    // -1 and only the success paths assign it), so a plan that
+                    // RequestControlReturn'd carries no target. Resolve the Boss
+                    // here instead: without it the exported policy is handed
+                    // nothing, its Observe/Apply pair is skipped, and the player
+                    // would stand still in exactly the states we just decided to
+                    // keep flying through. Only the two production Bosses qualify,
+                    // which is the same admission scope the planner enforces.
+                    var policyTargetKey = plan.TargetKey;
+                    if (policyTargetKey < 0)
+                    {
+                        for (var index = 0; index < snapshot.Targets.Count;
+                            index++)
+                        {
+                            var candidate = snapshot.Targets[index];
+                            if (!SupportedBossPolicy.IsSupportedBossType(
+                                    candidate.Type))
+                                continue;
+                            policyTargetKey = candidate.Key;
+                            break;
+                        }
+                    }
+                    if (policyTargetKey >= 0)
+                    {
+                        for (var index = 0; index < snapshot.Targets.Count;
+                            index++)
+                        {
+                            if (snapshot.Targets[index].Key != policyTargetKey)
+                                continue;
+                            policyTarget = snapshot.Targets[index];
+                            policyTargetFound = true;
+                            break;
+                        }
+                    }
+                    if (policyTargetFound)
+                    {
+                        // Apply BEFORE Observe, and the order is load-bearing.
+                        // ChaitePolicyDriver.Apply only accepts a decision whose
+                        // _pendingTick is exactly tick-1, and Observe stamps
+                        // _pendingTick = tick. Called the other way round -- which
+                        // is what this did -- Apply always saw _pendingTick == tick,
+                        // incremented _waits, returned false and left the planner's
+                        // own controls in place, so the exported policy loaded and
+                        // then never flew a single frame. It was invisible because
+                        // the formula script is competent: the run still won
+                        // fights, it just won them without the policy.
+                        //
+                        // With this order the pairing is the trainer's: the row
+                        // built from tick T-1's entry state chooses tick T's
+                        // action, and the row built now becomes tick T+1's.
+                        _exportedPolicy.Apply(tick, ref plan);
+                        _exportedPolicy.Observe(player, in policyTarget, tick);
+                    }
+                }
+                // The takeover is MOVEMENT ONLY. Attacking, aiming and
+                // consumables stay the user's, so every non-movement command the
+                // planner produced is dropped here instead of being handed to
+                // vanilla. ChaitePolicyDriver.ApplyAction already clears the same
+                // fields for the learned policy; doing it for the planner's own
+                // plans too means the two controllers cannot disagree about what
+                // the takeover owns.
+                //
+                // This runs LAST, after the replay and the exported policy have
+                // written their movement, and it deliberately touches no movement
+                // channel: Horizontal/Jump/Drop/Dash/Hook/ToggleMount/
+                // GravityControl/FeatherFallUp are exactly what the takeover is
+                // for. Dropping the aim here is also what makes plan.TargetKey
+                // purely the policy's business rather than a claim about a shot.
+                DropNonMovementCommands(ref plan);
                 var nativeOutputFailure = _game.ApplyPlan(player, plan);
                 if (!string.IsNullOrEmpty(nativeOutputFailure))
                 {
@@ -312,6 +596,11 @@ namespace Chaite.Plugin
                 {
                     QueueKilledBossScopeRejection(
                         " (a killed Boss did not match the authorized encounter)");
+                    _log?.Write("KILL_REJECT identityKnown=" + _authorizedSessionIdentityKnown +
+                        " authorizedType=" + _authorizedBossType +
+                        " authorizedKey=" + _authorizedBossKey +
+                        " authorizedGeneration=" + _authorizedBossGeneration +
+                        " continuityBroken=" + _authorizedBossContinuityBroken);
                     return;
                 }
                 if (_authorizedBossKey < 0)
@@ -376,8 +665,18 @@ namespace Chaite.Plugin
             if (!TryValidateAuthorizedBossScope(observation,
                     out scopeReason))
             {
-                RejectUnsupportedBoss(player, scopeReason);
-                return false;
+                // Same race as the main tick path: a killed Boss leaves no
+                // active root to verify, and rejecting that here cancelled the
+                // session on the deferred-admission path before the encounter
+                // controller could record the kill. Measured with a forced
+                // 20000 DPS: BOSS_KILL_REPORT fired and ARM authorized type=370
+                // was set, no identity rejection was logged, yet the run still
+                // ended "FINISH Cancelled win=false" from this call site.
+                if (!_authorizedBossKilled)
+                {
+                    RejectUnsupportedBoss(player, scopeReason);
+                    return false;
+                }
             }
             var update = _encounter.Update(observation);
             HandleCue(update.Cue);
@@ -626,6 +925,17 @@ namespace Chaite.Plugin
 
         private static bool RejectUnsupportedBoss(object player, string reason)
         {
+            // A killed authorized Boss is gone from the world, so every
+            // live-scope check downstream of the kill reports "no verifiable
+            // active Boss root" -- an unsupported-Boss rejection that cancelled
+            // the session before the encounter controller could record the kill
+            // (measured: FINISH Cancelled win=false with bossLife=0, while
+            // BOSS_KILL_REPORT fired and no identity rejection was logged).
+            // Guarding each call site individually missed one, so the guard
+            // lives here. The flag is only ever set after the authorized Boss's
+            // kill is drained and is cleared when the session re-arms.
+            if (_authorizedBossKilled)
+                return false;
             if (_encounter != null && _encounter.IsControlling)
                 _encounter.Cancel();
 
@@ -687,8 +997,7 @@ namespace Chaite.Plugin
             _originalWeapon = -1;
             _terminalDelay = 0;
             _monitorFishronRoute = CombatPlanner.SelectMonitorRoute(snapshot, 370);
-            _monitorEmpressRoute = CombatPlanner.SelectMonitorRoute(snapshot, 636);
-            if (_monitorFishronRoute == FormulaRoute.None && _monitorEmpressRoute == FormulaRoute.None)
+            if (_monitorFishronRoute == FormulaRoute.None)
             {
                 StopBossMonitor(FormulaRouteCatalog.Refusal, AudioCue.UntestedLoadout);
                 return;
@@ -702,7 +1011,7 @@ namespace Chaite.Plugin
             observation.StartAuthorized = true;
             var update = _encounter.ArmMonitoring(observation);
             HandleCue(update.Cue);
-            _game.Chat("MAN！监视已开启：请自行召唤猪鲨或光女。出现后接管；F9 取消监视。", 255, 210, 78);
+            _game.Chat("MAN！监视已开启：请自行召唤猪鲨。出现后接管；F9 取消监视。", 255, 210, 78);
         }
 
         private static bool TryStartMonitoredEncounter(object player)
@@ -722,7 +1031,7 @@ namespace Chaite.Plugin
                 StopBossMonitor(SupportedBossPolicy.UnsupportedBossMessage, AudioCue.UnsupportedBoss);
                 return false;
             }
-            var armedRoute = type == 370 ? _monitorFishronRoute : _monitorEmpressRoute;
+            var armedRoute = _monitorFishronRoute;
             var snapshot = _game.BuildCombatSnapshot(player, _config.AutoSwitchWeapon);
             bool mobilityRefusal;
             if (!_planner.PrepareForMonitoredFormulaEncounter(snapshot, type,
@@ -734,11 +1043,13 @@ namespace Chaite.Plugin
                     mobilityRefusal ? AudioCue.UntestedLoadout : AudioCue.None);
                 return false;
             }
+            _log?.Write("ARM authorized type=" + type + " key=" + key + " generation=" + generation);
             _authorizedBossType = type;
             _authorizedBossKey = key;
             _authorizedBossGeneration = generation;
             _authorizedBossObserved = true;
             _authorizedBossContinuityBroken = false;
+            _authorizedBossKilled = false;
             PendingKilledBosses.Clear();
             observation.StartAuthorized = true;
             observation.RequirePreparation = false;
@@ -776,6 +1087,14 @@ namespace Chaite.Plugin
             _audio = new AudioCuePlayer(Path.Combine(dataDirectory, "Audio"));
             _initialized = true;
             _log.Write("Initialized against Terraria " + gameAssembly.GetName().Version);
+            // Resolved once, eagerly, so a configured-but-broken policy fails at
+            // startup rather than on the first tick it would have owned. Left
+            // null -- and inert -- unless the exported format is selected.
+            _exportedPolicy = ChaitePolicyDriver.FromEnvironment(_game);
+            if (_exportedPolicy != null)
+                _log.Write("Exported policy loaded: " + _exportedPolicy.SourcePath +
+                    " [" + _exportedPolicy.LayerShapes + "], observation " +
+                    _exportedPolicy.ObservationCount + " wide");
         }
 
         private static IList<int> DrainKilledBosses()
@@ -784,6 +1103,11 @@ namespace Chaite.Plugin
                 return Array.Empty<int>();
             var result = PendingKilledBosses.ToArray();
             PendingKilledBosses.Clear();
+            // A killed Boss is gone from the world on the very frame the kill
+            // is reported, so from here on the live-scope check has no active
+            // root to verify. Remember it: the rejection path below would
+            // otherwise treat the successful kill as an unsupported Boss.
+            _authorizedBossKilled = true;
             return result;
         }
 
@@ -828,59 +1152,55 @@ namespace Chaite.Plugin
                 _log.Write(string.Format(System.Globalization.CultureInfo.InvariantCulture,
                     "Frame timing (snapshot+plan+capture, excluding vanilla): frames={0}, mean={1:F3} ms, max={2:F3} ms",
                     _timingFrames, _timingTotal * milliseconds / _timingFrames, _timingMaximum * milliseconds));
+                // An exported policy that loaded but never flew is silent, and
+                // that is exactly how the Apply/Observe order bug survived: the
+                // formula script kept winning fights, so nothing looked wrong.
+                // WaitedTicks growing while AppliedActions stays at zero is the
+                // signature, so print both every session end.
+                if (_exportedPolicy != null)
+                    _log.Write("Exported policy flight: applied=" +
+                        _exportedPolicy.AppliedActions + " waited=" +
+                        _exportedPolicy.WaitedTicks);
             }
             ResetSessionAutomation();
             _game.Chat(message);
             _terminalDelay = 1;
         }
 
-        private static bool EnsureCombatWeaponSelected(object player)
+        /// <summary>Drop every non-movement command from a plan.
+        ///
+        /// The takeover owns movement and nothing else. This is the same rule
+        /// <see cref="ChaitePolicyDriver.ApplyAction"/> follows for the learned
+        /// policy, applied to the planner's own plans, so the formula script and
+        /// the learned policy cannot disagree about what the takeover owns.
+        ///
+        /// The movement channels are deliberately untouched -- they are the point
+        /// of the takeover, and by the time this runs the replay and the exported
+        /// policy have already written them. <c>TargetKey</c> is cleared as well:
+        /// it is read by the weapon/aim path in <c>TerrariaFacade</c> (the
+        /// line-of-sight and sight-cache bookkeeping around ApplyPlan), and with
+        /// no shot to aim there is no target to claim. The exported policy
+        /// resolves its own target separately, so clearing it here does not blind
+        /// the policy.
+        /// </summary>
+        private static void DropNonMovementCommands(ref ControlPlan plan)
         {
-            // Native SelectedItemState applies a requested hotbar change later
-            // in Player.Update. In particular, the first frame after a direct
-            // item summon still observes the consumed summon slot here. Keep
-            // that transition neutral instead of validating the stale slot as
-            // though it were the already-admitted combat output route.
-            if (_planner?.UsesSummonWhipOutput == true)
-            {
-                CombatWeaponSelection.Reset();
-                return true;
-            }
-            var desired = _planner?.LatchedOutputSlot ?? -1;
-            if (desired < 0 || desired >= 10)
-                desired = !_config.AutoSwitchWeapon && _originalWeapon >= 0 &&
-                    _originalWeapon < 10 ? _originalWeapon : -1;
-            if (desired < 0)
-            {
-                CombatWeaponSelection.Reset();
-                return true;
-            }
-            var decision = CombatWeaponSelection.Advance(
-                _game.GetSelectedItem(player) == desired,
-                _game.CanChangeSelectedItemImmediately(player));
-            if (decision.Complete)
-            {
-                return true;
-            }
-            if (decision.Rejected)
-            {
-                _encounter.Cancel();
-                Finish(player,
-                    "战斗武器槽位无法在原版物品动画结束后切回，已自动归还操作权（" +
-                    decision.Reason + "）。",
-                    AudioCue.None);
-                return false;
-            }
-            if (decision.RequestSelection)
-                _game.SetSelectedItem(player, desired);
-            _game.ClearCombatControls(player);
-            _frameApplied = true;
-            return false;
+            plan.Fire = false;
+            plan.QuickHeal = false;
+            plan.QuickMana = false;
+            plan.QuickBuff = false;
+            plan.PreferredWeaponSlot = -1;
+            plan.WeaponIssue = null;
+            plan.TargetKey = -1;
+            plan.OutputRouteKind = OutputRouteKind.Unspecified;
+            plan.ExpectedWeaponId = 0;
+            plan.ExpectedAmmoId = 0;
+            plan.ExpectedProjectileId = 0;
         }
 
         private static void ResetSessionAutomation()
         {
-            _monitorFishronRoute = _monitorEmpressRoute = FormulaRoute.None;
+            _monitorFishronRoute = FormulaRoute.None;
             _pendingInput = _frameApplied = false;
             ActiveAdmissionObservation.Reset();
             ActiveNativeMobilityHandoff.Reset();
@@ -891,6 +1211,7 @@ namespace Chaite.Plugin
             _authorizedBossGeneration = -1;
             _authorizedBossObserved = false;
             _authorizedBossContinuityBroken = false;
+            _authorizedBossKilled = false;
             _pendingScopeRejection = null;
             _authorizedSessionIdentityKnown = false;
             _authorizedWorldToken = null;
@@ -899,8 +1220,6 @@ namespace Chaite.Plugin
             _authorizedWorldId = 0;
             _authorizedNetMode = -1;
             _authorizedPlayerIndex = -1;
-            _weaponIssueCooldown = 0;
-            CombatWeaponSelection.Reset();
             _planner?.Reset();
             _game?.ResetBossStart();
         }

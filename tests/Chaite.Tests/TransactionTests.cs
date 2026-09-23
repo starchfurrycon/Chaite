@@ -16,7 +16,7 @@ namespace Chaite.Tests
             Run(nameof(MovedOriginalIsRestoredInPlace), MovedOriginalIsRestoredInPlace);
             Run(nameof(DropRestorationIsIdempotent), DropRestorationIsIdempotent);
             Run(nameof(SummonPulseRequiresIdleActualSelectionAndRelease), SummonPulseRequiresIdleActualSelectionAndRelease);
-            Run(nameof(LacewingFireWaitsForWeaponSelectionAndSemiAutoRelease), LacewingFireWaitsForWeaponSelectionAndSemiAutoRelease);
+            Run(nameof(SummonFireWaitsForWeaponSelectionAndSemiAutoRelease), SummonFireWaitsForWeaponSelectionAndSemiAutoRelease);
         }
 
         private sealed class TransactionItem
@@ -169,7 +169,7 @@ namespace Chaite.Tests
             True(ready(true, true, true, 7, 1));
         }
 
-        private static void LacewingFireWaitsForWeaponSelectionAndSemiAutoRelease()
+        private static void SummonFireWaitsForWeaponSelectionAndSemiAutoRelease()
         {
             var gate = typeof(Chaite.Plugin.Runtime).Assembly.GetType("Chaite.Plugin.SummonActionGate", true)
                 .GetMethod("ShouldFire", BindingFlags.Public | BindingFlags.Static);

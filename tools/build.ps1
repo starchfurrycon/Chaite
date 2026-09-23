@@ -54,6 +54,9 @@ if ($Package) {
         -OutputDirectory (Join-Path $verification 'priority-probe-schema') |
         Tee-Object -FilePath (Join-Path $verification 'priority-probe-schema-tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Priority Boss probe schema failed; no package was created.' }
+    & (Join-Path $PSScriptRoot 'test-training-objective.ps1') |
+        Tee-Object -FilePath (Join-Path $verification 'training-objective-tests.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Policy search objective contract failed; no package was created.' }
     & (Join-Path $PSScriptRoot 'test-native-motion-evidence.ps1') |
         Tee-Object -FilePath (Join-Path $verification 'motion-evidence-tests.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Offline motion evidence validation tests failed; no package was created.' }
@@ -74,6 +77,7 @@ if ($Package) {
         -ArgumentList @('--ui-smoke', ('"' + $uiOutput + '"')) -WindowStyle Hidden -PassThru -Wait
     if ($uiCheck.ExitCode -ne 0) { throw "UI smoke failed ($($uiCheck.ExitCode)); no package was created." }
     New-Item -ItemType Directory -Path (Join-Path $release 'Audio') | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $release 'Memes') | Out-Null
     Copy-Item -LiteralPath (Join-Path $managerBin 'Chaite.Manager.exe') -Destination $release
     Copy-Item -LiteralPath (Join-Path $managerBin 'Chaite.Manager.exe.config') -Destination $release
     Copy-Item -LiteralPath (Join-Path $patcherBin 'Chaite.Patcher.exe') -Destination $release
@@ -83,6 +87,7 @@ if ($Package) {
     Copy-Item -LiteralPath (Join-Path $pluginBin 'Chaite.Core.dll') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Chaite.Plugin\config.json') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Chaite.Plugin\Audio\README.txt') -Destination (Join-Path $release 'Audio')
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Chaite.Plugin\Memes\README.txt') -Destination (Join-Path $release 'Memes')
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination $release
     Copy-Item -LiteralPath (Join-Path $projectRoot 'VERIFICATION.md') -Destination $release
@@ -90,8 +95,9 @@ if ($Package) {
     New-Item -ItemType Directory -Path $packageDocs | Out-Null
     foreach ($document in @('formula-routes.md',
         'formula-source-review-20260914.md', 'weapon-profile-policy.md',
-        'native-flight-policy.md', 'native-witch-broom-policy.md',
-        'native-dash-source-audit.md')) {
+        'native-flight-policy.md',
+        'native-dash-source-audit.md', 'workflow-and-state-machine.md',
+        'meme-register.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot ('docs\' + $document)) -Destination $packageDocs
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $release

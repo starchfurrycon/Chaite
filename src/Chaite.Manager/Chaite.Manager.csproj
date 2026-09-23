@@ -14,22 +14,63 @@
     <OutputPath>bin\$(Configuration)\net48\</OutputPath>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      x86 is not a preference. SpriteStore reads the console's art out of the
+      owner's own Terraria install with XNA's ContentManager, which is the only
+      thing on this machine that decompresses the LZX-compressed XNB that
+      Terraria ships; XNA exists only as a 32-bit assembly, so a 64-bit process
+      cannot load it. Terraria itself is x86 as well.
+    -->
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="Microsoft.Xna.Framework" />
+    <Reference Include="Microsoft.Xna.Framework.Graphics" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="FontBook.cs" />
+    <Compile Include="LoadoutCatalog.cs" />
     <Compile Include="MainForm.cs" />
+    <Compile Include="MemeSlot.cs" />
+    <Compile Include="MemeVoice.cs" />
     <Compile Include="Program.cs" />
-    <Compile Include="UiTheme.cs" />
+    <Compile Include="SpriteBox.cs" />
+    <Compile Include="SpriteCatalog.cs" />
+    <Compile Include="SpriteStore.cs" />
     <Compile Include="UiSmokeTest.cs" />
+    <Compile Include="UiTheme.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
     <None Include="app.manifest" />
+  </ItemGroup>
+  <!--
+    The console carries its own typefaces: IBM Plex Sans for Latin and Noto Sans
+    SC for Simplified Chinese, both SIL Open Font License 1.1, both subset by
+    tools/build-fonts.py to the characters the Manager actually renders. They
+    have to sit next to the executable because FontBook loads them by path at
+    start-up, and the licence has to travel with them.
+  -->
+  <ItemGroup>
+    <None Include="Fonts\IBMPlexSans-Regular.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fonts\IBMPlexSans-SemiBold.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fonts\NotoSansSC-Regular.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fonts\NotoSansSC-Bold.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fonts\OFL.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Chaite.Patcher\Chaite.Patcher.csproj">

@@ -183,9 +183,20 @@ namespace Chaite.Core
 
         public static float DemonThrust(float velocityY, float jumpSpeed)
         {
-            velocityY -= .1f;
-            if (velocityY > 0f) velocityY -= .5f;
-            else if (velocityY > -jumpSpeed * .5f) velocityY -= .1f;
+            // Engine-measured totals, and the branch is chosen after a tenth has
+            // already been subtracted, so the boundary sits at a tenth rather
+            // than at zero. The trace shows both sides of it inside one ascent:
+            // from nine hundred twenty-five thousandths the next speed is fifty
+            // thousandths, seven eighths lower, and from that fifty the next is
+            // minus two hundred twenty-five thousandths, eleven fortieths
+            // lower. Only a test on the already-reduced value separates those
+            // two. Below the jump speed the decrement drops again to an eighth;
+            // the traced jump speed is six point six one and the band spanning
+            // six to seven holds both values, which is what a threshold inside
+            // that band predicts.
+            if (velocityY - .1f > 0f) velocityY -= .875f;
+            else if (velocityY > -jumpSpeed) velocityY -= .275f;
+            else velocityY -= .125f;
             return Math.Max(velocityY, -jumpSpeed * 1.5f);
         }
 

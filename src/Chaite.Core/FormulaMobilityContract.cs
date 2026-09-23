@@ -87,19 +87,18 @@ namespace Chaite.Core
             var expectedMount = ExpectedMount(route);
             if (expectedMount >= 0)
             {
+                // Membership, not equality: mounts 64 and 65 are one route.
                 if (s.Mobility.MountActive)
                 {
                     if (!s.Mobility.ActiveMountIdentityKnown ||
-                        s.Mobility.ActiveMountType != expectedMount)
+                        !FormulaRouteCatalog.IsAcceptableMount(route,
+                            s.Mobility.ActiveMountType))
                     { reason = "活动坐骑不是战前锁定的公式坐骑"; return false; }
                 }
                 else if (!s.Mobility.SelectedMountIdentityKnown ||
-                         s.Mobility.SelectedMountType != expectedMount)
+                         !FormulaRouteCatalog.IsAcceptableMount(route,
+                             s.Mobility.SelectedMountType))
                 { reason = "战前锁定的公式坐骑已改变"; return false; }
-                if (route == FormulaRoute.EmpressRainFishron &&
-                    (s.Difficulty == null || !s.Difficulty.RainKnown ||
-                     !s.Difficulty.Rain))
-                { reason = "雨天虾松露公式已失去原生雨天身份"; return false; }
                 reason = null;
                 return true;
             }
@@ -145,7 +144,7 @@ namespace Chaite.Core
                 !s.Player.FunctionalEquipmentIdentityKnown ||
                 !s.Mobility.FormulaAccessoryScanKnown)
             { reason = "无法读取公式机动饰品"; return false; }
-            if (boss != 370 && boss != 636)
+            if (boss != 370)
             { reason = FormulaRouteCatalog.Refusal; return false; }
             if (s.Mobility.UnexpectedFormulaMobilityItemType != 0 ||
                 s.Mobility.Grappling || s.Mobility.GravityInverted)
@@ -158,11 +157,9 @@ namespace Chaite.Core
         {
             switch (route)
             {
-                case FormulaRoute.FishronQueenSlime: return 50;
+                case FormulaRoute.FishronLilithWolf: return 52;
                 case FormulaRoute.FishronTrustyChillet: return 64;
                 case FormulaRoute.FishronTrustyChilletIgnis: return 65;
-                case FormulaRoute.EmpressBroom: return 23;
-                case FormulaRoute.EmpressRainFishron: return 12;
                 default: return -1;
             }
         }

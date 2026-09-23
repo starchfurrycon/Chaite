@@ -63,10 +63,11 @@ namespace Chaite.Patcher
             var pluginSource = Path.Combine(payloadDirectory, "Chaite.Plugin.dll");
             var coreSource = Path.Combine(payloadDirectory, "Chaite.Core.dll");
             var audioReadmeSource = Path.Combine(payloadDirectory, "Audio", "README.txt");
+            var memesReadmeSource = Path.Combine(payloadDirectory, "Memes", "README.txt");
             if (!File.Exists(pluginSource) || !File.Exists(coreSource) ||
-                !File.Exists(audioReadmeSource))
+                !File.Exists(audioReadmeSource) || !File.Exists(memesReadmeSource))
                 throw new FileNotFoundException(
-                    "安装载荷缺少 Chaite.Plugin.dll、Chaite.Core.dll 或 Audio/README.txt。",
+                    "安装载荷缺少 Chaite.Plugin.dll、Chaite.Core.dll、Audio/README.txt 或 Memes/README.txt。",
                     payloadDirectory);
 
             if (before.State == InstallState.Installed)
@@ -77,6 +78,7 @@ namespace Chaite.Patcher
             var dataDirectory = Path.Combine(gameDirectory, "Chaite");
             Directory.CreateDirectory(dataDirectory);
             Directory.CreateDirectory(Path.Combine(dataDirectory, "Audio"));
+            Directory.CreateDirectory(Path.Combine(dataDirectory, "Memes"));
 
             var backupName = "Terraria.exe." + before.Sha256.Substring(0, 16) + ".backup";
             var backupPath = Path.Combine(dataDirectory, backupName);
@@ -136,6 +138,7 @@ namespace Chaite.Patcher
 
             Directory.CreateDirectory(dataDirectory);
             Directory.CreateDirectory(Path.Combine(dataDirectory, "Audio"));
+            Directory.CreateDirectory(Path.Combine(dataDirectory, "Memes"));
             var temporary = Path.Combine(gameDirectory,
                 "Terraria.exe.chaite-upgrade");
             try
@@ -424,8 +427,10 @@ namespace Chaite.Patcher
             string dataDirectory)
         {
             var audioDirectory = Path.Combine(dataDirectory, "Audio");
+            var memesDirectory = Path.Combine(dataDirectory, "Memes");
             Directory.CreateDirectory(dataDirectory);
             Directory.CreateDirectory(audioDirectory);
+            Directory.CreateDirectory(memesDirectory);
 
             // User state is never replaced during an upgrade. README is the
             // shipped slot contract, so every successful install refreshes it.
@@ -438,6 +443,15 @@ namespace Chaite.Patcher
                     "安装载荷缺少 Audio/README.txt。", readmeSource);
             File.Copy(readmeSource,
                 Path.Combine(audioDirectory, "README.txt"), true);
+            // Same contract for the meme slot: the folder and its README ship,
+            // the images never do. The owner's files are not touched.
+            var memesReadmeSource = Path.Combine(payloadDirectory, "Memes",
+                "README.txt");
+            if (!File.Exists(memesReadmeSource))
+                throw new FileNotFoundException(
+                    "安装载荷缺少 Memes/README.txt。", memesReadmeSource);
+            File.Copy(memesReadmeSource,
+                Path.Combine(memesDirectory, "README.txt"), true);
         }
 
         private static void DeleteIfExists(string path)

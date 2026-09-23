@@ -52,7 +52,11 @@ foreach ($fragment in @(
     'if(scenario.Summon>0)',
     'sawSummonConsumed |= p.inventory[1].type!=scenario.Summon || p.inventory[1].stack<1;',
     'if(scenario.DirectSpawn && ticks==directSpawnTick) SpawnDirectEncounter();',
-    'if(scenario.DirectSpawn && !IsScopeNegative && ticks==takeoverTick) StageRequestedPhase();',
+    # The passive monitor fixture must never stage a phase: it exists to observe
+    # the real arrival, so staging would fabricate the very thing it measures.
+    # The guard gained '!IsMonitorFixture' when that fixture landed; this
+    # expectation had drifted without it.
+    'if(scenario.DirectSpawn && !IsScopeNegative && !IsMonitorFixture && ticks==takeoverTick) StageRequestedPhase();',
     'bool stagedPhaseFixture=scenario!=null && scenario.DirectSpawn;',
     '"isolated-native-encounter"')) {
     if (-not $probe.Contains($fragment)) { throw "Organic/staged producer boundary is missing: $fragment" }
@@ -75,44 +79,74 @@ foreach ($fragment in @('ExecuteBossStart', 'case BossSummonKind.DirectItem:',
     'SetControl(player, tileUse ? "controlUseTile" : "controlUseItem", pulse)')) {
     if (-not $facade.Contains($fragment)) { throw "Production F8 item-use path is missing: $fragment" }
 }
+# The takeover is MOVEMENT ONLY. This block used to require the post-summon
+# weapon handoff -- EnsureCombatWeaponSelected, the hotbar advance, and the
+# can-change gate -- which meant the test asserted the opposite of the shipped
+# rule once that handoff was deleted. What survives is the movement decision
+# path, and it must still latch its frame.
 foreach ($fragment in @(
-    'if (!EnsureCombatWeaponSelected(player))',
-    'CombatWeaponSelection.Advance(',
-    '_game.CanChangeSelectedItemImmediately(player)',
     'if (decision.Rejected)',
     '_game.ClearCombatControls(player);',
     '_frameApplied = true;')) {
-    if (-not $runtime.Contains($fragment)) { throw "Post-summon weapon-selection handoff is missing: $fragment" }
+    if (-not $runtime.Contains($fragment)) { throw "Post-summon movement-decision path is missing: $fragment" }
 }
 
 # Deerclops and Queen Bee remain useful native-engine fixture producers, but
-# neither item may cross the shipped runtime's two-Boss admission boundary.
+# neither item may cross the shipped runtime's one-Boss admission boundary.
 foreach ($fragment in @(
     'public static BossStartPlan SelectProduction(BossStartContext context)',
-    'if (item.Type != 2673 && item.Type != 4961)',
+    'if (item.Type != 2673',
     'SupportedBossPolicy.TryValidateStartPlan(plan')) {
-    if (-not $planner.Contains($fragment)) { throw "Production two-Boss selector gate is missing: $fragment" }
+    if (-not $planner.Contains($fragment)) { throw "Production one-Boss selector gate is missing: $fragment" }
 }
 foreach ($fragment in @(
     'public const int DukeFishronType = 370;',
-    'public const int EmpressOfLightType = 636;',
-    'return type == DukeFishronType || type == EmpressOfLightType;',
-    'plan.Kind == BossSummonKind.TruffleWormFishing',
-    'plan.Kind == BossSummonKind.PrismaticLacewing')) {
+    'return type == DukeFishronType;',
+    'plan.Kind == BossSummonKind.TruffleWormFishing')) {
     if (-not $policy.Contains($fragment)) { throw "Production allowlist contract is missing: $fragment" }
 }
-$findPlan = $runtime.IndexOf('_game.FindBossStartPlan(player)', [StringComparison]::Ordinal)
-$validatePlan = $runtime.IndexOf('!SupportedBossPolicy.TryValidateStartPlan(_startPlan,', [StringComparison]::Ordinal)
-$executePlan = $runtime.IndexOf('_game.ExecuteBossStart(player, _startPlan,', [StringComparison]::Ordinal)
-if ($findPlan -lt 0 -or $validatePlan -lt 0 -or $executePlan -lt 0 -or
-    $findPlan -gt $validatePlan -or $validatePlan -gt $executePlan) {
-    throw 'Production start-plan admission must reject unsupported offline plans before ExecuteBossStart can consume an item.'
+# Production no longer owns a summon path at all. The owner summons (truffle
+# worm) and F8 only arms a passive monitor, so the
+# runtime must not retain the item-consuming start chain even as dead code: a
+# leftover FindBossStartPlan/ExecuteBossStart call is exactly how an
+# unsupported offline plan could consume an item again. The facade keeps those
+# entry points for the offline native fixtures, which is asserted above; what
+# matters here is that production never reaches them.
+foreach ($fragment in @(
+    'FindBossStartPlan', 'ExecuteBossStart', 'TryValidateStartPlan')) {
+    if ($runtime.Contains($fragment)) {
+        throw "Production runtime must not retain the item-consuming start chain, found: $fragment"
+    }
 }
+# Three stages can continue an authorized control session, and each one must
+# revalidate the Boss scope before it does: the live tick, the deferred native
+# mobility admission, and the input-blocked keep-alive. One definition plus
+# three guarded call sites is the whole chain.
 $authorizedScopeMentions = [regex]::Matches($runtime,
     'TryValidateAuthorizedBossScope\s*\(').Count
-if ($authorizedScopeMentions -ne 6 -or $runtime -match
+if ($authorizedScopeMentions -ne 4) {
+    throw "The authorization chain must be one definition plus three guarded call sites; found $authorizedScopeMentions mentions."
+}
+foreach ($fragment in @(
+    'if (!TryValidateAuthorizedBossScope(liveObservation,',
+    'if (!TryValidateAuthorizedBossScope(observation,',
+    'return TryValidateAuthorizedBossScope(observation, out reason);')) {
+    if (-not $runtime.Contains($fragment)) {
+        throw "A production stage stopped validating Boss authorization: $fragment"
+    }
+}
+$liveScope = $runtime.IndexOf(
+    'if (!TryValidateAuthorizedBossScope(liveObservation,',
+    [StringComparison]::Ordinal)
+$liveUpdate = $runtime.IndexOf(
+    'var update = _encounter.Update(liveObservation);',
+    [StringComparison]::Ordinal)
+if ($liveScope -lt 0 -or $liveUpdate -lt 0 -or $liveScope -gt $liveUpdate) {
+    throw 'The live tick must validate Boss authorization before it advances the encounter state.'
+}
+if ($runtime -match
     'if\s*\(\s*\w+\.HasEncounter\s*&&\s*!TryValidateAuthorizedBossScope') {
-    throw 'All five production stages must validate Boss authorization unconditionally so a missing root breaks continuity.'
+    throw 'Boss authorization must not be conditional on HasEncounter; a missing root must break continuity.'
 }
 $tick = [regex]::Match($runtime,
     'public static void Tick\(object player, int playerIndex\)(?<body>.*?)(?=\r?\n\s*public static void ApplyPendingInput)',
@@ -170,14 +204,23 @@ foreach ($fragment in @(
 if (-not $facade.Contains('localPlayerIndex >= 255')) {
     throw 'Production session identity must reject the vanilla no-local-player sentinel.'
 }
-$handoff = [regex]::Match($runtime,
-    'private static bool EnsureCombatWeaponSelected\(object player\)(?<body>.*?)(?=\r?\n\s*private static void ResetSessionAutomation)',
-    [Text.RegularExpressions.RegexOptions]::Singleline)
-$selectionIndex = if ($handoff.Success) { $handoff.Groups['body'].Value.IndexOf('_game.SetSelectedItem(player, desired);', [StringComparison]::Ordinal) } else { -1 }
-$neutralIndex = if ($handoff.Success) { $handoff.Groups['body'].Value.IndexOf('_game.ClearCombatControls(player);', [StringComparison]::Ordinal) } else { -1 }
-if (-not $handoff.Success -or $selectionIndex -lt 0 -or $neutralIndex -lt 0 -or
-    $selectionIndex -gt $neutralIndex) {
-    throw 'Post-summon selection must be requested before the neutral transition frame is captured.'
+# Movement-only takeover, stated as a prohibition rather than a requirement.
+# The removed handoff is exactly the kind of code that comes back by accident:
+# a single _game.SetSelectedItem call on the planner's behalf would suppress
+# whatever the user is attacking with. A bare mention in a comment is fine; a
+# call is not. (CombatWeaponSelectionHandoff.cs is itself dead now -- nothing
+# outside its own file references it -- but it lives in Chaite.Core, and
+# deleting it would change InputCoreSha256 in the middle of a measurement wave,
+# so it is deferred to the end of the wave rather than done here.)
+foreach ($forbidden in @(
+    'EnsureCombatWeaponSelected(player)',
+    'CombatWeaponSelection.Advance(',
+    '_game.CanChangeSelectedItemImmediately(',
+    '_game.SetSelectedItem(player, desired)')) {
+    if ($runtime.Contains($forbidden)) {
+        throw "Runtime must not take over weapon selection (movement-only takeover): $forbidden"
+    }
 }
 
-Write-Output 'PASS priority organic fixture source contract: Deer Thing and Abeemination remain isolated offline producers, while production admission accepts only Fishron/Empress routes before any item use; no native process.'
+Write-Output 'PASS priority organic fixture source contract: Deer Thing and Abeemination remain isolated offline producers, production admission accepts only the Fishron route before any item use, and the runtime takes over movement only (never weapon selection); no native process.'
+exit 0

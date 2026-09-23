@@ -54,7 +54,7 @@ namespace Chaite.Core
         /// release. The generic selector above remains available to offline
         /// strategy fixtures, but a live game must skip every earlier hotbar
         /// summon belonging to an unreviewed Boss rather than accidentally
-        /// selecting it before a valid Fishron/Empress item.
+        /// selecting it before a valid Fishron item.
         /// </summary>
         public static BossStartPlan SelectProduction(BossStartContext context)
         {
@@ -68,8 +68,11 @@ namespace Chaite.Core
                 if (item == null || item.Stack <= 0)
                     continue;
                 // Keep the exact biome/time/critters checks in FromItem, but
-                // never even construct a plan for another Boss family.
-                if (item.Type != 2673 && item.Type != 4961)
+                // never even construct a plan for another Boss family. The
+                // Prismatic Lacewing (4961) used to be admitted here for the
+                // Empress of Light; she is permanently out of scope, so the
+                // Truffle Worm is the only reviewed summon left.
+                if (item.Type != 2673)
                     continue;
                 var plan = FromItem(context, item);
                 string ignored;
@@ -116,22 +119,6 @@ namespace Chaite.Core
                            !c.BlockingInvasion && !c.LunarPillarsActive && c.MoonLordCountdown <= 0
                            && c.ActiveBossTypes.Count == 0
                         ? Direct(item, 398, "celestial-sigil", 1200) : null;
-                case 4961:
-                    // ShouldEmpressBeEnraged IL_0000-0066: remix/Zenith surface
-                    // summons latch rage by HEIGHT, even at night. This surface-only
-                    // workflow has no validated enraged/underground start profile;
-                    // decline it rather than treating Zenith as a safe day bypass.
-                    // Vanilla NPC 661 does not impose a daytime-use ban. Once
-                    // released beside the player in surface Hallow it remains
-                    // damageable while nearby; ExecuteLacewingStart immediately
-                    // uses the already admitted single-slot projectile route.
-                    // Daytime therefore selects the same transaction and lets
-                    // the stricter lethal-day Empress mobility gate decide
-                    // whether taking control is safe.
-                    return !c.ZenithWorld && c.ZoneHallow && c.ZoneOverworld &&
-                           (c.DayTime || HasNightStartWindow(c)) &&
-                           !c.CritterProtection
-                        ? Special(BossSummonKind.PrismaticLacewing, item, 636, "prismatic-lacewing", item.Slot, 480, new Vec2()) : null;
                 case 1293:
                     return c.NearLihzahrdAltar
                         ? Special(BossSummonKind.LihzahrdAltar, item, 245, "lihzahrd-altar", item.Slot, 360, c.AltarWorld) : null;

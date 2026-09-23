@@ -142,28 +142,11 @@ namespace Chaite.Core
             new FishronChilletScript();
         private readonly FishronChilletScript _fishronChilletIgnisScript =
             new FishronChilletScript();
-        private readonly FishronQueenSlimeScript _fishronQueenSlimeScript =
-            new FishronQueenSlimeScript();
-        private readonly EmpressFlightScript _empressBroomScript =
-            new EmpressFlightScript();
-        private readonly EmpressFlightScript _empressRainFishronScript =
-            new EmpressFlightScript();
-        private readonly EmpressWingScript _empressWingScript =
-            new EmpressWingScript();
         private BossLocomotionBaseline _activeLocomotion =
             BossLocomotionBaseline.Unspecified;
         private bool _restoringFlight;
         private SupportSpan _landingSupport;
         private ThreatStep[] _threatSteps = Array.Empty<ThreatStep>();
-        private TargetedProjectileMotionState[] _targetedThreatStates =
-            Array.Empty<TargetedProjectileMotionState>();
-        // NPC 636's state-8/9 dash is candidate-coupled: its destination is
-        // built from the player's centre every native tick. Keep a distinct
-        // state array so the Projectile 873 homing predictor retains its own
-        // semantics and both paths stay allocation-free on the rollout hot
-        // loop.
-        private EmpressDashMotionState[] _empressDashThreatStates =
-            Array.Empty<EmpressDashMotionState>();
         private BeamStep[] _beamSteps = Array.Empty<BeamStep>();
 
         public int LastCandidateCount { get; private set; }
@@ -371,14 +354,6 @@ namespace Chaite.Core
             if (!RequirementsMetWithAvailableOutput(snapshot, requirements,
                     out reason))
                 return false;
-            if (IsLacewingStart(planId) &&
-                OrdinaryOutputUnavailableAtThreshold(snapshot,
-                    requirements.MinimumWeaponDps))
-            {
-                reason = "prismatic lacewing start requires an admitted " +
-                    "single-slot projectile route";
-                return false;
-            }
             return true;
         }
 
@@ -412,12 +387,6 @@ namespace Chaite.Core
                     requirements.MinimumWeaponDps, out outputRoute,
                     out summonWhip, out admittedDps, out reason))
                 return false;
-            if (summonWhip != null && IsLacewingStart(planId))
-            {
-                reason = "prismatic lacewing start requires an admitted " +
-                    "single-slot projectile route";
-                return false;
-            }
             BossMobilityRouteProfile selected;
             if (!RequirementsMetWithAdmission(snapshot, requirements,
                     admittedDps, out selected, out reason))
@@ -726,7 +695,8 @@ namespace Chaite.Core
                         snapshot.Player, out scriptInput))
                     return UnsupportedMobilityRoutePlan(NewPlan(snapshot),
                         "Formula script requires matching Boss identity and native clocks");
-                var script = FormulaScriptController.Tick(in scriptInput);
+                var script = FormulaScriptController.Tick(in scriptInput,
+                    snapshot.Player, in target, snapshot.Arena, snapshot.Mobility);
                 if (script.Accepted)
                 {
                     plan.Horizontal = script.Horizontal;
@@ -777,10 +747,14 @@ namespace Chaite.Core
             string reason;
             if (!FormulaMobilityContract.TryValidateLockedRoute(snapshot,
                     target.Type, _formulaRoute, out reason))
+            {
                 return UnsupportedMobilityRoutePlan(plan, "已锁定的公式机动配置发生变化");
+            }
             FormulaScriptInput input;
             if (!FormulaScriptController.TryReadInput(in target, _formulaRoute, snapshot.Player, out input))
+            {
                 return UnsupportedMobilityRoutePlan(plan, "缺少公式脚本所需的原生 Boss 状态");
+            }
             if (target.Type == SupportedBossPolicy.DukeFishronType)
             {
                 DukeFishronNativeEnrageObservation enrage;
@@ -790,10 +764,6 @@ namespace Chaite.Core
                     return UnsupportedMobilityRoutePlan(plan,
                         "猪鲨原生 AI 状态/时钟不在已审核公式表");
             }
-            else if (!EmpressFormulaStateContract.IsValid(in input,
-                    snapshot.Difficulty))
-                return UnsupportedMobilityRoutePlan(plan,
-                    "光女原生 AI 状态/时钟不在已审核公式表");
             FormulaScriptOutput script;
             if (_formulaRoute == FormulaRoute.FishronFairyWingsDash)
                 script = _fishronFairyWingScript.Tick(in input,
@@ -810,24 +780,9 @@ namespace Chaite.Core
                 script = _fishronChilletIgnisScript.Tick(in input,
                     snapshot.Player, in target, snapshot.Arena,
                     snapshot.Mobility);
-            else if (_formulaRoute == FormulaRoute.FishronQueenSlime)
-                script = _fishronQueenSlimeScript.Tick(in input,
-                    snapshot.Player, in target, snapshot.Arena,
-                    snapshot.Mobility);
-            else if (_formulaRoute == FormulaRoute.EmpressBroom)
-                script = _empressBroomScript.Tick(in input,
-                    snapshot.Player, in target, snapshot.Arena,
-                    snapshot.Mobility, snapshot.Difficulty);
-            else if (_formulaRoute == FormulaRoute.EmpressRainFishron)
-                script = _empressRainFishronScript.Tick(in input,
-                    snapshot.Player, in target, snapshot.Arena,
-                    snapshot.Mobility, snapshot.Difficulty);
-            else if (_formulaRoute == FormulaRoute.EmpressStrongWingsDash)
-                script = _empressWingScript.Tick(in input, snapshot.Player,
-                    in target, snapshot.Arena, snapshot.Mobility,
-                    snapshot.Difficulty);
             else
-                script = FormulaScriptController.Tick(in input);
+                script = FormulaScriptController.Tick(in input, snapshot.Player,
+                    in target, snapshot.Arena, snapshot.Mobility);
             if (!script.Accepted)
                 return UnsupportedMobilityRoutePlan(plan, "未识别的公式 Boss 阶段");
             if (snapshot.Weapon.NativeProfileRequired && !EnsureLiveOutput(snapshot, 0f, out reason))
@@ -845,7 +800,7 @@ namespace Chaite.Core
                     snapshot.Mobility.InfernoStateKnown,
                     snapshot.Mobility.InfernoTicksLeft);
             }
-            plan.StrategyId = target.Type == 370 ? "formula-fishron" : "formula-empress";
+            plan.StrategyId = "formula-fishron";
             plan.PhaseId = script.Phase;
             plan.TacticalMode = TacticalMode.StablePattern;
             plan.TargetKey = target.Key;
@@ -1066,10 +1021,6 @@ namespace Chaite.Core
             _fishronStrongWingScript.Reset();
             _fishronChilletScript.Reset();
             _fishronChilletIgnisScript.Reset();
-            _fishronQueenSlimeScript.Reset();
-            _empressBroomScript.Reset();
-            _empressRainFishronScript.Reset();
-            _empressWingScript.Reset();
             _activeLocomotion = BossLocomotionBaseline.Unspecified;
             _relevantThreats.Clear();
             _relevantBeams.Clear();
@@ -1256,23 +1207,6 @@ namespace Chaite.Core
                 LatchOutputRoute(in ordinary, minimumDps);
             return true;
         }
-
-        private static bool OrdinaryOutputUnavailableAtThreshold(
-            CombatSnapshot snapshot, float minimumDps)
-        {
-            if (snapshot?.Weapon?.NativeProfileRequired != true)
-                return false;
-            OutputRouteProfile route;
-            string reason;
-            return !OutputRouteContract.TryCreateReady(snapshot, out route,
-                       out reason) ||
-                !FiniteNonnegative(snapshot.Weapon.ApproximateDps) ||
-                snapshot.Weapon.ApproximateDps < minimumDps;
-        }
-
-        private static bool IsLacewingStart(string planId) =>
-            string.Equals(planId, "prismatic-lacewing",
-                StringComparison.OrdinalIgnoreCase);
 
         private bool UpdateActivePatternRecovery(
             ActivePatternRecoveryMeasure current, Candidate selected,
@@ -1744,20 +1678,8 @@ namespace Chaite.Core
             var best = ScoreCandidate(snapshot, target, directive, desiredHorizontal, desiredVertical, desiredHorizontal, desiredVertical);
             var edgeFreeBest = best;
             CaptureLateMobilityFallback(edgeFreeBest);
-            // The daytime Empress horizontal-dash phase is the one reviewed
-            // phase whose lower-bound formula names the shield dash even in
-            // Classic.  Other Classic charges keep the dash optional, exactly
-            // as their baseline declares it.
-            var empressDayDash = directive.PreferDash &&
-                directive.PhaseId != null &&
-                directive.PhaseId.Contains("day-rage-") &&
-                directive.PhaseId.Contains("horizontal-dash");
-            var empressPreDashWithStreak = directive.PhaseId != null &&
-                directive.PhaseId.Contains("reposition-before-horizontal-dash") &&
-                HasRainbowStreakThreat(snapshot);
             var preferRequiredShieldDash = directive.PreferDash &&
-                (requiredDash == BossDashBaseline.ShieldOfCthulhu ||
-                 empressDayDash) &&
+                requiredDash == BossDashBaseline.ShieldOfCthulhu &&
                 CanScoreEyeShieldDash(snapshot);
             Candidate gravityReturn = default(Candidate);
             var hasGravityReturn = false;
@@ -1834,7 +1756,7 @@ namespace Chaite.Core
             // ownership temporarily released while retaining the explicit
             // controller's pattern and late-fallback certificate.
             if (!directive.OwnsMovementClosure && !directive.OwnsHorizontalClosure ||
-                preferRequiredShieldDash || empressPreDashWithStreak)
+                preferRequiredShieldDash)
             {
                 if (CanScoreEyeShieldDash(snapshot))
                 {
@@ -2083,8 +2005,6 @@ namespace Chaite.Core
             if (grounded && !SupportGeometry.RetainsFooting(support, position.X, player.Width,
                 inverted, posture < 0)) grounded = false;
             var previousBounds = player.BoundsAt(position);
-            InitializeTargetedThreatStates(snapshot);
-            InitializeEmpressDashThreatStates();
 
             if (!nativeJump && mobilityAction == MobilityCandidateAction.None &&
                 jumpRequested && canInitialJump)
@@ -2195,25 +2115,10 @@ namespace Chaite.Core
                 {
                     var cacheIndex = cacheOffset + i;
                     ThreatStep predicted;
-                    if (_empressDashThreatStates[i].Valid)
-                    {
-                        predicted = PredictEmpressDashCandidateThreat(
-                            _relevantThreats[i], i, previousBounds.Center,
-                            bounds.Center, tick, directive, cacheIndex);
-                    }
-                    else if (_targetedThreatStates[i].Valid)
-                    {
-                        predicted = PredictTargetedCandidateThreat(
-                            _relevantThreats[i], i, previousBounds.Center,
-                            bounds.Center, tick, directive, cacheIndex);
-                    }
-                    else
-                    {
-                        if (!_settings.CacheThreatPrediction)
-                            _threatSteps[cacheIndex] = PredictThreat(
-                                _relevantThreats[i], tick, directive);
-                        predicted = _threatSteps[cacheIndex];
-                    }
+                    if (!_settings.CacheThreatPrediction)
+                        _threatSteps[cacheIndex] = PredictThreat(
+                            _relevantThreats[i], tick, directive);
+                    predicted = _threatSteps[cacheIndex];
                     if (!predicted.Active) continue;
                     var liveBounds = bounds;
                     if (predicted.LifeFraction < 1f)
@@ -2228,7 +2133,7 @@ namespace Chaite.Core
                     {
                         var separation = liveBounds.SeparationSquared(predicted.After);
                         if (separation < 14400f)
-                            risk += NearMissPenalty(_relevantThreats[i]) *
+                            risk += _settings.NearMissPenalty *
                                 (1f - separation / 14400f) * timeWeight;
                     }
                 }
@@ -2240,16 +2145,14 @@ namespace Chaite.Core
                     if (!_settings.CacheThreatPrediction) _beamSteps[beamIndex] = PredictBeam(_relevantBeams[i], tick);
                     ref var beam = ref _beamSteps[beamIndex];
                     if (!beam.Shape.Active) continue;
-                    // All three tapered Sun Dance lobes belong to one projectile;
-                    // overlapping lobes never triple-count its damage.
                     if (BeamGeometry.Intersects(playerSweep, beam.Shape,
-                            BeamSafetyMargin(_relevantBeams[i])))
+                            _settings.ProjectileSafetyMargin))
                         risk += beam.DamageRisk;
                     else
                     {
                         var separation = BeamGeometry.SeparationSquared(playerSweep, beam.Shape);
                         if (separation < 14400f)
-                            risk += NearMissPenalty(_relevantBeams[i]) *
+                            risk += _settings.NearMissPenalty *
                                 (1f - separation / 14400f) * timeWeight;
                     }
                 }
@@ -2586,19 +2489,6 @@ namespace Chaite.Core
             {
                 var threat = snapshot.Threats[index];
                 if (threat.Kind != ThreatKind.NpcContact) continue;
-                if (threat.Trajectory == ThreatTrajectory.EmpressDashContact)
-                {
-                    EmpressDashMotionState dash;
-                    ProjectileMotionSweep sweep;
-                    if (!HostileProjectileMotion.TryCreateEmpressDashState(
-                            threat, out dash) ||
-                        !HostileProjectileMotion.TryAdvanceEmpressDashSweep(
-                            ref dash, before.Center, after.Center, 1,
-                            out sweep)) return true;
-                    if (sweep.Active && SweptIntersects(before, after,
-                            sweep.Bounds, sweep.Bounds)) return true;
-                    continue;
-                }
                 if (threat.Trajectory != ThreatTrajectory.Linear)
                     return true;
                 if (SweptIntersects(before, after, threat.BoundsAt(beforeTick),
@@ -2751,7 +2641,7 @@ namespace Chaite.Core
                     var beam = BeamGeometry.Sweep(threat, beforeTick, elapsedTick);
                     var sweep = BeamGeometry.Union(playerBefore, playerAfter);
                     if (beam.Active && BeamGeometry.Intersects(sweep, beam,
-                        BeamSafetyMargin(threat))) return false;
+                        _settings.ProjectileSafetyMargin)) return false;
                     continue;
                 }
                 if (threat.TimeLeft > 0 && threat.TimeLeft <= beforeTick) continue;
@@ -2764,31 +2654,6 @@ namespace Chaite.Core
                 var margin = threat.Kind == ThreatKind.Projectile
                     ? _settings.ProjectileSafetyMargin
                     : _settings.ContactSafetyMargin + directive.ExtraContactMargin;
-                if (threat.Trajectory == ThreatTrajectory.EmpressDashContact)
-                {
-                    EmpressDashMotionState dashState;
-                    ProjectileMotionSweep dashSweep;
-                    if (!HostileProjectileMotion.TryCreateEmpressDashState(
-                            threat, out dashState) ||
-                        !HostileProjectileMotion.TryAdvanceEmpressDashSweep(
-                            ref dashState, playerBefore.Center,
-                            livePlayerAfter.Center, 1, out dashSweep))
-                        return false;
-                    if (!dashSweep.Active) continue;
-                    var dashBounds = dashSweep.Bounds.Inflated(margin);
-                    if (SweptIntersects(playerBefore, livePlayerAfter,
-                            dashBounds, dashBounds)) return false;
-                    var dashSeparation = livePlayerAfter.SeparationSquared(
-                        dashBounds);
-                    if (dashSeparation < 14400f)
-                    {
-                        var dashTimeWeight = 1f /
-                            (1f + elapsedTick * .035f);
-                        risk += NearMissPenalty(threat) *
-                            (1f - dashSeparation / 14400f) * dashTimeWeight;
-                    }
-                    continue;
-                }
                 if (threat.Trajectory != ThreatTrajectory.Linear)
                 {
                     ProjectileMotionSweep motion =
@@ -2805,7 +2670,7 @@ namespace Chaite.Core
                     {
                         var curvedTimeWeight = 1f /
                             (1f + elapsedTick * .035f);
-                        risk += NearMissPenalty(threat) *
+                        risk += _settings.NearMissPenalty *
                             (1f - curvedSeparation / 14400f) *
                             curvedTimeWeight;
                     }
@@ -2819,7 +2684,7 @@ namespace Chaite.Core
                 if (separation < 14400f)
                 {
                     var timeWeight = 1f / (1f + elapsedTick * .035f);
-                    risk += NearMissPenalty(threat) *
+                    risk += _settings.NearMissPenalty *
                         (1f - separation / 14400f) * timeWeight;
                 }
             }
@@ -3021,12 +2886,6 @@ namespace Chaite.Core
             var required = sampleCount * _relevantThreats.Count;
             if (_threatSteps.Length < required)
                 _threatSteps = new ThreatStep[((required + 1023) / 1024) * 1024];
-            if (_targetedThreatStates.Length < _relevantThreats.Count)
-                _targetedThreatStates = new TargetedProjectileMotionState[
-                    ((_relevantThreats.Count + 255) / 256) * 256];
-            if (_empressDashThreatStates.Length < _relevantThreats.Count)
-                _empressDashThreatStates = new EmpressDashMotionState[
-                    ((_relevantThreats.Count + 255) / 256) * 256];
             if (_settings.CacheThreatPrediction)
                 for (var sample = 0; sample < sampleCount; sample++)
                     for (var threat = 0; threat < _relevantThreats.Count; threat++)
@@ -3046,153 +2905,6 @@ namespace Chaite.Core
             {
                 Shape = BeamGeometry.Sweep(threat, tick - _stepTicks, tick),
                 DamageRisk = (_settings.DamagePenalty + Math.Max(1, threat.Damage) * 90f) * (1f / (1f + tick * .035f))
-            };
-        }
-
-        private void InitializeTargetedThreatStates(CombatSnapshot snapshot)
-        {
-            var localPlayerIndex = snapshot.NativeContextKnown
-                ? snapshot.LocalPlayerIndex : -1;
-            for (var index = 0; index < _relevantThreats.Count; index++)
-            {
-                TargetedProjectileMotionState state;
-                HostileProjectileMotion.TryCreateTargetedState(
-                    _relevantThreats[index], localPlayerIndex, out state);
-                _targetedThreatStates[index] = state;
-            }
-        }
-
-        private void InitializeEmpressDashThreatStates()
-        {
-            for (var index = 0; index < _relevantThreats.Count; index++)
-            {
-                EmpressDashMotionState state;
-                HostileProjectileMotion.TryCreateEmpressDashState(
-                    _relevantThreats[index], out state);
-                _empressDashThreatStates[index] = state;
-            }
-        }
-
-        private ThreatStep PredictTargetedCandidateThreat(
-            in ThreatSnapshot threat, int threatIndex,
-            Vec2 playerCenterBefore, Vec2 playerCenterAfter, int tick,
-            BossDirective directive, int cacheIndex)
-        {
-            ProjectileMotionSweep motion;
-            if (threat.Type == 873)
-            {
-                // The 873 homing branch is coupled to the candidate player
-                // centre. Advance it once per native tick over the coarse
-                // planner step so the homing turn cannot slip between two
-                // interpolated endpoints and graze the player body.
-                var substepTargetBefore = playerCenterBefore;
-                motion = default(ProjectileMotionSweep);
-                for (var substep = 1; substep <= _stepTicks; substep++)
-                {
-                    var substepTargetAfter = playerCenterBefore +
-                        (playerCenterAfter - playerCenterBefore) *
-                        (substep / (float)_stepTicks);
-                    ProjectileMotionSweep substepSweep;
-                    if (!HostileProjectileMotion.TryAdvanceTargetedSweep(
-                            ref _targetedThreatStates[threatIndex],
-                            substepTargetBefore, substepTargetAfter, 1,
-                            out substepSweep) || !substepSweep.Active)
-                        break;
-                    if (!motion.Active)
-                    {
-                        motion.Active = true;
-                        motion.Bounds = substepSweep.Bounds;
-                    }
-                    else
-                    {
-                        var left = Math.Min(motion.Bounds.X,
-                            substepSweep.Bounds.X);
-                        var top = Math.Min(motion.Bounds.Y,
-                            substepSweep.Bounds.Y);
-                        var right = Math.Max(motion.Bounds.Right,
-                            substepSweep.Bounds.Right);
-                        var bottom = Math.Max(motion.Bounds.Bottom,
-                            substepSweep.Bounds.Bottom);
-                        motion.Bounds = new RectF(left, top,
-                            right - left, bottom - top);
-                    }
-                    substepTargetBefore = substepTargetAfter;
-                }
-            }
-            else if (!HostileProjectileMotion.TryAdvanceTargetedSweep(
-                    ref _targetedThreatStates[threatIndex],
-                    playerCenterBefore, playerCenterAfter, _stepTicks,
-                    out motion))
-            {
-                // A malformed or degenerate candidate input never turns a
-                // reviewed trajectory into linear motion. Discard its coupled
-                // state and retain the original all-directions envelope.
-                _targetedThreatStates[threatIndex] =
-                    default(TargetedProjectileMotionState);
-                if (!_settings.CacheThreatPrediction)
-                    _threatSteps[cacheIndex] = PredictThreat(threat, tick,
-                        directive);
-                return _threatSteps[cacheIndex];
-            }
-            if (!motion.Active) return default(ThreatStep);
-
-            var beforeTick = tick - _stepTicks;
-            var aliveUntil = threat.TimeLeft > 0
-                ? Math.Min(tick, threat.TimeLeft) : tick;
-            var margin = ProjectileSafetyMargin(in threat);
-            var bounds = motion.Bounds.Inflated(margin + tick * .08f);
-            return new ThreatStep
-            {
-                Active = true,
-                LifeFraction = (aliveUntil - beforeTick) /
-                    (float)_stepTicks,
-                Before = bounds,
-                After = bounds,
-                DamageRisk = (_settings.DamagePenalty +
-                    Math.Max(1, threat.Damage) * 90f) *
-                    (1f / (1f + tick * .035f))
-            };
-        }
-
-        private ThreatStep PredictEmpressDashCandidateThreat(
-            in ThreatSnapshot threat, int threatIndex,
-            Vec2 playerCenterBefore, Vec2 playerCenterAfter, int tick,
-            BossDirective directive, int cacheIndex)
-        {
-            ProjectileMotionSweep motion;
-            if (!HostileProjectileMotion.TryAdvanceEmpressDashSweep(
-                    ref _empressDashThreatStates[threatIndex],
-                    playerCenterBefore, playerCenterAfter, _stepTicks,
-                    out motion))
-            {
-                // A reviewed dash must never silently degrade to linear motion.
-                // PredictThreat writes the fail-closed full-world bounds for the
-                // malformed state; preserve that cache convention here.
-                _empressDashThreatStates[threatIndex] =
-                    default(EmpressDashMotionState);
-                if (!_settings.CacheThreatPrediction)
-                    _threatSteps[cacheIndex] = PredictThreat(threat, tick,
-                        directive);
-                return _threatSteps[cacheIndex];
-            }
-            if (!motion.Active) return default(ThreatStep);
-
-            var beforeTick = tick - _stepTicks;
-            var aliveUntil = threat.TimeLeft > 0
-                ? Math.Min(tick, threat.TimeLeft) : tick;
-            var margin = _settings.ContactSafetyMargin +
-                directive.ExtraContactMargin;
-            var bounds = motion.Bounds.Inflated(margin + tick * .08f);
-            return new ThreatStep
-            {
-                Active = true,
-                LifeFraction = (aliveUntil - beforeTick) /
-                    (float)_stepTicks,
-                Before = bounds,
-                After = bounds,
-                DamageRisk = (_settings.DamagePenalty +
-                    Math.Max(1, threat.Damage) * 90f) *
-                    (1f / (1f + tick * .035f))
             };
         }
 
@@ -3314,42 +3026,8 @@ namespace Chaite.Core
                 {
                     ProjectileMotionSweep motion =
                         default(ProjectileMotionSweep);
-                    if (threat.Trajectory == ThreatTrajectory.EmpressDashContact)
-                    {
-                        EmpressDashMotionState dashState;
-                        var dashPredicted =
-                            HostileProjectileMotion.TryCreateEmpressDashState(
-                                threat, out dashState) &&
-                            HostileProjectileMotion.TryAdvanceEmpressDashSweep(
-                                ref dashState, bounds.Center,
-                                livePlayerFuture.Center, aliveUntil,
-                                out motion);
-                        if (!dashPredicted)
-                        {
-                            risk += _settings.DamagePenalty +
-                                Math.Max(1, threat.Damage) * 90f;
-                            continue;
-                        }
-                        if (!motion.Active) continue;
-                        var dashMotionBounds = motion.Bounds.Inflated(margin);
-                        if (SweptIntersects(bounds, livePlayerFuture,
-                                dashMotionBounds, dashMotionBounds))
-                            risk += _settings.DamagePenalty +
-                                Math.Max(1, threat.Damage) * 90f;
-                        continue;
-                    }
-                    var targeted =
-                        default(TargetedProjectileMotionState);
-                    var hasTargetedState = snapshot.NativeContextKnown &&
-                        HostileProjectileMotion.TryCreateTargetedState(
-                            threat, snapshot.LocalPlayerIndex, out targeted);
-                    var predicted = hasTargetedState
-                        ? HostileProjectileMotion.TryAdvanceTargetedSweep(
-                            ref targeted, bounds.Center,
-                            livePlayerFuture.Center, aliveUntil, out motion)
-                        : HostileProjectileMotion.TrySweep(threat, 0,
-                            aliveUntil, out motion);
-                    if (!predicted)
+                    if (!HostileProjectileMotion.TrySweep(threat, 0,
+                            aliveUntil, out motion))
                     {
                         risk += _settings.DamagePenalty +
                             Math.Max(1, threat.Damage) * 90f;
@@ -3373,7 +3051,7 @@ namespace Chaite.Core
                 var threat = _relevantBeams[i];
                 var beam = BeamGeometry.Sweep(threat, 0, ticks);
                 if (BeamGeometry.Intersects(playerSweep, beam,
-                        BeamSafetyMargin(threat)))
+                        _settings.ProjectileSafetyMargin))
                     risk += _settings.DamagePenalty + threat.Damage * 90f;
             }
             return risk;
@@ -3382,53 +3060,6 @@ namespace Chaite.Core
         private static RectF InvalidThreatBounds() =>
             new RectF(-1000000000f, -1000000000f,
                 2000000000f, 2000000000f);
-
-        private float BeamSafetyMargin(in ThreatSnapshot threat)
-        {
-            // The Empress sun-dance beam sweeps three tapered lobes through a
-            // wide rotating arc; its native scale/age transition leaves less
-            // room for interpolation error than a stationary line. Add a
-            // conservative extra cushion so a grazing rotation cannot clip the
-            // player body between two sampled steps.
-            return threat.Geometry == ThreatGeometry.EmpressSunDance
-                ? _settings.ProjectileSafetyMargin + 40f
-                : _settings.ProjectileSafetyMargin;
-        }
-
-        private float ProjectileSafetyMargin(in ThreatSnapshot threat)
-        {
-            // The 873 rainbow streak homes on the candidate player, so its
-            // near-miss envelope is narrower than the all-directions broadphase.
-            // Keep a small extra cushion for interpolation between the coarse
-            // rollout steps without inflating unrelated projectiles.
-            return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
-                ? _settings.ProjectileSafetyMargin + 28f
-                : _settings.ProjectileSafetyMargin;
-        }
-
-        private float NearMissPenalty(in ThreatSnapshot threat)
-        {
-            // The homing 873 streak tracks the candidate body, so a small
-            // separation now can become a hit one native tick later. Price
-            // that near miss more heavily than an ordinary projectile graze.
-            return threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak
-                ? _settings.NearMissPenalty * 1.5f
-                : _settings.NearMissPenalty;
-        }
-
-        private static bool HasRainbowStreakThreat(CombatSnapshot snapshot)
-        {
-            if (snapshot == null || snapshot.Threats == null)
-                return false;
-            for (var i = 0; i < snapshot.Threats.Count; i++)
-            {
-                var threat = snapshot.Threats[i];
-                if (threat.Kind == ThreatKind.Projectile &&
-                    threat.Trajectory == ThreatTrajectory.EmpressRainbowStreak)
-                    return true;
-            }
-            return false;
-        }
 
         private void ApplyScoredMobility(CombatSnapshot snapshot, Candidate candidate,
             ref ControlPlan plan)

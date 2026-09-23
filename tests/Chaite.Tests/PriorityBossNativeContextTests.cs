@@ -14,10 +14,6 @@ namespace Chaite.Tests
                 WallTunnelAndEyeLaserKeepIndependentAuthority);
             Run(nameof(FishronEnrageMatchesTheExactThreeTermPredicate),
                 FishronEnrageMatchesTheExactThreeTermPredicate);
-            Run(nameof(EmpressRageHandlesNormalAndRemixWorlds),
-                EmpressRageHandlesNormalAndRemixWorlds);
-            Run(nameof(EmpressAiThreeRetainsPhaseAndGenuineRageBits),
-                EmpressAiThreeRetainsPhaseAndGenuineRageBits);
             Run(nameof(DeerclopsAcceptsEveryNativeStateAndZeroTimers),
                 DeerclopsAcceptsEveryNativeStateAndZeroTimers);
             Run(nameof(MoonLord454MirrorsTheNativeDamageWindow),
@@ -40,8 +36,6 @@ namespace Chaite.Tests
             False(PriorityBossNativeContextContract.TryValidate(
                 default(DukeFishronNativeEnrageObservation), out reason));
             False(PriorityBossNativeContextContract.TryValidate(
-                default(EmpressNativeCombatObservation), out reason));
-            False(PriorityBossNativeContextContract.TryValidate(
                 default(DeerclopsNativeTimerObservation), out reason));
             False(PriorityBossNativeContextContract.TryValidate(
                 default(MoonLordProjectile454Observation), out reason));
@@ -54,9 +48,6 @@ namespace Chaite.Tests
             var fishron = new DukeFishronNativeEnrageObservation { Known = true };
             True(PriorityBossNativeContextContract.TryValidate(
                 in fishron, out reason), reason);
-            var empress = new EmpressNativeCombatObservation { Known = true };
-            True(PriorityBossNativeContextContract.TryValidate(
-                in empress, out reason), reason);
         }
 
         private static void QueenBeeEnragePreservesAllThreeVanillaSources()
@@ -151,69 +142,6 @@ namespace Chaite.Tests
                 False(PriorityBossNativeContextContract.TryValidate(
                     in value, out reason));
             }
-        }
-
-        private static void EmpressRageHandlesNormalAndRemixWorlds()
-        {
-            string reason;
-            var normalNight = new EmpressNativeCombatObservation
-            {
-                Known = true,
-                DayTime = false,
-                RemixWorld = false,
-                RemixRageMode = true,
-                BossAboveWorldSurface = true,
-                NativeShouldBeEnraged = false
-            };
-            True(PriorityBossNativeContextContract.TryValidate(
-                in normalNight, out reason), reason);
-
-            normalNight.DayTime = true;
-            normalNight.NativeShouldBeEnraged = true;
-            True(PriorityBossNativeContextContract.TryValidate(
-                in normalNight, out reason), reason);
-
-            var remix = new EmpressNativeCombatObservation
-            {
-                Known = true,
-                RemixWorld = true,
-                BossAboveWorldSurface = true,
-                NativeShouldBeEnraged = true
-            };
-            True(PriorityBossNativeContextContract.TryValidate(
-                in remix, out reason), reason);
-            remix.BossAboveWorldSurface = false;
-            remix.NativeShouldBeEnraged = false;
-            True(PriorityBossNativeContextContract.TryValidate(
-                in remix, out reason), reason);
-            remix.RemixRageMode = true;
-            remix.NativeShouldBeEnraged = true;
-            True(PriorityBossNativeContextContract.TryValidate(
-                in remix, out reason), reason);
-        }
-
-        private static void EmpressAiThreeRetainsPhaseAndGenuineRageBits()
-        {
-            string reason;
-            for (var ai3 = 0; ai3 <= 3; ai3++)
-            {
-                var value = new EmpressNativeCombatObservation
-                {
-                    Known = true,
-                    Ai3PhaseAndRage = ai3
-                };
-                True(PriorityBossNativeContextContract.TryValidate(
-                    in value, out reason), reason);
-                Equal(ai3 == 1 || ai3 == 3, value.PhaseTwo);
-                Equal(ai3 == 2 || ai3 == 3, value.GenuinelyEnraged);
-            }
-            var invalid = new EmpressNativeCombatObservation
-            {
-                Known = true,
-                Ai3PhaseAndRage = 4f
-            };
-            False(PriorityBossNativeContextContract.TryValidate(
-                in invalid, out reason));
         }
 
         private static void DeerclopsAcceptsEveryNativeStateAndZeroTimers()

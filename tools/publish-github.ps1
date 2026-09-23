@@ -35,7 +35,13 @@ function Get-PublicSourceManifest {
             $relative = $_.FullName.Substring($projectRoot.Length + 1).Replace('\', '/')
             if ($relative -match '/(bin|obj|packages|\.vs)/') { return }
             if ($_.Extension -notin @('.cs', '.csproj', '.resx', '.config', '.manifest')) {
-                if ($relative -ne 'src/Chaite.Plugin/config.json' -and $relative -ne 'src/Chaite.Plugin/Audio/README.txt') { return }
+                # Test fixtures that are data rather than code: the exported
+                # policy weights and the reference vectors that pin the loader's
+                # forward pass. Scoped to tests/ so that no build output or probe
+                # artifact can ride along on a bare extension match.
+                $isTestFixture = $relative.StartsWith('tests/') -and
+                    ($_.Extension -in @('.json', '.bin'))
+                if (-not $isTestFixture -and $relative -ne 'src/Chaite.Plugin/config.json' -and $relative -ne 'src/Chaite.Plugin/Audio/README.txt') { return }
             }
             $paths.Add($relative)
         }
@@ -48,6 +54,8 @@ function Get-PublicSourceManifest {
         'test-native-flight.ps1', 'test-native-flight-evidence.ps1', 'audit-twins-native.ps1',
         'test-twins-native-audit.ps1', 'audit-destroyer-native.ps1', 'test-destroyer-native-audit.ps1',
         'test-priority-phase-fixture-contract.ps1', 'test-priority-boss-probe-schema.ps1',
+        'test-priority-organic-fixture-contract.ps1', 'test-training-objective.ps1',
+        'train-policy.ps1', 'new-policy.ps1',
         'audit-common-special-ranged-native.ps1', 'test-common-special-ranged-native-audit.ps1',
         'audit-native-grapple-contract.ps1', 'audit-native-mount-catalog.ps1',
         'audit-native-dash-sources.ps1', 'audit-native-mount-motion-matrix.ps1')) {
@@ -55,10 +63,25 @@ function Get-PublicSourceManifest {
     }
     foreach ($name in @('boss-king-native-policy.md', 'weapon-profile-policy.md', 'boss-eye-native-policy.md', 'native-jump-research.md',
         'boss-queen-native-policy.md', 'boss-prime-native-policy.md', 'native-flight-policy.md',
-        'native-witch-broom-policy.md', 'weapon-coverage-audit-next.md',
+        'weapon-coverage-audit-next.md',
         'common-special-ranged-native-audit.md', 'native-dash-source-audit.md',
         'native-mobility-matrix-next.md')) {
+        # native-witch-broom-policy.md was removed from this list with the
+        # Empress: the broom was only ever a route for her, and that route is
+        # gone. Test-Path guards every entry, so a stale name here would not
+        # have failed the release -- it would just have silently shipped one
+        # fewer document, which is the harder failure to notice.
         $relative = 'docs/' + $name
+        if (Test-Path -LiteralPath (Join-Path $projectRoot $relative) -PathType Leaf) { $paths.Add($relative) }
+    }
+    # The acceptance artifact. fishron-strong-wing.policy.bin is the exported
+    # strong-wing policy that training/mount-policy.ps1 scored at 97.4% (38/39)
+    # against the 90% bar; the loader detects the format from the file's own
+    # CHAITEPOLICY magic, so the extension is documentation rather than a loader
+    # contract. Every entry is named explicitly because this is an allowlist: a
+    # directory glob here would ship whatever a later experiment left behind.
+    foreach ($name in @('README.md', 'fishron-strong-wing.policy.bin', 'zero.policy.txt')) {
+        $relative = 'policies/' + $name
         if (Test-Path -LiteralPath (Join-Path $projectRoot $relative) -PathType Leaf) { $paths.Add($relative) }
     }
     $workflows = Join-Path $projectRoot '.github\workflows'

@@ -18,3 +18,13 @@ DEVELOPMENT_NOTES.md
 # Original meme audio is user-supplied and must not be committed.
 src/Chaite.Plugin/Audio/*.wav
 release/Audio/*.wav
+
+# Python bytecode from the training helpers
+__pycache__/
+*.pyc
+
+# Ad-hoc probe/build logs written at the repo root by development runs.
+/*.log
+/*.probe.err
+/*.probe.log
+/*.out.log

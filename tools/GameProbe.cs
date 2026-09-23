@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Terraria;
@@ -20,11 +21,115 @@ using Game = Terraria.Main;
 public static class ChaiteGameProbe
 {
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
+
+    // The lockstep wait falls back to Thread.Sleep(1) once the trainer is more
+    // than a few milliseconds behind, and without a raised timer resolution that
+    // call sleeps for the default ~15.6 ms tick -- measured 16.04 ms on this
+    // machine. During that sleep the engine could have run several native ticks,
+    // so the whole round is paced by a timer that is far coarser than the
+    // 8-tick lead the lockstep actually allows. timeBeginPeriod(1) makes
+    // Sleep(1) mean one millisecond; the process exit restores the default.
+    [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    static extern uint TimeBeginPeriod(uint period);
+
+    [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    static extern uint TimeEndPeriod(uint period);
+
+    static bool timerResolutionRaised;
+
+    static void RaiseTimerResolution()
+    {
+        try
+        {
+            uint result = TimeBeginPeriod(1);
+            timerResolutionRaised = result == 0;
+            Log("TIMER_RESOLUTION period=1 result=" + result +
+                " raised=" + timerResolutionRaised);
+        }
+        catch (Exception e)
+        {
+            // A missing winmm entry point must not take the round down: the
+            // lockstep still works, just at the coarse timer granularity.
+            Log("TIMER_RESOLUTION failed: " + e.GetType().Name + " " + e.Message);
+        }
+    }
     static readonly Stopwatch processClock = Stopwatch.StartNew();
     static ScenarioSpec scenario;
     static bool settingsRead, finishing;
     static int seed = 20260910, difficultyCode, tickLimit = 24000, wallLimitSeconds = 90;
+    /// <summary>Hostile projectiles written per bridge observation line. The
+    /// trainer's feature vector is sized from the same number, so a mismatch
+    /// silently misaligns every projectile feature; CHAITE_PROJ_SLOTS is the one
+    /// place both sides read. Default 12 is what every existing checkpoint was
+    /// trained with. The true count reaches 43 on the day Empress and 32 on Duke
+    /// Fishron (measured from the monitor stream), and the window is sorted by
+    /// Manhattan distance rather than threat, so the slots it drops are the fast
+    /// closing projectiles rather than the harmless far ones.</summary>
+    static int projectileSlots = 12;
+    /// <summary>Ordering and de-duplication of the bridge's projectile window.
+    ///
+    /// The measured problem with the original ordering: the window was sorted by
+    /// Manhattan distance and the Sharknado column (384/385/386) is a large,
+    /// slow, numerous NPC-ish cloud of hitboxes, so it took every slot. On the
+    /// recorded obsb1 stream, 78.8% of all slot appearances at a life-loss frame
+    /// were type 384 and 1159 of 2757 hit frames had all 12 slots filled with the
+    /// column, while the fast closing projectiles that actually connect (720,
+    /// 204/205, 43, 201/202/203) were pushed out of the window entirely.
+    ///
+    /// Two switches, both off by default so the existing checkpoints keep the
+    /// exact row they were trained on:
+    /// <list type="bullet">
+    /// <item><c>CHAITE_PROJ_SORT=threat</c> orders the window by an estimate of
+    /// how soon the projectile can reach the player, not by raw distance.</item>
+    /// <item><c>CHAITE_PROJ_COLLAPSE=1</c> keeps only the nearest instance of
+    /// each projectile type, so twelve copies of one hitbox cannot crowd out the
+    /// rest of the hostile set. The types it drops are counted in <c>pe</c>, so
+    /// the omission is visible in the stream rather than silent.</item>
+    /// </list>
+    /// Both change only the ORDER and the MEMBERSHIP of the window, never its
+    /// width, so they cannot misalign the feature vector.</summary>
+    static bool projectileSortByThreat;
+    static bool projectileCollapseTypes;
+    /// <summary>Total native ticks this process may run, 0 for unbounded. A
+    /// training round sets it so the 32-bit address-space ceiling is never
+    /// approached, independently of how fast the machine happens to be.</summary>
+    static int runTickLimit;
     static int takeoverTick = 120, directSpawnTick = -1;
+    // Ends a monitor run at the first frame that costs the player life. The
+    // objective is no-hit, so a run that has taken a hit is already a failure
+    // and the remaining frames cannot change that; under that objective the
+    // runs that reach the tick limit are exactly the successes. Off by
+    // default, because every other probe consumer wants the whole fight.
+    static bool stopOnFirstHit;
+    // ---- t-agent style in-engine training: episode mode + observation bridge ----
+    // CHAITE_BRIDGE_FILE names the base path of the bridge. The trainer owns
+    // movement through the route channel (RouteReplay bridge mode) and the
+    // harness appends one compact observation line per tick to
+    // <base>.obs.jsonl, so a PPO rollout is exactly the real fight.
+    // CHAITE_EPISODES=N turns the probe from one fight per process into N
+    // fights per process: Finish is intercepted, the arena is soft-reset the
+    // way t-agent's ResetManager does (despawn, teleport, heal, resummon) and
+    // the fight restarts inside the same process.
+    static string bridgeBase;
+    /// <summary>How many ticks the native loop may run ahead of the trainer's
+    /// latest action. The trainer rewrites one action per tick, so a small
+    /// allowance keeps every (observation, action) pair aligned while letting
+    /// the engine run at its own pace instead of a fixed sleep.</summary>
+    const int BridgeLagLimit = 8;
+    static int bridgeActionTick = -1;
+    static long bridgeActionReadAt;
+    static int bridgeWaitSpins;
+    /// <summary>Set once a few 30 s stalls show the trainer is gone, so the rest
+    /// of the round runs free instead of crawling one tick per timeout.</summary>
+    static int bridgeWaitTimeouts;
+    static bool bridgeLockstepDisabled;
+    // True only when CHAITE_BRIDGE_FILE names a trainer, independently of where
+    // this probe writes its own stream (CHAITE_PROBE_OUT).
+    static bool bridgeDriven;
+    static int episodeLimit;
+    static int episodeIndex, episodeStartTick, episodeHits, episodeArmTick = -1;
+    static long episodeBossDamageStart;
+    static System.IO.StreamWriter bridgeObsWriter;
     static int monitorArmedTick = -1, monitorCombatTick = -1, monitorPassiveFrames;
     static int shieldBeforeHit, shieldBeforeDelay, shieldBeforeLife;
     static bool shieldBeforeRequested;
@@ -87,6 +192,14 @@ public static class ChaiteGameProbe
     // alter controls. Serialization/IO happens after native update, not here.
     const int BattleObservationInterval=60, BattleObservationEdgeInterval=15;
     const int BattleObservationMaximumRows=2048, BattleObservationMaximumNpcs=48;
+    // A dense frame trace is one row per tick, and a full fight runs well past the
+    // sampled cap, so the limit has to move with the mode rather than being fixed.
+    const int BattleObservationDenseMaximumRows=65536;
+    static int BattleObservationRowLimit
+    {
+        get { return scenario!=null && scenario.DenseFrames
+            ? BattleObservationDenseMaximumRows : BattleObservationMaximumRows; }
+    }
     static Chaite.Core.ControlPlan observedPlan;
     static string observedFormulaRoute;
     static int formulaRouteMismatches;
@@ -120,6 +233,103 @@ public static class ChaiteGameProbe
     static int hurtObservationDroppedRows, hurtObservationDepthOverflows, hurtObservationUnpaired, hurtObservationErrors;
     static int hurtObservationSourceReadFailures;
     static int hurtObservationFlushes, hurtObservationBufferedRows, hurtObservationMaximumBufferedCharacters, hurtObservationCharactersWritten;
+    // Per-charge escape geometry. The periodic battle observation samples at best
+    // one row every 15 ticks, which is far too coarse to see inside a charge that
+    // lasts about 30 ticks, so the minimum distance of a charge cannot be
+    // recovered from boss-observations.jsonl at all. This observer accumulates
+    // the quantity the closed-loop work actually needs -- how close the Boss got
+    // during each individual charge, and what the player was doing at that moment
+    // -- every tick, and writes one row per charge.
+    //
+    // Every field is a copy of a native scalar taken after the native update, in
+    // the same place the battle observation is taken. Nothing here feeds back
+    // into control.
+    const int ChargeObservationMaximumRows=4096;
+    static readonly StringBuilder chargeObservationBuffer=new StringBuilder(16384);
+    static bool chargeObservationActive;
+    static int chargeObservationRows, chargeObservationFlushes, chargeObservationBufferedRows;
+    static int chargeObservationCharactersWritten, chargeObservationMaximumBufferedCharacters;
+    static int chargeObservationStartTick, chargeObservationState, chargeObservationSequence;
+    static int chargeObservationHitsAtStart, chargeObservationMinTick;
+    static float chargeObservationStartBossX, chargeObservationStartBossY;
+    static float chargeObservationStartPlayerX, chargeObservationStartPlayerY;
+    static float chargeObservationMinDistance, chargeObservationMinGapX, chargeObservationMinGapY;
+    static float chargeObservationStartGapX, chargeObservationStartGapY;
+    static float chargeObservationMinAxisTravel, chargeObservationMinPerpendicular;
+    static float chargeObservationMinVelocityY, chargeObservationMinWingTime;
+    static bool chargeObservationMinAirborne, chargeObservationMinImmune, chargeObservationDashUsed;
+    static bool chargeObservationMinImmuneFlag, chargeObservationMinDashFlag;
+    static int chargeObservationMinImmuneTime, chargeObservationMinHurtCooldown;
+    static int chargeObservationMinDashType, chargeObservationMinEocDash;
+    // Pre-hit rolling window. Two thirds of the measured hits land outside a
+    // charge -- in the Detonating Bubble line, the Cthulhunado clear and the
+    // standoff/personal-space body branches -- and the battle observation is far
+    // too sparse to show what those frames look like. This keeps the last few
+    // dozen ticks of geometry in memory and writes the window out only when a
+    // hurt is actually recorded, so the file stays proportional to the damage
+    // taken instead of to the length of the fight.
+    //
+    // The Fishron threats are NPCs, not projectiles: 371 Detonating Bubble,
+    // 372/373 the Sharknado-generating bubbles, 384 the Sharknado column. The
+    // instrument therefore scans Game.npc, which is what hurt.source.type has
+    // been reporting all along.
+    const int PreHitWindowTicks=48;
+    const int PreHitMaximumHits=256;
+    sealed class PreHitSample
+    {
+        public int Tick;
+        public float PlayerX, PlayerY, PlayerVX, PlayerVY, WingTime;
+        public int ImmuneTime;
+        // immune (the bool that actually gates Player.Hurt) and hurtCooldowns are
+        // separate from immuneTime, and the round that assumed immuneTime meant
+        // "recently damaged" was wrong: samples show immuneTime above zero 892
+        // and 2007 ticks after the last recorded hit. These fields are what can
+        // actually distinguish the gates.
+        public bool PlayerImmune;
+        public int HurtCooldownMax, DashType, EocDash;
+        // The applied controls, not the plan's intent. Without these a zero
+        // velocity cannot be told apart from "the circuit chose not to move" and
+        // "the circuit asked to move and something stopped it", which is exactly
+        // the question the first pre-hit wave could not answer.
+        public bool ControlLeft, ControlRight, ControlUp, ControlDown;
+        public bool ControlJump, ControlDash, ControlHook;
+        public int PlanTick;
+        // The player's own input flags after the native update, plus the states
+        // that can stop the player moving even though a direction was asked for.
+        // The first control wave showed plans pressing left with velocity.X at
+        // exactly zero, and those two readings are what separate "something
+        // physically stopped it" from "the ask never reached the player".
+        public bool PlayerControlLeft, PlayerControlRight, PlayerControlUp, PlayerControlDown;
+        public bool Wet, HoneyWet, LavaWet, Slow;
+        public float MoveSpeedDebuffFactor;
+        public bool MountActive;
+        public int MountType;
+        public float BossX, BossY, BossVX, BossVY;
+        public int BossState, BossTimer, BossSequence;
+        public string Phase;
+        public int ThreatType, ThreatLife, ThreatWidth, ThreatHeight;
+        public float ThreatX, ThreatY, ThreatVX, ThreatVY, ThreatDistance;
+        public int ThreatCount;
+        public bool BossPresent;
+        // This window was first written for Duke Fishron alone: it recognised a boss
+        // only as type 370, counted threats only in 371..386, and walked Game.npc
+        // without ever looking at Game.projectile. On every Empress run it therefore
+        // reported no boss and no threat on all 31392 rows, and the projectile that
+        // actually kills there could not appear at all. Reading that as "nothing was
+        // coming" would have been wrong. The window is now scenario neutral and can
+        // see projectiles, which the Empress fight is decided by.
+        public int BossType;
+        public float BossAi0, BossAi1, BossAi2, BossAi3;
+        public bool ProjectilePresent;
+        public int ProjectileType, ProjectileCount, ProjectileOwner, ProjectileTimeLeft;
+        public bool ProjectileHostile;
+        public float ProjectileX, ProjectileY, ProjectileVX, ProjectileVY, ProjectileDistance;
+    }
+    static readonly PreHitSample[] preHitRing=new PreHitSample[PreHitWindowTicks];
+    static int preHitRingCount, preHitRingNext;
+    static int preHitHits, preHitRows, preHitFlushes, preHitBufferedRows;
+    static int preHitCharactersWritten, preHitMaximumBufferedCharacters, preHitLastHurtRows;
+    static readonly StringBuilder preHitBuffer=new StringBuilder(65536);
 
     sealed class ScenarioSpec
     {
@@ -131,6 +341,16 @@ public static class ChaiteGameProbe
         public int DirectSpawnType;
         public int[] BossTypes;
         public bool HardMode, Hallow, Jungle, Snow, Ocean, Legacy, Motion, Flight, DirectSpawn, Underworld, Daytime, PriorityArena, ScopeNegative;
+        // A staged fight runs inside a real world, so natural spawns keep happening
+        // around it. The scenarios that opt in stage a single boss that spawns no
+        // adds, which makes every other active NPC a stray.
+        public bool SuppressStrayNpcs;
+        // Boss observations are sampled, which is right for describing a fight but
+        // useless for deriving a player forward model: a model needs the state and
+        // the applied input on every tick, not every fifteen to sixty. Opting in
+        // here records one row per tick instead, which is what the closed-loop
+        // search needs to predict motion without running the engine.
+        public bool DenseFrames;
         public int[] ScopeNegativeRootTypes;
         public int SpawnLeadTicks;
         public int MaxLife;
@@ -183,6 +403,11 @@ public static class ChaiteGameProbe
     static int ticks;
     static bool booted, failed, captured;
     static int lastLife, hits, lastBossLife, lastBossLifeObservedTick=-1, lastBossLifeExpectedRootCount;
+    // Set the moment an active expected-root Boss is observed with zero life.
+    // This is a direct observation rather than an inference from lastBossLife,
+    // because lastBossLife is ALSO zero right after an episode reset -- so
+    // "lastBossLife<=0" alone cannot tell "the Boss died" from "no Boss yet".
+    static bool episodeBossKilled;
     static readonly List<BossLifeObservationRoot> lastBossLifeExpectedRoots=new List<BossLifeObservationRoot>(4);
     static int playerReturnedTick = -1, nativeFrames, maximumBossLife, maximumShots;
     static bool sawBoss, sawBossDamage, sawMovement, sawSummonConsumed;
@@ -569,21 +794,452 @@ public static class ChaiteGameProbe
     {
         if(!IsBattleObservation) return;
         DrainHurtObservations();
+        ObservePreHitWindow();
+        ObserveChargeEscape();
         if(nativePhaseKey!=battlePreviousNativePhaseKey) MarkBattleObservation(8);
         battlePreviousNativePhaseKey=nativePhaseKey;
         CaptureBattleObservation(false);
     }
-    static void CaptureBattleObservation(bool final)
+
+    /// <summary>Pushes one tick of geometry into the rolling window, then writes
+    /// the window out for every hurt recorded on this tick. The window ends at
+    /// the hurt frame itself, so the rows have negative offsets up to zero and
+    /// the last row is the state the damage was applied in.</summary>
+    static void ObservePreHitWindow()
     {
-        if(!booted || !IsBattleObservation || Game.player==null || Game.player.Length==0 || Game.player[0]==null || Game.npc==null) return;
+        if(!booted || Game.player==null || Game.player.Length==0 || Game.player[0]==null) return;
+        var p=Game.player[0];
+        float pcx=p.position.X+p.width*0.5f, pcy=p.position.Y+p.height*0.5f;
+        var sample=preHitRing[preHitRingNext];
+        if(sample==null) sample=preHitRing[preHitRingNext]=new PreHitSample();
+        preHitRingNext=(preHitRingNext+1)%PreHitWindowTicks;
+        if(preHitRingCount<PreHitWindowTicks) preHitRingCount++;
+        sample.Tick=ticks;
+        sample.PlayerX=pcx; sample.PlayerY=pcy;
+        sample.PlayerVX=p.velocity.X; sample.PlayerVY=p.velocity.Y;
+        sample.WingTime=p.wingTime; sample.ImmuneTime=p.immuneTime;
+        sample.PlayerImmune=p.immune;
+        sample.HurtCooldownMax=MaxHurtCooldown(p);
+        sample.DashType=p.dashType; sample.EocDash=p.eocDash;
+        // PlanTick lets a reader discard stale controls: the observer copies the
+        // last applied plan, and on a tick with no applied plan those bits are
+        // from an earlier tick rather than from this one.
+        sample.PlanTick=observedPlanTick;
+        sample.ControlLeft=observedControlLeft; sample.ControlRight=observedControlRight;
+        sample.ControlUp=observedControlUp; sample.ControlDown=observedControlDown;
+        sample.ControlJump=observedControlJump; sample.ControlDash=observedControlDash;
+        sample.ControlHook=observedControlHook;
+        sample.PlayerControlLeft=p.controlLeft; sample.PlayerControlRight=p.controlRight;
+        sample.PlayerControlUp=p.controlUp; sample.PlayerControlDown=p.controlDown;
+        sample.Wet=p.wet; sample.HoneyWet=p.honeyWet; sample.LavaWet=p.lavaWet;
+        sample.Slow=p.slow; sample.MoveSpeedDebuffFactor=p.strongestMoveSpeedDebuff;
+        sample.MountActive=p.mount.Active; sample.MountType=p.mount.Type;
+        sample.Phase=hasObservedPlan?observedPlan.PhaseId:null;
+        sample.BossPresent=false;
+        sample.ThreatType=0; sample.ThreatDistance=float.MaxValue;
+        sample.ThreatCount=0;
+        if(Game.npc!=null)
+            foreach(var npc in Game.npc)
+            {
+                if(npc==null || !npc.active) continue;
+                float ncx=npc.position.X+npc.width*0.5f, ncy=npc.position.Y+npc.height*0.5f;
+                float dx=ncx-pcx, dy=ncy-pcy;
+                float d=(float)Math.Sqrt(dx*dx+dy*dy);
+                if(npc.boss)
+                {
+                    sample.BossPresent=true;
+                    sample.BossType=npc.type;
+                    sample.BossX=ncx; sample.BossY=ncy;
+                    sample.BossVX=npc.velocity.X; sample.BossVY=npc.velocity.Y;
+                    sample.BossAi0=npc.ai[0]; sample.BossAi1=npc.ai[1];
+                    sample.BossAi2=npc.ai[2]; sample.BossAi3=npc.ai[3];
+                    sample.BossState=(int)npc.ai[0]; sample.BossTimer=(int)npc.ai[1];
+                    sample.BossSequence=(int)npc.ai[2];
+                    continue;
+                }
+                // This build has no NPC.hostile field, so an enemy is recognised as
+                // neither friendly (which covers the player's own minions), nor a
+                // town NPC, nor a critter.
+                if(npc.friendly || npc.townNPC || npc.CountsAsACritter) continue;
+                if(d<400f) sample.ThreatCount++;
+                if(d<sample.ThreatDistance)
+                {
+                    sample.ThreatDistance=d;
+                    sample.ThreatType=npc.type; sample.ThreatLife=npc.life;
+                    sample.ThreatX=ncx; sample.ThreatY=ncy;
+                    sample.ThreatVX=npc.velocity.X; sample.ThreatVY=npc.velocity.Y;
+                    sample.ThreatWidth=npc.width; sample.ThreatHeight=npc.height;
+                }
+            }
+        // Projectiles are what actually kill in the Empress fight and the window
+        // never looked at them. The nearest hostile one is recorded per tick, so the
+        // approach that ends the run can be read back rather than guessed at.
+        sample.ProjectilePresent=false;
+        sample.ProjectileDistance=float.MaxValue; sample.ProjectileCount=0;
+        if(Game.projectile!=null)
+            foreach(var pr in Game.projectile)
+            {
+                if(pr==null || !pr.active || !pr.hostile) continue;
+                float qx=pr.position.X+pr.width*0.5f, qy=pr.position.Y+pr.height*0.5f;
+                float qdx=qx-pcx, qdy=qy-pcy;
+                float qd=(float)Math.Sqrt(qdx*qdx+qdy*qdy);
+                if(qd<400f) sample.ProjectileCount++;
+                if(qd<sample.ProjectileDistance)
+                {
+                    sample.ProjectilePresent=true;
+                    sample.ProjectileDistance=qd;
+                    sample.ProjectileType=pr.type; sample.ProjectileOwner=pr.owner;
+                    sample.ProjectileTimeLeft=pr.timeLeft;
+                    sample.ProjectileHostile=pr.hostile;
+                    sample.ProjectileX=qx; sample.ProjectileY=qy;
+                    sample.ProjectileVX=pr.velocity.X; sample.ProjectileVY=pr.velocity.Y;
+                }
+            }
+        if(hurtObservationRows<=preHitLastHurtRows) return;
+        for(int index=preHitLastHurtRows;index<hurtObservationRows;index++)
+        {
+            if(preHitHits>=PreHitMaximumHits) break;
+            var row=hurtObservationData[index];
+            WritePreHitWindow(row.Before.Sequence,row.ReturnTick);
+            preHitHits++;
+        }
+        preHitLastHurtRows=hurtObservationRows;
+    }
+    static void WritePreHitWindow(int hurtSequence,int hurtTick)
+    {
+        int count=preHitRingCount;
+        for(int back=count-1;back>=0;back--)
+        {
+            int slot=((preHitRingNext-1-back)%PreHitWindowTicks+PreHitWindowTicks)%PreHitWindowTicks;
+            var s=preHitRing[slot];
+            if(s==null) continue;
+            var row=new Dictionary<string,object>
+            {
+                {"schema","chaite-prehit-observation/v2"},
+                {"hurtSequence",hurtSequence},{"hurtTick",hurtTick},
+                {"tick",s.Tick},{"offsetTicks",s.Tick-hurtTick},
+                {"phase",s.Phase},
+                {"player",new Dictionary<string,object>
+                    {
+                        {"x",s.PlayerX},{"y",s.PlayerY},{"vx",s.PlayerVX},{"vy",s.PlayerVY},
+                        {"wingTime",s.WingTime},{"immuneTime",s.ImmuneTime},
+                        {"immune",s.PlayerImmune},{"hurtCooldownMax",s.HurtCooldownMax},
+                        {"dashType",s.DashType},{"eocDash",s.EocDash},
+                        {"planTick",s.PlanTick},{"controlsFresh",s.PlanTick==s.Tick},
+                        {"left",s.ControlLeft},{"right",s.ControlRight},
+                        {"up",s.ControlUp},{"down",s.ControlDown},
+                        {"jump",s.ControlJump},{"dash",s.ControlDash},{"hook",s.ControlHook},
+                        {"playerLeft",s.PlayerControlLeft},{"playerRight",s.PlayerControlRight},
+                        {"playerUp",s.PlayerControlUp},{"playerDown",s.PlayerControlDown},
+                        {"wet",s.Wet},{"honeyWet",s.HoneyWet},{"lavaWet",s.LavaWet},
+                        {"slow",s.Slow},{"moveSpeedDebuffFactor",s.MoveSpeedDebuffFactor},
+                        {"mountActive",s.MountActive},{"mountType",s.MountType}
+                    }},
+                {"boss",s.BossPresent?new Dictionary<string,object>
+                    {
+                        {"type",s.BossType},
+                        {"x",s.BossX},{"y",s.BossY},{"vx",s.BossVX},{"vy",s.BossVY},
+                        {"ai0",s.BossAi0},{"ai1",s.BossAi1},{"ai2",s.BossAi2},{"ai3",s.BossAi3},
+                        {"state",s.BossState},{"timer",s.BossTimer},{"sequence",s.BossSequence}
+                    }:null},
+                {"nearestThreat",s.ThreatType==0?null:new Dictionary<string,object>
+                    {
+                        {"type",s.ThreatType},{"x",s.ThreatX},{"y",s.ThreatY},
+                        {"vx",s.ThreatVX},{"vy",s.ThreatVY},{"distance",s.ThreatDistance},
+                        {"life",s.ThreatLife},{"width",s.ThreatWidth},{"height",s.ThreatHeight}
+                    }},
+                {"threatsWithin400",s.ThreatCount},
+                {"nearestProjectile",s.ProjectilePresent?new Dictionary<string,object>
+                    {
+                        {"type",s.ProjectileType},{"owner",s.ProjectileOwner},
+                        {"x",s.ProjectileX},{"y",s.ProjectileY},
+                        {"vx",s.ProjectileVX},{"vy",s.ProjectileVY},
+                        {"distance",s.ProjectileDistance},{"timeLeft",s.ProjectileTimeLeft},
+                        {"hostile",s.ProjectileHostile}
+                    }:null},
+                {"projectilesWithin400",s.ProjectileCount}
+            };
+            string serialized=Json(row)+Environment.NewLine;
+            if(preHitBuffer.Length>0 && preHitBuffer.Length+serialized.Length>65536) FlushPreHitWindow();
+            preHitBuffer.Append(serialized);
+            preHitRows++;
+            preHitBufferedRows++;
+            preHitMaximumBufferedCharacters=Math.Max(preHitMaximumBufferedCharacters,preHitBuffer.Length);
+            if(preHitBufferedRows>=16 || preHitBuffer.Length>=65536) FlushPreHitWindow();
+        }
+    }
+    static int MaxHurtCooldown(Player p)
+    {
+        if(p.hurtCooldowns==null) return 0;
+        int max=0;
+        foreach(var value in p.hurtCooldowns) if(value>max) max=value;
+        return max;
+    }
+    static void FlushPreHitWindow()
+    {
+        if(preHitBuffer.Length==0) return;
+        string payload=preHitBuffer.ToString();
+        File.AppendAllText(Path.Combine(Root,"prehit-observations.jsonl"),payload,new UTF8Encoding(false));
+        preHitCharactersWritten+=payload.Length;
+        preHitBuffer.Clear();
+        preHitBufferedRows=0;
+        preHitFlushes++;
+    }
+    static Dictionary<string,object> PreHitObservationReport()
+    {
+        return new Dictionary<string,object>
+        {
+            {"schema","chaite-prehit-observation-summary/v1"},
+            {"file",preHitRows>0?"prehit-observations.jsonl":null},
+            {"rows",preHitRows},{"hits",preHitHits},{"maximumHits",PreHitMaximumHits},
+            {"windowTicks",PreHitWindowTicks},{"flushes",preHitFlushes},
+            {"bufferFlushRows",16},{"bufferFlushCharacters",65536},
+            {"maximumBufferedCharacters",preHitMaximumBufferedCharacters},
+            {"charactersWritten",preHitCharactersWritten}
+        };
+    }
+
+    /// <summary>One row per AI_069 charge, closing when the charge ends.
+    ///
+    /// The axes are fixed at the charge's first tick: axisX/axisY are the unit
+    /// vector from the Boss to the player then, so "along" is positive when the
+    /// player moves away from the Boss on the charge's own line of travel and
+    /// "perpendicular" is the direction the charge cannot correct. That is what
+    /// distinguishes a flee that works from one that only looks like it works.
+    /// Measured on the reviewed circuit, the player's along-axis travel at the
+    /// frame of closest approach is 150-355 px while the Boss's own travel is
+    /// 476 px in phase one, 567 in phase two and 675 in phase three -- so a
+    /// charge is never won by the horizontal flee, it is a give and take inside
+    /// the 60-tick cadence.</summary>
+    static void ObserveChargeEscape()
+    {
+        if(!booted || Game.player==null || Game.player.Length==0 || Game.player[0]==null || Game.npc==null) return;
+        var p=Game.player[0];
+        NPC boss=null;
+        foreach(var npc in Game.npc)
+            if(npc!=null && npc.active && npc.boss && npc.type==370) { boss=npc; break; }
+        if(boss==null)
+        {
+            if(chargeObservationActive) CloseChargeObservation(false);
+            return;
+        }
+        int state=(int)boss.ai[0];
+        bool charging=state==1 || state==6 || state==11;
+        if(!charging)
+        {
+            if(chargeObservationActive) CloseChargeObservation(false);
+            return;
+        }
+        float pcx=p.position.X+p.width*0.5f, pcy=p.position.Y+p.height*0.5f;
+        float bcx=boss.position.X+boss.width*0.5f, bcy=boss.position.Y+boss.height*0.5f;
+        float gapX=pcx-bcx, gapY=pcy-bcy;
+        float distance=(float)Math.Sqrt(gapX*gapX+gapY*gapY);
+        if(!chargeObservationActive)
+        {
+            chargeObservationActive=true;
+            chargeObservationStartTick=ticks;
+            chargeObservationState=state;
+            chargeObservationSequence=(int)boss.ai[3];
+            chargeObservationHitsAtStart=hurtObservationRows;
+            chargeObservationStartBossX=bcx; chargeObservationStartBossY=bcy;
+            chargeObservationStartPlayerX=pcx; chargeObservationStartPlayerY=pcy;
+            chargeObservationStartGapX=gapX; chargeObservationStartGapY=gapY;
+            chargeObservationDashUsed=p.controlDash;
+            // The first sample is the charge's own first tick, so there is no
+            // previous distance to compare against and the projections start at
+            // zero travel.
+            chargeObservationMinDistance=distance;
+            chargeObservationMinTick=ticks;
+            chargeObservationMinGapX=gapX; chargeObservationMinGapY=gapY;
+            chargeObservationMinAxisTravel=0f; chargeObservationMinPerpendicular=0f;
+            chargeObservationMinVelocityY=p.velocity.Y;
+            chargeObservationMinWingTime=p.wingTime;
+            chargeObservationMinAirborne=p.wingTime>0f;
+            chargeObservationMinImmune=p.immuneTime>0;
+            CaptureChargeImmuneState(p);
+            return;
+        }
+        if(p.controlDash) chargeObservationDashUsed=true;
+        if(distance<chargeObservationMinDistance)
+        {
+            // The direction from the player to the Boss at the charge's first
+            // tick is the line the charge committed to.
+            float startLength=(float)Math.Sqrt(chargeObservationStartGapX*chargeObservationStartGapX+
+                chargeObservationStartGapY*chargeObservationStartGapY);
+            float axisX=startLength>0f?chargeObservationStartGapX/startLength:1f;
+            float axisY=startLength>0f?chargeObservationStartGapY/startLength:0f;
+            float travelX=pcx-chargeObservationStartPlayerX, travelY=pcy-chargeObservationStartPlayerY;
+            chargeObservationMinDistance=distance;
+            chargeObservationMinTick=ticks;
+            chargeObservationMinGapX=gapX; chargeObservationMinGapY=gapY;
+            chargeObservationMinAxisTravel=travelX*axisX+travelY*axisY;
+            chargeObservationMinPerpendicular=Math.Abs(travelX*-axisY+travelY*axisX);
+            chargeObservationMinVelocityY=p.velocity.Y;
+            chargeObservationMinWingTime=p.wingTime;
+            chargeObservationMinAirborne=p.wingTime>0f;
+            chargeObservationMinImmune=p.immuneTime>0;
+            CaptureChargeImmuneState(p);
+        }
+    }
+    static void CaptureChargeImmuneState(Player p)
+    {
+        chargeObservationMinImmuneFlag=p.immune;
+        chargeObservationMinImmuneTime=p.immuneTime;
+        chargeObservationMinHurtCooldown=MaxHurtCooldown(p);
+        chargeObservationMinDashType=p.dashType;
+        chargeObservationMinEocDash=p.eocDash;
+        chargeObservationMinDashFlag=p.controlDash;
+    }
+    static void CloseChargeObservation(bool final)
+    {
+        if(!chargeObservationActive) return;
+        chargeObservationActive=false;
+        var row=new Dictionary<string,object>
+        {
+            {"schema","chaite-charge-observation/v1"},{"charge",chargeObservationRows+1},
+            {"startTick",chargeObservationStartTick},{"endTick",ticks},
+            {"ticks",ticks-chargeObservationStartTick},
+            {"state",chargeObservationState},{"sequence",chargeObservationSequence},
+            {"hitsDuringCharge",hurtObservationRows-chargeObservationHitsAtStart},
+            {"distanceAtStart",(float)Math.Sqrt(chargeObservationStartGapX*chargeObservationStartGapX+
+                chargeObservationStartGapY*chargeObservationStartGapY)},
+            {"gapXAtStart",chargeObservationStartGapX},{"gapYAtStart",chargeObservationStartGapY},
+            {"minDistance",chargeObservationMinDistance},{"minDistanceTick",chargeObservationMinTick},
+            {"minGapX",chargeObservationMinGapX},{"minGapY",chargeObservationMinGapY},
+            // Travel of the player, measured from the charge's first tick up to
+            // the frame of closest approach, split into the component along the
+            // charge's committed line and the component across it.
+            {"playerTravelAlongAxisAtMin",chargeObservationMinAxisTravel},
+            {"playerTravelPerpendicularAtMin",chargeObservationMinPerpendicular},
+            {"playerVelocityYAtMin",chargeObservationMinVelocityY},
+            {"playerWingTimeAtMin",chargeObservationMinWingTime},
+            {"playerAirborneAtMin",chargeObservationMinAirborne},
+            {"playerImmuneAtMin",chargeObservationMinImmune},
+            {"playerImmuneFlagAtMin",chargeObservationMinImmuneFlag},
+            {"playerImmuneTimeAtMin",chargeObservationMinImmuneTime},
+            {"playerHurtCooldownAtMin",chargeObservationMinHurtCooldown},
+            {"playerDashTypeAtMin",chargeObservationMinDashType},
+            {"playerEocDashAtMin",chargeObservationMinEocDash},
+            {"dashUsedDuringCharge",chargeObservationDashUsed},
+            // The Boss's own displacement over the charge, measured per charge
+            // rather than taken from the source, so the reach is a measurement.
+            {"bossTravel",ChargeObservationBossTravel()},
+            {"final",final}
+        };
+        string serialized=Json(row)+Environment.NewLine;
+        if(chargeObservationBuffer.Length>0 && chargeObservationBuffer.Length+serialized.Length>65536)
+            FlushChargeObservations();
+        chargeObservationBuffer.Append(serialized);
+        chargeObservationRows++;
+        chargeObservationBufferedRows++;
+        chargeObservationMaximumBufferedCharacters=Math.Max(chargeObservationMaximumBufferedCharacters,
+            chargeObservationBuffer.Length);
+        if(chargeObservationBufferedRows>=16 || chargeObservationBuffer.Length>=65536)
+            FlushChargeObservations();
+    }
+    static float ChargeObservationBossTravel()
+    {
+        if(Game.npc==null) return 0f;
+        foreach(var npc in Game.npc)
+            if(npc!=null && npc.active && npc.boss && npc.type==370)
+            {
+                float bcx=npc.position.X+npc.width*0.5f, bcy=npc.position.Y+npc.height*0.5f;
+                float dx=bcx-chargeObservationStartBossX, dy=bcy-chargeObservationStartBossY;
+                return (float)Math.Sqrt(dx*dx+dy*dy);
+            }
+        return 0f;
+    }
+    static void FlushChargeObservations()
+    {
+        if(chargeObservationBuffer.Length==0) return;
+        string payload=chargeObservationBuffer.ToString();
+        File.AppendAllText(Path.Combine(Root,"charge-observations.jsonl"),payload,new UTF8Encoding(false));
+        chargeObservationCharactersWritten+=payload.Length;
+        chargeObservationBuffer.Clear();
+        chargeObservationBufferedRows=0;
+        chargeObservationFlushes++;
+    }
+    static Dictionary<string,object> ChargeObservationReport()
+    {
+        return new Dictionary<string,object>
+        {
+            {"schema","chaite-charge-observation-summary/v1"},
+            {"file",chargeObservationRows>0?"charge-observations.jsonl":null},
+            {"rows",chargeObservationRows},{"maximumRows",ChargeObservationMaximumRows},
+            {"flushes",chargeObservationFlushes},
+            {"bufferFlushRows",16},{"bufferFlushCharacters",65536},
+            {"maximumBufferedCharacters",chargeObservationMaximumBufferedCharacters},
+            {"charactersWritten",chargeObservationCharactersWritten}
+        };
+    }
+    /// <summary>Every active hostile projectile, nearest the player first.
+    ///
+    /// Bounded, with the count and the omitted count both reported, so a
+    /// consumer that finds omissions refuses instead of assuming the field was
+    /// complete. A hit test that silently lost a projectile would report a
+    /// clean tick, which is the one failure this whole method exists to avoid.
+    /// </summary>
+    static void CaptureHostileProjectiles(List<Dictionary<string,object>> into,
+        out int count,out int omitted)
+    {
+        const int maximumHostileProjectiles=48;
+        count=0; omitted=0;
+        if(Game.projectile==null || Game.player==null || Game.player.Length==0 ||
+            Game.player[0]==null) return;
+        var player=Game.player[0];
+        // Nearest first, so truncation drops what cannot reach the player rather
+        // than whatever happens to sit at a low slot index.
+        var candidates=new List<Projectile>();
+        foreach(var projectile in Game.projectile)
+        {
+            if(projectile==null || !projectile.active || !projectile.hostile ||
+                projectile.friendly) continue;
+            count++;
+            candidates.Add(projectile);
+        }
+        candidates.Sort((left,right)=>
+            Vector2.DistanceSquared(left.Center,player.Center).CompareTo(
+                Vector2.DistanceSquared(right.Center,player.Center)));
+        foreach(var projectile in candidates)
+        {
+            if(into.Count>=maximumHostileProjectiles) { omitted++; continue; }
+            var entry=new Dictionary<string,object>
+            {
+                {"slot",projectile.whoAmI},{"type",projectile.type},
+                {"x",projectile.position.X},{"y",projectile.position.Y},
+                {"vx",projectile.velocity.X},{"vy",projectile.velocity.Y},
+                {"width",projectile.width},{"height",projectile.height},
+                {"damage",projectile.damage},{"owner",projectile.owner},
+                {"timeLeft",projectile.timeLeft},
+                {"extraUpdates",projectile.extraUpdates},
+                // The first two AI slots drive most hostile motion; the
+                // reviewed threat model reads them rather than guessing a
+                // trajectory from velocity alone.
+                {"ai0",projectile.ai[0]},{"ai1",projectile.ai[1]},
+                // The rest of what ThreatSnapshot needs. Without these the
+                // reviewed motion model cannot be driven from a trace at all:
+                // it fails closed on an unknown trajectory, so an unrecorded
+                // field is a threat that cannot be modelled rather than one
+                // that is modelled wrongly. Projectile.ai holds three entries
+                // and localAI two, which is why there is no ai3 here.
+                {"ai2",projectile.ai[2]},
+                {"localAI0",projectile.localAI[0]},{"localAI1",projectile.localAI[1]},
+                {"direction",projectile.direction},{"scale",projectile.scale}
+            };
+            into.Add(entry);
+        }
+    }
+    static void CaptureBattleObservation(bool final)
+    {        if(!booted || !IsBattleObservation || Game.player==null || Game.player.Length==0 || Game.player[0]==null || Game.npc==null) return;
         bool periodic=ticks%BattleObservationInterval==0;
+        bool dense=scenario!=null && scenario.DenseFrames;
         if(final) battleObservationReasons|=32;
-        if(!final && !periodic && (battleObservationReasons==0 || ticks-battleObservationLastTick<BattleObservationEdgeInterval)) return;
+        if(!final && !periodic && !dense && (battleObservationReasons==0 || ticks-battleObservationLastTick<BattleObservationEdgeInterval)) return;
         // Reserve one row for the terminal state. A final row may intentionally
         // share a tick with the preceding edge/periodic row; it proves the exact
         // state passed to WriteResult rather than silently losing termination.
         if(!final && ticks==battleObservationLastTick) return;
-        if(battleObservationRows>=BattleObservationMaximumRows || (!final && battleObservationRows>=BattleObservationMaximumRows-1))
+        if(battleObservationRows>=BattleObservationRowLimit || (!final && battleObservationRows>=BattleObservationRowLimit-1))
         {
             battleObservationDroppedRows++;
             return;
@@ -605,6 +1261,24 @@ public static class ChaiteGameProbe
             }
         battleObservationMaxOmittedNpcs=Math.Max(battleObservationMaxOmittedNpcs,omitted);
         battleObservationTotalOmittedNpcs+=omitted;
+
+        // Hostile projectiles, after the native update.
+        //
+        // The dense row recorded NPCs and not projectiles, and this project has
+        // already been burned once by an observation that ignored
+        // Game.projectile: the Empress fight is decided by projectiles, and the
+        // report claimed no threat on every one of 31392 rows.
+        //
+        // The post-update list alone is not enough to score a hit, and that is
+        // not a detail. A hit is what removes the projectile, because native
+        // kills it on contact, so by the time this row exists the projectile
+        // that caused the hit is already gone. Calibrating the post-update list
+        // against a real fight found none of eleven hits. The pre-update list is
+        // captured in BeforeUpdate for exactly this reason.
+        var hostileProjectiles=new List<Dictionary<string,object>>();
+        int hostileProjectileCount,omittedHostileProjectiles;
+        CaptureHostileProjectiles(hostileProjectiles,out hostileProjectileCount,
+            out omittedHostileProjectiles);
         Dictionary<string,object> plan=null,actual=null;
         if(hasObservedPlan)
             plan=new Dictionary<string,object>
@@ -629,7 +1303,8 @@ public static class ChaiteGameProbe
                 {"preferredWeaponSlot",observedPlan.PreferredWeaponSlot},
                 {"aim",new Dictionary<string,object>{{"x",observedPlan.AimWorld.X},{"y",observedPlan.AimWorld.Y}}},
                 {"hookAim",new Dictionary<string,object>{{"x",observedPlan.HookWorld.X},{"y",observedPlan.HookWorld.Y}}},
-                {"riskScore",observedPlan.RiskScore},{"tacticalMode",observedPlan.TacticalMode.ToString()},{"weaponIssue",observedPlan.WeaponIssue}
+                {"riskScore",observedPlan.RiskScore},{"tacticalMode",observedPlan.TacticalMode.ToString()},{"weaponIssue",observedPlan.WeaponIssue},
+                {"replayFrame",observedPlan.ReplayFrame}
             };
         if(hasObservedPlanReturn)
             actual=new Dictionary<string,object>
@@ -643,7 +1318,7 @@ public static class ChaiteGameProbe
                 {"itemTime",observedItemTime},{"itemAnimation",observedItemAnimation},
                 {"mouseScreen",new Dictionary<string,object>{{"x",observedMouseX},{"y",observedMouseY}}}
             };
-        int reasonMask=battleObservationReasons|(periodic?1:0);
+        int reasonMask=battleObservationReasons|(periodic?1:0)|(dense?64:0);
         var row=new Dictionary<string,object>
         {
             {"schema","chaite-boss-observation/v1"},{"tick",ticks},{"nativeFrames",nativeFrames},
@@ -653,6 +1328,11 @@ public static class ChaiteGameProbe
              {"player",new Dictionary<string,object>
                  {
                      {"position",new Dictionary<string,object>{{"x",p.position.X},{"y",p.position.Y}}},
+                     // The hitbox is what turns a predicted velocity into a
+                     // predicted resting height, so an offline forward model
+                     // cannot replay a ground contact without it. Read from the
+                     // live player rather than assumed.
+                     {"width",p.width},{"height",p.height},
                      {"velocity",new Dictionary<string,object>{{"x",p.velocity.X},{"y",p.velocity.Y}}},
                      {"life",p.statLife},{"dead",p.dead},{"wingTime",p.wingTime},{"wingTimeMax",p.wingTimeMax},
                      // The mount routes are defined by being mounted, so the
@@ -666,8 +1346,52 @@ public static class ChaiteGameProbe
                      // for. 116 is BuffID.Inferno.
                      {"infernoTicks",InfernoTicks(p)},
                      {"wingsLogic",p.wingsLogic},{"grapCount",p.grapCount},{"controlUseItem",p.controlUseItem},
+                     // A forward model has to be told the input the player actually
+                     // received, not only what the planner intended, and the sampled
+                     // row never carried the directional controls at all. These are
+                     // read after the production replay has written them.
+                     {"controlLeft",p.controlLeft},{"controlRight",p.controlRight},
+                     {"controlUp",p.controlUp},{"controlDown",p.controlDown},
+                     {"controlMount",p.controlMount},{"controlThrow",p.controlThrow},
+                     // The quantities that decide the next velocity. Player.jumpSpeed
+                     // and jumpHeight are static and frame correct at this point, and
+                     // the wing, rocket and liquid flags decide which of the several
+                     // vertical regimes the tick is in.
+                     {"gravity",p.gravity},{"maxFallSpeed",p.maxFallSpeed},{"gravDir",p.gravDir},
+                     {"maxRunSpeed",p.maxRunSpeed},{"accRunSpeed",p.accRunSpeed},
+                     {"jumpSpeed",Player.jumpSpeed},{"jumpHeight",Player.jumpHeight},
+                     {"jumpSpeedBoost",p.jumpSpeedBoost},{"autoJump",p.autoJump},
+                     {"justJumped",p.justJumped},{"jump",p.jump},{"releaseJump",p.releaseJump},
+                     {"sliding",p.sliding},{"slowFall",p.slowFall},{"canRocket",p.canRocket},
+                     {"rocketTime",p.rocketTime},{"rocketTimeMax",p.rocketTimeMax},
+                     {"rocketDelay",p.rocketDelay},{"rocketDelay2",p.rocketDelay2},
+                     {"wingAccRunSpeed",p.wingAccRunSpeed},
+                     {"wet",p.wet},{"honeyWet",p.honeyWet},{"lavaWet",p.lavaWet},
+                     {"pulley",p.pulley},{"frozen",p.frozen},{"webbed",p.webbed},{"stoned",p.stoned},
                      {"dashType",p.dashType},{"dashDelay",p.dashDelay},{"eocDash",p.eocDash},
                      {"eocHit",p.eocHit},{"immuneTime",p.immuneTime},{"controlDash",p.controlDash},
+                     // The dash state and the native horizontal profile. Without
+                     // these an offline replay can only refuse a dashing tick or
+                     // fall back to an adapter speed, and dash plus wings is
+                     // where most of a strong-wing fight is spent.
+                     {"dash",p.dash},{"dashTime",p.dashTime},
+                     {"timeSinceLastDashStarted",p.timeSinceLastDashStarted},
+                     {"direction",p.direction},{"releaseDash",p.releaseDash},
+                     {"runAcceleration",p.runAcceleration},{"runSlowdown",p.runSlowdown},
+                     // Wing and rocket resources. The reviewed flight model
+                     // reads the maximum and the rocket tier, and a rocket
+                     // release is a separate latch from the jump control.
+                     // wingTimeMax is already recorded above; adding it twice
+                     // aborts the probe on a duplicate dictionary key.
+                     {"rocketBoots",p.rocketBoots},
+                     {"rocketRelease",p.rocketRelease},
+                     // The multi-jump charges. The reviewed jump model consumes
+                     // canJumpAgain_Cloud for a cloud jump and re-arms it from
+                     // hasJumpOption_Cloud on the ground, so without both the
+                     // model cannot tell a cloud jump from a fall.
+                     {"canJumpAgain_Cloud",p.canJumpAgain_Cloud},
+                     {"hasJumpOption_Cloud",p.hasJumpOption_Cloud},
+                     {"isPerformingJump_Cloud",p.isPerformingJump_Cloud},
                      {"controlJump",p.controlJump},{"controlHook",p.controlHook},{"selectedItem",p.selectedItem},
                      {"selectedItemType",p.HeldItem.type},{"selectedItemStack",p.HeldItem.stack},
                      {"itemAnimation",p.itemAnimation},{"itemAnimationMax",p.itemAnimationMax},
@@ -680,7 +1404,18 @@ public static class ChaiteGameProbe
                      {"selectionLastNonOverridden",p.selectedItemState.LastNonOverridenSelection},
                      {"selectionHasActiveOverride",p.selectedItemState.HasActiveOverride}
                  }},
-            {"npcs",npcs},{"omittedNpcs",omitted}
+            {"npcs",npcs},{"omittedNpcs",omitted},
+            {"hostileProjectiles",hostileProjectiles},
+            {"hostileProjectileCount",hostileProjectileCount},
+            {"omittedHostileProjectiles",omittedHostileProjectiles},
+            // The same field one tick earlier, before the native update ran.
+            // This is the one a hit test has to use: the projectile that lands
+            // a hit is removed by that hit, so it is present here and absent
+            // from the list above. Null when the pre-update capture did not run,
+            // which is visible rather than silently equal to an empty list.
+            {"hostileProjectilesBeforeUpdate",battleProjectilesBeforeUpdate},
+            {"hostileProjectileCountBeforeUpdate",battleProjectileCountBeforeUpdate},
+            {"omittedHostileProjectilesBeforeUpdate",battleOmittedProjectilesBeforeUpdate}
         };
         string serialized=Json(row)+Environment.NewLine;
         if(battleObservationBuffer.Length>0 && battleObservationBuffer.Length+serialized.Length>65536) FlushBattleObservations();
@@ -730,6 +1465,8 @@ public static class ChaiteGameProbe
             {"bufferFlushRows",16},{"bufferFlushCharacters",65536},{"maximumBufferedCharacters",battleObservationMaximumBufferedCharacters},
             {"charactersWritten",battleObservationCharactersWritten},{"bufferedRowsAfterFinalFlush",battleObservationBufferedRows},
             {"hurt",HurtObservationReport()},
+            {"charge",ChargeObservationReport()},
+            {"preHit",PreHitObservationReport()},
             {"reasonMask","1=60-tick sample;2=plan strategy/phase;4=target;8=native Boss identity/discrete phase;16=returned fire edge;32=final"},
             {"coalescingPolicy","plan/native/fire transition events inside the 15-tick edge window are accumulated into the next eligible row; periodic rows remain on exact 60-tick boundaries; one capacity slot is reserved for an explicit terminal row"},
             {"scope","test-only bounded/coalesced snapshots, not a full per-frame trajectory; active Bosses, Queen minions 658..660, Prime arms 128..131 and the same type/slot selected at ApplyPlan entry are eligible; Player.poisoned is read only; no AI, controls, equipment, terrain, damage, buffs or RNG writes"},
@@ -810,21 +1547,106 @@ public static class ChaiteGameProbe
     {
         if(settingsRead) return;
         foreach(var key in Terraria.Program.LaunchParameters.Keys)
-            if(key!="-savedirectory" && key!="-skipbeam" && key!="-scenario" && key!="-seed" &&
+        {
+            // Switches carry no value, so they cannot go through the key/value
+            // list below and must be accepted by name here.
+            if(key=="-skipbeam" || key=="-stoponhit") continue;
+            if(key!="-savedirectory" && key!="-scenario" && key!="-seed" &&
                 key!="-difficulty" && key!="-maxticks" && key!="-wallseconds" && key!="-motioncase" && key!="-flightcase" &&
-                key!="-phase" && key!="-takeovertick" && key!="-formularoute")
+                key!="-phase" && key!="-takeovertick" && key!="-formularoute" && key!="-startside")
                 throw new ArgumentException("Unsupported probe argument: "+key);
+        }
         string value;
+        // Episode mode reads environment rather than launch parameters: the
+        // trainer launches the game once and drives many episodes, and the
+        // bridge path is per-run state, not a fixture claim.
+        //
+        // CHAITE_PROBE_OUT overrides WHERE the probe writes, independently of
+        // CHAITE_BRIDGE_FILE, which is what the PLUGIN reads to decide that a
+        // replay owns movement. The two are different questions and a deployment
+        // rehearsal needs them answered differently: with only the bridge
+        // variable set, RouteReplay.LoadFromEnvironment() returns a replay even
+        // when no <base>.action exists, so the exported policy would be tested
+        // with a replay loaded behind it -- not the production configuration.
+        // Unset keeps the training behaviour exactly as it was.
+        bridgeBase=Environment.GetEnvironmentVariable("CHAITE_PROBE_OUT");
+        if(string.IsNullOrEmpty(bridgeBase))
+            bridgeBase=Environment.GetEnvironmentVariable(Chaite.Core.RouteReplay.BridgeVariable);
+        // Whether a TRAINER is behind this run, which is a different question
+        // from where the probe writes. The plugin reads this same variable to
+        // decide that a replay owns movement, and the lockstep waits on the
+        // trainer's <base>.action file, so both follow CHAITE_BRIDGE_FILE.
+        bridgeDriven=!string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable(Chaite.Core.RouteReplay.BridgeVariable));
+        if(!string.IsNullOrEmpty(bridgeBase))
+        {
+            try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(bridgeBase)); }
+            catch { }
+        }
+        int parsedEpisodes;
+        if(int.TryParse(Environment.GetEnvironmentVariable("CHAITE_EPISODES"),
+            NumberStyles.Integer,CultureInfo.InvariantCulture,out parsedEpisodes) &&
+            parsedEpisodes>0)
+            episodeLimit=parsedEpisodes;
+        // A run-level tick budget. The wall clock alone is not a safe bound for a
+        // training round: Terraria is a 32-bit process whose address space is
+        // exhausted at roughly 661k ticks, and the tick rate varies with machine
+        // load, so a fixed wall budget can overshoot into OutOfMemoryException
+        // (measured twice: train7 and esd1 both died within 20 ticks of 661k).
+        // Bounding the round in ticks makes the memory peak deterministic.
+        int parsedRunTicks;
+        if(int.TryParse(Environment.GetEnvironmentVariable("CHAITE_RUN_MAX_TICKS"),
+            NumberStyles.Integer,CultureInfo.InvariantCulture,out parsedRunTicks) &&
+            parsedRunTicks>0)
+            runTickLimit=BoundedInt(parsedRunTicks.ToString(CultureInfo.InvariantCulture),
+                1000,2000000,"CHAITE_RUN_MAX_TICKS");
+        // Diagnostic override for the simulated-output band. The default stays
+        // the reviewed 600-1200; this exists so a probe run can force a kill
+        // clock (e.g. a DPS high enough to drop the boss long before the player
+        // can die) to test the win accounting without editing the constants and
+        // leaking the change into the next training round.
+        float parsedDps;
+        if(float.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_DPS"),
+            NumberStyles.Float,CultureInfo.InvariantCulture,out parsedDps) && parsedDps>0f)
+            simulatedDpsOverride=parsedDps<1f?1f:(parsedDps>100000f?100000f:parsedDps);
+        // CHAITE_PROJ_SLOTS widens the bridge's projectile window for one
+        // session without touching the others. The trainer reads the same
+        // variable, so the feature vector stays aligned with the row.
+        int parsedSlots;
+        if(int.TryParse(Environment.GetEnvironmentVariable("CHAITE_PROJ_SLOTS"),
+            NumberStyles.Integer,CultureInfo.InvariantCulture,out parsedSlots) && parsedSlots>0)
+            projectileSlots=parsedSlots<1?1:(parsedSlots>256?256:parsedSlots);
+        // CHAITE_PROJ_SORT=threat orders the window by time-to-contact instead of
+        // Manhattan distance; CHAITE_PROJ_COLLAPSE=1 keeps one slot per type.
+        // Both default off, and both are read here rather than per tick so a
+        // session cannot change ordering halfway through a fight.
+        var sortMode=Environment.GetEnvironmentVariable("CHAITE_PROJ_SORT");
+        projectileSortByThreat=sortMode!=null &&
+            sortMode.Trim().Equals("threat",StringComparison.OrdinalIgnoreCase);
+        var collapseMode=Environment.GetEnvironmentVariable("CHAITE_PROJ_COLLAPSE");
+        projectileCollapseTypes=collapseMode!=null &&
+            (collapseMode.Trim()=="1" ||
+             collapseMode.Trim().Equals("true",StringComparison.OrdinalIgnoreCase));
+        if(Terraria.Program.LaunchParameters.ContainsKey("-stoponhit")) stopOnFirstHit=true;
         if(Terraria.Program.LaunchParameters.TryGetValue("-seed",out value))
             seed=BoundedInt(value,0,int.MaxValue,"seed");
         if(Terraria.Program.LaunchParameters.TryGetValue("-maxticks",out value))
             tickLimit=BoundedInt(value,600,24000,"maxticks");
         if(Terraria.Program.LaunchParameters.TryGetValue("-wallseconds",out value))
-            wallLimitSeconds=BoundedInt(value,15,900,"wallseconds");
+            // Episode mode is a training session, not a fight probe: one
+            // process runs many episodes, so the wall budget has to cover the
+            // whole session rather than one fight.
+            wallLimitSeconds=BoundedInt(value,15,episodeLimit>0?86400:900,"wallseconds");
         if(Terraria.Program.LaunchParameters.TryGetValue("-takeovertick",out value))
             takeoverTick=BoundedInt(value,120,23880,"takeovertick");
         if(Terraria.Program.LaunchParameters.TryGetValue("-phase",out value)) requestedPhase=value.ToLowerInvariant();
         if(Terraria.Program.LaunchParameters.TryGetValue("-formularoute",out value)) formulaRoute=value.ToLowerInvariant();
+        if(Terraria.Program.LaunchParameters.TryGetValue("-startside",out value))
+        {
+            requestedStartSide=value.ToLowerInvariant();
+            if(requestedStartSide!="left" && requestedStartSide!="right")
+                throw new ArgumentException("startside must be left or right");
+        }
         if(Terraria.Program.LaunchParameters.TryGetValue("-difficulty",out value)) difficulty=value.ToLowerInvariant();
         switch(difficulty)
         {
@@ -854,12 +1676,7 @@ public static class ChaiteGameProbe
                 DirectScenario(113,new[]{113,114},false,new[]{"runway","accelerating","low-health","critical","eye-laser"});
                 scenario.Underworld=true; break;
             case "duke-fishron":
-                DirectScenario(370,new[]{370},true,new[]{"summon","monitor","spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; if(requestedPhase=="summon") scenario.Summon=2673; break;
-            case "empress-night":
-                DirectScenario(636,new[]{636},true,new[]{"summon","monitor","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"}); scenario.Hallow=true; if(requestedPhase=="summon") scenario.Summon=4961; break;
-            case "empress-day":
-                DirectScenario(636,new[]{636},true,new[]{"summon","monitor","p1-reposition","p1-bolts","p1-rainbow","p1-sun-dance","p1-dash","transition","p2-reposition","p2-lance-wall","p2-predictive-lances","p2-spiral"});
-                scenario.Daytime=true; scenario.Hallow=true; break;
+                DirectScenario(370,new[]{370},true,new[]{"summon","monitor","spawn-fade","spawn-emerge","p1-hover","p1-dash","p1-bubbles","p1-sharknado","p2-transition-fade","p2-transition-emerge","p2-hover","p2-dash","p2-bubbles","p2-sharknado","p3-transition-fade","p3-transition-hidden","p3-reposition","p3-dash","p3-teleport"}); scenario.Ocean=true; scenario.SuppressStrayNpcs=true; if(requestedPhase=="summon") scenario.Summon=2673; break;
             case "moon-lord":
                 DirectScenario(398,new[]{396,397,398},true,new[]{"intro","synchronize-eyes","head-bolts","head-tongue","head-deathray-telegraph","left-sphere-release","right-sphere-release"});
                 scenario.SpawnLeadTicks=90; break;
@@ -869,17 +1686,42 @@ public static class ChaiteGameProbe
                 ScopeNegativeScenario(0,4); break;
             case "scope-negative-fishron-mixed":
                 ScopeNegativeScenario(0,370,4); scenario.HardMode=true; scenario.Ocean=true; break;
-            case "scope-negative-empress-mixed":
-                ScopeNegativeScenario(0,636,4); scenario.HardMode=true; scenario.Hallow=true; break;
+            case "scope-negative-kingslime-mixed":
+                ScopeNegativeScenario(0,50,4); scenario.HardMode=true; break;
             case "scope-negative-fishron-duplicate":
                 ScopeNegativeScenario(0,370,370); scenario.HardMode=true; scenario.Ocean=true; break;
-            case "scope-negative-empress-duplicate":
-                ScopeNegativeScenario(0,636,636); scenario.HardMode=true; scenario.Hallow=true; break;
+            case "scope-negative-kingslime-duplicate":
+                ScopeNegativeScenario(0,50,50); scenario.HardMode=true; break;
             case "motion-jump": scenario.Motion=true; scenario.BossTypes=new int[0]; break;
             case "motion-flight": scenario.Motion=true; scenario.Flight=true; scenario.BossTypes=new int[0]; break;
             default: throw new ArgumentException("Unknown bounded scenario: "+id);
         }
         scenario.ExpectedVariant=ExpectedVariantForScenario(id);
+        // Episode mode is a training session over a real Boss fixture, driven
+        // through the live bridge; every other fixture is outside its contract.
+        // A tick-keyed route file is the second legitimate driver: it is how an
+        // exported policy is accepted, and refusing it made the acceptance run
+        // itself impossible (LAUNCH_REJECTED "Episode mode requires
+        // CHAITE_BRIDGE_FILE"), so the guard now accepts either channel.
+        bool routeDriven=!string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable(
+                Chaite.Core.RouteReplay.FileVariable));
+        // Episode mode needs a DRIVER, or an explicit deployment-rehearsal opt-in.
+        // This used to test bridgeBase, which is now the probe's own output path,
+        // so a bare CHAITE_PROBE_OUT satisfied it with nothing driving at all.
+        // The rehearsal case is real and has to stay possible: it runs the plugin
+        // with no replay and no exported policy precisely to see what the formula
+        // script and the safety gate do on their own, so CHAITE_PROBE_OUT is
+        // accepted as the explicit "episodes, no driver" opt-in.
+        bool policyDriven=!string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable("CHAITE_POLICY_FILE"));
+        bool rehearsal=!string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable("CHAITE_PROBE_OUT"));
+        if(episodeLimit>0 && (!bridgeDriven && !routeDriven && !policyDriven &&
+            !rehearsal ||
+            IsMotion || IsFlight ||
+            IsScopeNegative || scenario.BossTypes==null || scenario.BossTypes.Length==0))
+            throw new ArgumentException("Episode mode requires CHAITE_BRIDGE_FILE, CHAITE_ROUTE_FILE or CHAITE_POLICY_FILE and a real Boss scenario");
         ValidateFormulaRoute();
         ConfigureScenarioProgression();
         if(!IsMotion)
@@ -915,7 +1757,12 @@ public static class ChaiteGameProbe
             switch(motionCase)
             {
                 case "no-cloud-hold": case "no-cloud-tap": case "no-cloud-release-press":
-                case "cloud-hold": case "cloud-tap": case "cloud-release-press": break;
+                case "cloud-hold": case "cloud-tap": case "cloud-release-press":
+                // Lilith's Necklace cases. "balloon" adds the Bundle of Balloons
+                // and "plain" is the mount alone, so the pair isolates the extra
+                // jumps from the mount itself.
+                case "lilith-balloon-hold": case "lilith-balloon-multijump":
+                case "lilith-plain-hold": case "lilith-plain-multijump": break;
                 default: throw new ArgumentException("motion-jump requires one reviewed -motioncase");
             }
         }
@@ -930,10 +1777,8 @@ public static class ChaiteGameProbe
         if(requestedPhase!="monitor")
             throw new ArgumentException("-formularoute requires -phase monitor");
         string[] allowed=scenario.Id=="duke-fishron"
-            ?new[]{"fishron-fairy-wing","fishron-strong-wing","fishron-queen-slime","fishron-trusty-chillet","fishron-trusty-chillet-ignis"}
-            :scenario.Id=="empress-night"||scenario.Id=="empress-day"
-                ?new[]{"empress-strong-wing","empress-broom","empress-rain-fishron"}
-                :new string[0];
+            ?new[]{"fishron-fairy-wing","fishron-strong-wing","fishron-trusty-chillet","fishron-trusty-chillet-ignis","fishron-lilith-wolf"}
+            :new string[0];
         if(Array.IndexOf(allowed,formulaRoute)<0)
             throw new ArgumentException("Unreviewed formula route for scenario: "+formulaRoute);
     }
@@ -945,6 +1790,100 @@ public static class ChaiteGameProbe
         scenario.BossTypes=bossTypes;
         scenario.HardMode=hardMode;
         scenario.Phases=phases;
+    }
+
+    // The flat ground the fight happens on, in tiles. These are the single
+    // source for both the tiles that get built and the arena block that
+    // publishes them, because the two drifted apart: the block advertised a
+    // 50..550 platform span for the Ocean case while the rows were built across
+    // 1..399, and nothing could have caught that from the evidence alone.
+    //
+    // The floor is the whole arena. There are no platform rows: the real fight
+    // is on one long straight flat ground, so the fixture gives it one.
+    static int ArenaGroundLeft { get { return scenario!=null && scenario.Ocean?1:800; } }
+    static int ArenaGroundRightExclusive { get { return scenario!=null && scenario.Ocean?400:3400; } }
+    /// <summary>
+    /// How far the ocean scenario's flat ground is built to, in tiles, past the
+    /// arena's own right edge.
+    ///
+    /// The measured reason: the policy is not confined to the ocean band, and
+    /// 15.0% of the recorded obsb1 frames sat past tile 400 with 3.2% of all
+    /// frames below the floor line -- out there the deepest excursions reach
+    /// 9-10k px, which is a void fall rather than a landed drop, because
+    /// <c>WorldGen.clearWorld</c> leaves no terrain outside the built arena.
+    /// The measured maximum player x across that stream was 14,751 px = 922
+    /// tiles, so 1200 tiles covers every position the fight has actually
+    /// reached with margin.
+    ///
+    /// This is a SAFETY FLOOR, not an arena extension. <see cref="ArenaGroundLeft"/>
+    /// and <see cref="ArenaGroundRightExclusive"/> still define the arena, the
+    /// published bounds, the start position and the enrage band, and none of
+    /// those move. It exists so that leaving the ocean band costs the policy
+    /// position rather than its life, which is the same trade the real coastline
+    /// makes: the beach is not a pit.
+    /// </summary>
+    const int SafetyFloorRightExclusive = 1200;
+
+    // The real Fishron start is close to one end of the runway rather than in
+    // the middle of it. Twenty tiles is the measured inset the owner reported;
+    // which end varies per fight, so the side is a launch parameter and both
+    // are legal openings. Empress keeps the centre of its runway.
+    const int RunwayStartInsetTiles = 20;
+    static string requestedStartSide = "left";
+    // The launch side, remembered so episode mode can alternate away from it
+    // and back. Arena geometry is remembered for the same reason: a reset has
+    // to rebuild the player position for whichever end the next episode uses.
+    static string launchStartSide = "left";
+    static int arenaCenterXTiles;
+    static int arenaGroundYTiles;
+    // The horizontal platform rows actually built, published verbatim into the
+    // arena block. A field rather than a local because that block is written from
+    // a different method, and a published geometry not read off the tiles that
+    // were built is exactly how the earlier platform-row claim drifted from the
+    // map.
+    static int[] arenaPlatformRows = new int[0];
+    // Platform tiles counted immediately after the rows are built. Taken at build
+    // time rather than at result-writing time on purpose: a later reset may
+    // already have cleared the fixture, which would make the control read zero
+    // for every run and prove nothing.
+    static int arenaPlatformTileCount;
+    // Vertical gap between the arena's horizontal layers, in tiles. The owner
+    // specified 60: it is roughly one wing charge of climb, so a layer is
+    // reachable from the one below on a full bar.
+    const int PlatformRowSpacingTiles = 60;
+    // Where the player starts, in tiles. Kept separate from arenaGroundYTiles
+    // because that value is also the published arena geometry -- the ground --
+    // and conflating the two would make the evidence claim a floor the player
+    // never stands on.
+    static int arenaStartYTiles;
+
+    static int PlayerStartTileX(int arenaCenterX)
+    {
+        if(scenario==null || !scenario.Ocean) return arenaCenterX;
+        return requestedStartSide=="right"
+            ? ArenaGroundRightExclusive-1-RunwayStartInsetTiles
+            : ArenaGroundLeft+RunwayStartInsetTiles;
+    }
+
+    /// <summary>
+    /// Counts the platform tiles actually present, for the evidence block.
+    ///
+    /// This is the in-engine control for the layered arena: it reads the world
+    /// rather than repeating the intent, so if the rows were never built -- or
+    /// were built and then removed by a later reset -- it reports zero and the
+    /// arena block's claim is visibly false instead of silently assumed.
+    /// </summary>
+    static int CountPlatformTiles()
+    {
+        int count = 0;
+        for (int r = 0; r < arenaPlatformRows.Length; r++)
+        for (int x = ArenaGroundLeft; x < ArenaGroundRightExclusive; x++)
+        {
+            int y = arenaPlatformRows[r];
+            Tile tile = Game.tile[x,y];
+            if (tile != null && tile.active() && tile.type == TileID.Platforms) count++;
+        }
+        return count;
     }
 
     static void ScopeNegativeScenario(int summonItem,params int[] rootTypes)
@@ -981,8 +1920,6 @@ public static class ChaiteGameProbe
     {
         switch(id)
         {
-            case "empress-night": return "night";
-            case "empress-day": return "day";
             case "mechanical-mayhem": return "simultaneous-mechanical-trio";
             case "mechdusa": return "getfixedboi-mechdusa";
             default: return "standard";
@@ -1074,9 +2011,6 @@ public static class ChaiteGameProbe
         if(!NativeVariantFlagsMatch(observation) || scenario==null) return null;
         switch(scenario.Id)
         {
-            case "empress-night": case "empress-day":
-                if(HasUnsupportedStandardWorldRule(observation)) return null;
-                return observation.DayTime?"day":"night";
             case "mechanical-mayhem":
                 if(observation.ZenithWorld || HasUnsupportedStandardWorldRule(observation) ||
                     !HasMechanicalTrioExpectedTopology()) return null;
@@ -1158,10 +2092,6 @@ public static class ChaiteGameProbe
                 // this changes mobility admission in no way.
                 scenario.EquipmentTier=IsMonitorFixture?"post-plantera":"early-hardmode";
                 break;
-            case "empress-night": case "empress-day":
-                scenario.EquipmentTier="post-plantera";
-                scenario.MaxLife=500;
-                break;
             case "moon-lord":
                 scenario.EquipmentTier="pre-moon-lord";
                 scenario.MaxLife=500;
@@ -1190,13 +2120,35 @@ public static class ChaiteGameProbe
                 " dims="+Game.maxTilesX+","+Game.maxTilesY+" cell="+(Game.tile[(int)(player.Center.X/16),(int)(player.Center.Y/16)]==null?"null":"present"));
     }
 
+    static bool denseFramesRequested, denseFramesRequestRead;
+    // The hostile projectile field as it stood before the native update, and
+    // its counters. Null outside dense mode, so a missing capture is visible
+    // rather than indistinguishable from an empty list.
+    static List<Dictionary<string,object>> battleProjectilesBeforeUpdate;
+    static int battleProjectileCountBeforeUpdate, battleOmittedProjectilesBeforeUpdate;
+
+    /// <summary>Reads the dense-frame request once and applies it to the scenario.
+    /// The switch is an environment variable rather than a scenario field because a
+    /// scenario is chosen by name in the source, and the same fight has to be
+    /// runnable both sampled and dense without editing and revalidating the probe.
+    /// </summary>
+    static void ApplyDenseFrameRequest()
+    {
+        if(denseFramesRequestRead) return;
+        denseFramesRequestRead=true;
+        string value=Environment.GetEnvironmentVariable("CHAITE_PROBE_DENSE_FRAMES");
+        denseFramesRequested=!string.IsNullOrEmpty(value) && value!="0";
+        if(denseFramesRequested && scenario!=null) scenario.DenseFrames=true;
+    }
+
     public static void RunHeadless()
     {
         try
         {
             ReadSettings();
+            ApplyDenseFrameRequest();
             Log("HEADLESS_BEGIN real vanilla assembly; no graphics, no network, no user saves");
-            Log("CASE scenario="+scenario.Id+" seed="+seed+" difficulty="+difficulty+" maxTicks="+tickLimit+" wallSeconds="+wallLimitSeconds);
+            Log("CASE scenario="+scenario.Id+" seed="+seed+" difficulty="+difficulty+" maxTicks="+tickLimit+" wallSeconds="+wallLimitSeconds+" runMaxTicks="+runTickLimit);
             Game.dedServ=true;
             SocialAPI.Initialize(SocialMode.None);
             Terraria.Localization.LanguageManager.Instance.SetLanguage(Terraria.Localization.GameCulture.DefaultCulture);
@@ -1241,6 +2193,11 @@ public static class ChaiteGameProbe
                         " snow="+Game.player[0].ZoneSnow+" beach="+Game.player[0].ZoneBeach+
                         " holyTiles="+Player.SceneMetrics.HolyTileCount+" jungleTiles="+Player.SceneMetrics.JungleTileCount+
                         " snowTiles="+Player.SceneMetrics.SnowTileCount);
+                    // The biome-scan reach was measured with a temporary sweep
+                    // here (offset 0..100 tiles above the floor, logging
+                    // holyTiles and ZoneHallow at each): 1014 up to 55 tiles,
+                    // 507 at 60, 0 from 65 on. It is not kept because moving the
+                    // player and rescanning perturbs the fixture.
                     if(scenario.Hallow && !Game.player[0].ZoneHallow) throw new InvalidOperationException("Hallow fixture lacks a native-detected Hallow biome");
                     if(scenario.Jungle && !Game.player[0].ZoneJungle) throw new InvalidOperationException("Queen Bee fixture lacks a native-detected Jungle biome");
                     if(scenario.Snow && !Game.player[0].ZoneSnow) throw new InvalidOperationException("Deerclops fixture lacks a native-detected Snow biome");
@@ -1273,9 +2230,63 @@ public static class ChaiteGameProbe
                     VerifyNativeBattleContext();
                     engineSamples.Add((Stopwatch.GetTimestamp()-nativeStart)*1000d/Stopwatch.Frequency);
                     AfterNativeUpdate();
-                    // Bound background CPU. Game mechanics still advance in native ticks;
-                    // elapsed wall time is not an end-to-end latency benchmark here.
-                    if((ticks&3)==0) System.Threading.Thread.Sleep(1);
+                    // Keep the native loop in step with the trainer. The old
+                    // bound was "Thread.Sleep(1) every fourth tick", and on this
+                    // machine Sleep(1) really costs 16.04 ms (measured; the
+                    // default 15.6 ms timer resolution), which capped a session
+                    // at ~250 ticks/s -- measured 196 ticks/s with a static
+                    // action file and no trainer at all, i.e. the sleep, not the
+                    // engine or the trainer, was the ceiling. Waiting on the
+                    // trainer's own action tick instead lets the engine run at
+                    // full speed while still refusing to run more than
+                    // BridgeLagLimit ticks ahead, which is what keeps the
+                    // recorded (observation, action) pairs aligned.
+                    // The lockstep is the handshake with the TRAINER's
+                    // <base>.action file, so it keys off bridgeDriven (i.e.
+                    // CHAITE_BRIDGE_FILE, the same variable the PLUGIN reads to
+                    // decide a replay owns movement). It deliberately does NOT
+                    // key off bridgeBase: CHAITE_PROBE_OUT only says where this
+                    // probe writes, and a deployment rehearsal sets that with no
+                    // trainer behind it. Keying the wait off the output path made
+                    // such a run stall 3 x 30 s at the round start.
+                    if(bridgeDriven && !bridgeLockstepDisabled)
+                    {
+                        long waitStart = Stopwatch.GetTimestamp();
+                        int spins = 0;
+                        while(true)
+                        {
+                            int actionTick = ReadBridgeActionTick();
+                            // No action yet (round start, or the trainer is still
+                            // loading): hold the loop, but never forever -- a dead
+                            // trainer must not wedge the round past its wall clock.
+                            if(actionTick >= 0 && ticks - actionTick <= BridgeLagLimit) break;
+                            if(++spins > 4000000) break;
+                            double waitedMs = (Stopwatch.GetTimestamp()-waitStart)*1000d/Stopwatch.Frequency;
+                            if(waitedMs > 30000d)
+                            {
+                                // Measured: a frozen action file makes every tick
+                                // wait the full timeout, i.e. the engine crawls at
+                                // one tick per 30 s. Give up on lockstep for the
+                                // rest of the run after a few such stalls rather
+                                // than burning the whole round on them.
+                                if(++bridgeWaitTimeouts >= 3) bridgeLockstepDisabled = true;
+                                Log("BRIDGE_LOCKSTEP timeout=" + bridgeWaitTimeouts +
+                                    " tick=" + ticks + " actionTick=" + actionTick +
+                                    " disabled=" + bridgeLockstepDisabled);
+                                break;
+                            }
+                            // Graduated yield: spin briefly for a tight loop, then
+                            // give up the slice, and only fall back to the 16 ms
+                            // timer granularity once the trainer is clearly behind.
+                            if(waitedMs < 1d) System.Threading.Thread.SpinWait(50);
+                            else if(waitedMs < 4d) System.Threading.Thread.Sleep(0);
+                            else System.Threading.Thread.Sleep(1);
+                        }
+                        bridgeWaitSpins += spins;
+                    }
+                    // Pace the loop only when no trainer is waiting on it; with a
+                    // trainer the lockstep above already bounds the lead.
+                    else if(!bridgeDriven && (ticks&3)==0) System.Threading.Thread.Sleep(1);
                 }
             }
         }
@@ -1301,9 +2312,65 @@ public static class ChaiteGameProbe
             Game.SettingPlayWhenUnfocused = true;
             Game.ThrottleWhenInactive = false;
             Game.musicVolume = Game.soundVolume = Game.ambientVolume = 0f;
+            RaiseTimerResolution();
             Log("EARLY vanilla=" + typeof(Game).Assembly.GetName().Version + " save=" + expected);
         }
         catch (Exception e) { Fail(e); }
+    }
+
+    /// <summary>
+    /// Headless mode registers no sky effects, so a long session that crosses
+    /// a world-event boundary -- slime rain, a blood moon, an eclipse -- dies
+    /// inside EffectManager.Activate with MissingEffectException. Measured:
+    /// episode training died at tick 213541, about two and a half game days
+    /// in, the moment UpdateTime rolled a slime rain. The headless harness
+    /// never draws, so a no-op sky under every name the world clock can
+    /// activate is behaviourally invisible; it only makes the activation
+    /// find something.
+    /// </summary>
+    static void RegisterNoopSkies()
+    {
+        var sky=Terraria.Graphics.Effects.SkyManager.Instance;
+        // Terraria.Initializers.ScreenEffectInitializer.LoadSkies is the
+        // authoritative registration list -- IL-dumped, 19 names. The earlier
+        // revision carried only 11 guesses and missed 15 of them, so a Lantern
+        // Night killed a training session at ~200k ticks with
+        // MissingEffectException "Unable to find effect named: Lantern", the
+        // same way the slime rain did before it. The extra names that LoadSkies
+        // does not register are harmless: a lookup for a name the clock never
+        // activates simply never happens.
+        string[] names={"Slime","BloodMoon","Eclipse","MoonLord","PumpkinMoon",
+            "ChristmasMoon","Rain","Blizzard","Sandstorm","Hallow","Tower",
+            "Party","Martian","Nebula","Stardust","Vortex","Solar","CreditsRoll",
+            "Aurora","MonolithNebula","MonolithStardust","MonolithVortex",
+            "MonolithSolar","MonolithMoonLord","Ambience","Lantern"};
+        int added=0;
+        foreach(var name in names)
+        {
+            try
+            {
+                var existing=sky[name];
+                if(existing!=null) continue;
+            }
+            catch
+            {
+                // Not registered: the lookup itself is the presence test.
+            }
+            sky[name]=new NoopSky();
+            added++;
+        }
+        if(added>0) Log("NOOP_SKIES added="+added+" names="+string.Join(",",names));
+    }
+
+    sealed class NoopSky : Terraria.Graphics.Effects.CustomSky
+    {
+        public override void Update(Microsoft.Xna.Framework.GameTime gameTime) { }
+        public override void Draw(SpriteBatch spriteBatch, float minDepth, float maxDepth) { }
+        public override bool IsActive() { return false; }
+        public override void Reset() { }
+        public override bool IsVisible() { return false; }
+        public override void Activate(Vector2 position, object[] args) { }
+        public override void Deactivate(object[] args) { }
     }
 
     public static void ContentReady()
@@ -1311,6 +2378,7 @@ public static class ChaiteGameProbe
         try
         {
             ReadSettings();
+            RegisterNoopSkies();
             Log("CONTENT_READY");
             Game.autoSave = false;
             Game.autoPause = false;
@@ -1330,17 +2398,19 @@ public static class ChaiteGameProbe
             Game.rockLayer = 750;
             int arenaCenterX=scenario.Ocean?200:2100;
             int arenaGroundY=scenario.Underworld?Game.maxTilesY-140:scenario.Jungle?700:500;
+            int arenaStartY=arenaGroundY;
+            arenaCenterXTiles=arenaCenterX;
+            arenaGroundYTiles=arenaGroundY;
+            arenaStartYTiles=arenaStartY;
+            launchStartSide=requestedStartSide;
             Game.spawnTileX = arenaCenterX;
-            Game.spawnTileY = arenaGroundY-2;
+            Game.spawnTileY = arenaStartY-2;
             Game.worldName = "Chaite isolated engine test";
             Game.dayTime = scenario.Daytime;
             Game.time = scenario.Daytime?27000:1000;
-            Game.raining = formulaRoute=="empress-rain-fishron";
-            if(Game.raining)
-            {
-                Game.rainTime = 86400;
-                Game.maxRaining = 1f;
-            }
+            // No reviewed route is rain-gated any more: the Shrimpy Truffle route
+            // was withdrawn as out of scope, so the fixture is always dry and the
+            // native weather fields are left at their defaults.
             Game.hardMode = scenario.HardMode;
             Game.wofNPCIndex = -1;
             Game.netMode = 0;
@@ -1350,12 +2420,27 @@ public static class ChaiteGameProbe
             // shoreline floor all the way to the world edge. The old 80-tile
             // empty gap let the player fall below worldSurface and activated
             // native enrage for a reason unrelated to the strategy.
-            int groundLeft=scenario.Ocean?1:800;
-            int groundRight=scenario.Ocean?400:3400;
+            int groundLeft=ArenaGroundLeft;
+            int groundRight=ArenaGroundRightExclusive;
             int groundThickness=scenario.Snow?12:6;
             ushort groundType=scenario.Hallow?TileID.Pearlstone:scenario.Jungle?TileID.JungleGrass:
                 scenario.Snow?TileID.IceBlock:TileID.GrayBrick;
-            for (int x = groundLeft; x < groundRight; x++)
+            // The ground is built past the arena's own right edge, to
+            // SafetyFloorRightExclusive. Measured on the recorded obsb1 stream:
+            // 15.0% of frames sat past x=6400 (tile 400, the end of the ocean
+            // band) because nothing stops the player from flying out over the
+            // beach, and the below-floor excursions out there go 9-10k px deep
+            // -- that is a void fall, and it was 3.2% of all frames. Both
+            // recorded zero-hit wins stayed inside 511 tiles of x, but the deep
+            // falls are a failure mode the policy can trivially avoid by not
+            // flying out, so leaving unfloored ground there teaches it nothing
+            // except that the region is lethal. The safety floor does NOT move
+            // the fight: the arena's published bounds, the start position and
+            // the enrage band are all unchanged, and the ocean band (tiles
+            // 1..400) still carries the fight.
+            int groundRightExclusive=Math.Max(groundRight,
+                scenario.Ocean?SafetyFloorRightExclusive:groundRight);
+            for (int x = groundLeft; x < groundRightExclusive; x++)
             for (int y = arenaGroundY; y < arenaGroundY+groundThickness; y++)
             {
                 if (Game.tile[x,y] == null) Game.tile[x,y] = new Tile();
@@ -1377,28 +2462,89 @@ public static class ChaiteGameProbe
                     Game.tile[x,y].liquidType(0);
                 }
             }
-            // Two ordinary, non-actuated wooden-platform rows. Priority Bosses
-            // receive the disclosed 500-tile multi-row arena assumed by their
-            // minimum-mobility contract. The legacy baseline and Wall runway
-            // retain their historical geometry.
-            if((scenario.HardMode || scenario.PriorityArena || scenario.DirectSpawn) && !scenario.Underworld)
-                foreach(int y in new[]{arenaGroundY-40,arenaGroundY-80})
-                    for(int x=scenario.Ocean?1:arenaCenterX-250;
-                        x<(scenario.Ocean?400:arenaCenterX+250);x++)
-                    {
-                        Game.tile[x,y].active(true);
-                        Game.tile[x,y].type=TileID.Platforms;
-                        Game.tile[x,y].frameX=0; Game.tile[x,y].frameY=0;
-                    }
+            // Refuted, and left here as the measurement: lining the arena with
+            // pearlstone BACKGROUND WALLS changes nothing. holyTiles stayed
+            // exactly 1014/0 at the same offsets with and without them, so walls
+            // do not feed HolyTileCount and cannot make a hollow airspace Hallow.
+            // No ceiling is built either: the arena is open sky above the top
+            // platform row.
+            //
+            // Platform rows ARE built, for the combat fixture only. An earlier
+            // revision had two rows and removed them as invented, because the
+            // fight the plugin drove happened on one flat ground -- and for the
+            // strong wing that is still true, so it keeps its flat-ground fight.
+            // It is not true for the other three loadouts: measured wing time is
+            // 100 (Trusty Chillet, Lilith's Necklace) and 130 (Fairy Wings)
+            // against 180 for the strong wing, and those arms died around tick
+            // 1,100 with the Boss still above 80% life. On a single flat surface a
+            // spent wing is a fall with nothing to catch it, so they never got to
+            // fly the fight at all. The owner's fix is what is built here: three
+            // horizontal layers including the ground, 60 tiles apart, which is
+            // about one wing charge of climb between layers.
+            //
+            // The rows span the arena's own horizontal bounds, not the safety
+            // floor, and their y values are published straight from this array.
+            // The old revision built rows across 1..399 while the arena block
+            // claimed a different span, so a reader of the evidence could not
+            // have caught the drift; publishing the same expression removes that
+            // possibility.
+            if (scenario.Ocean && IsMonitorFixture)
+            {
+                arenaPlatformRows = new int[]
+                {
+                    arenaGroundY - PlatformRowSpacingTiles,
+                    arenaGroundY - 2 * PlatformRowSpacingTiles
+                };
+                for (int r = 0; r < arenaPlatformRows.Length; r++)
+                for (int x = groundLeft; x < groundRight; x++)
+                {
+                    int rowY = arenaPlatformRows[r];
+                    if (Game.tile[x,rowY] == null) Game.tile[x,rowY] = new Tile();
+                    Game.tile[x,rowY].active(true);
+                    Game.tile[x,rowY].type = TileID.Platforms;
+                    // Wooden style. The frame only selects the sprite and the
+                    // fixture is headless, but leaving it at the style's own
+                    // value keeps the tile well formed.
+                    Game.tile[x,rowY].frameY = 0;
+                }
+            }
+            else
+            {
+                arenaPlatformRows = new int[0];
+            }
+            // Read straight back out of the world, so the evidence block reports
+            // what was actually placed rather than what was intended.
+            arenaPlatformTileCount = CountPlatformTiles();
             var player = new Player();
             player.name = "Chaite Lab";
             player.whoAmI = 0;
             player.active = true;
             player.statLifeMax = player.statLife = scenario.MaxLife;
             player.statManaMax = player.statMana = 200;
-            player.position = new Vector2(arenaCenterX * 16, arenaGroundY * 16 - player.height);
+            // The real fight does not start the player in the middle of the
+            // ground. Empress starts at the centre of its runway; Duke Fishron
+            // starts about twenty tiles from one end, and which end varies per
+            // fight, so the plugin identifies the side at run time and mirrors
+            // its route. A fixture that always spawned at the centre therefore
+            // measured a start position the game never produces, and for Fishron
+            // it handed the policy two hundred tiles of retreat room on both
+            // sides where the real start leaves almost none on one.
+            int playerStartTileX = PlayerStartTileX(arenaCenterX);
+            player.position = new Vector2(playerStartTileX * 16, arenaStartY * 16 - player.height);
             player.fallStart=player.fallStart2=(int)(player.position.Y/16);
             EquipScenario(player);
+            // The loadout's mount has to exist in the first episode too. The
+            // per-episode reset summons it (SummonLoadoutMount), and that was
+            // believed to cover the whole session, but the reset only runs from
+            // episode 1 onward: measured on fishron-queen-slime, episode 0 had
+            // mountActive=0 for all 899 of its ticks while episode 1 had the
+            // mount for all 151 of its own. Episode 0 is the episode an exported
+            // route is replayed in, so the acceptance verdict was being produced
+            // with the loadout's mount missing -- and the 653 airborne ticks that
+            // episode 0 showed under a held jump were the wings, not the mount
+            // (wingTime fell 100 -> 0). Summon it here, on the boot path, so
+            // every episode flies the loadout as equipped.
+            SummonLoadoutMount(player);
             Game.player[0] = player;
             initialPosition=player.position;
             var pfd = new PlayerFileData(Path.Combine(Root,"Save","Players","ChaiteLab.plr"), false);
@@ -1542,6 +2688,21 @@ public static class ChaiteGameProbe
             foreach(var item in player.armor) item.SetDefaults(0);
             foreach(var item in player.miscEquips) item.SetDefaults(0);
             bool cloud=IsFlight?FlightHasCloud:motionCase.StartsWith("cloud-",StringComparison.Ordinal);
+            // Loadout 1 of the seven reviewed Fishron sets. The wiki says the wolf
+            // cannot fly or double jump and cannot use wings, boots or carpets,
+            // but CAN use every extra-jump accessory, which is the entire reason
+            // this loadout exists. "plain" is the mount with no extra-jump item
+            // and is the control that separates the mount from the balloons.
+            bool lilith=!IsFlight&&motionCase.StartsWith("lilith-",StringComparison.Ordinal);
+            bool balloons=lilith&&motionCase.IndexOf("balloon",StringComparison.Ordinal)>=0;
+            // Featherfall is a separate axis rather than part of every Lilith
+            // case. Measured in this fixture, a featherfall descent covers only
+            // about 3.3 px/tick in its last thirty frames against normal
+            // gravity's much larger terminal speed, so a jump arc that lands
+            // inside the 180-frame budget without it does not land with it. The
+            // cases that include it are named and need a longer budget, which is
+            // deferred rather than smuggled in by weakening the landing check.
+            bool featherfall=lilith&&motionCase.IndexOf("featherfall",StringComparison.Ordinal)>=0;
             if(IsFlight)
             {
                 player.armor[3].SetDefaults(ItemID.DemonWings);
@@ -1552,16 +2713,38 @@ public static class ChaiteGameProbe
                 // every measured frame exactly as it does for a real potion.
                 if(FlightHasFeatherfall) player.AddBuff(BuffID.Featherfall,36000);
             }
+            else if(lilith)
+            {
+                // Staged through the mount equipment slot exactly as the reviewed
+                // Queen Slime and chillet fixtures do, because equipping the item
+                // is the production path and it is what the facade reads back.
+                // Mount 52 is item 5130 per VanillaMountCatalog.
+                player.miscEquips[3].SetDefaults(5130);
+                if(balloons) player.armor[3].SetDefaults(1164);
+                // Featherfall is applied through the same native buff call the
+                // flight fixture uses, so UpdateBuffs derives the fall behaviour
+                // every frame exactly as it would for a real potion. It is only
+                // added for the cases that name it; see the note above.
+                if(featherfall) player.AddBuff(BuffID.Featherfall,36000);
+            }
             else if(cloud) player.armor[3].SetDefaults(ItemID.CloudinaBottle);
             var equipped=new int[player.armor.Length];
             for(int i=0;i<equipped.Length;i++) equipped[i]=player.armor[i].type;
             scenario.Equipment=IsFlight?"flight: naked + unprefixed "+FlightProfile:
+                lilith?"motion: naked + Lilith's Necklace (mount 52)"+(balloons?" + Bundle of Balloons (1164)":"")+(featherfall?" + featherfall":""):
                 cloud?"motion: naked + unprefixed Cloud in a Bottle only":"motion: naked, no accessories";
             equipmentReport=new Dictionary<string,object>
             {
                 {"label",scenario.Equipment},{"life",400},{"mana",200},{"armorAndAccessories",equipped},
                 {"cloudEquipped",cloud},{"cloudItemType",cloud?ItemID.CloudinaBottle:0},{"cloudPrefix",player.armor[IsFlight?5:3].prefix},
-                {"noWeaponsAmmoConsumablesOrMount",true},{"noDirectJumpStateOverrides",true}
+                // The mount is staged, so the old blanket claim that the fixture
+                // carries no mount would now contradict the staging. It stays
+                // true for every pre-existing case and turns false only for the
+                // Lilith cases, and the mount is reported explicitly alongside.
+                {"mountItemType",lilith?5130:0},{"mountExpectedType",lilith?52:0},
+                {"bundleOfBalloonsItemType",balloons?1164:0},
+                {"featherfallActive",IsFlight?FlightHasFeatherfall:featherfall},
+                {"noWeaponsAmmoConsumablesOrMount",!lilith},{"noDirectJumpStateOverrides",true}
             };
             if(IsFlight)
             {
@@ -1678,16 +2861,37 @@ public static class ChaiteGameProbe
                 // Fishron's reviewed minimum route requires Fairy Wings (or
                 // equivalent) plus a reliable dash/evade source; the generic
                 // early-Hardmode fixture's Demon Wings alone is insufficient.
-                if(formulaRoute=="fishron-queen-slime")
+                //
+                // 2026-09-21: this block is the TRAINING path (EquipmentTier
+                // "early-hardmode", selected by L2030 for every non-monitor run).
+                // The same corrections had already been written into the
+                // post-plantera block below, but that block only runs for the
+                // monitor fixture, so training kept using the older gear:
+                //   * the mount sets carried no Bundle of Balloons and no
+                //     featherfall, against the user's confirmed 2026-09-19 ruling;
+                //   * fishron-lilith-wolf matched no branch at all and fell into
+                //     the wing `else`, so that loadout was trained riding wings
+                //     instead of Lilith's Wolf.
+                // Both are now mirrored here so the training fight carries the
+                // same set the real loadout does.
+                if(formulaRoute=="fishron-lilith-wolf")
                 {
-                    player.miscEquips[3].SetDefaults(4981);
-                    scenario.Equipment="Fishron formula fixture: Queen Slime mount";
+                    // Lilith's Necklace is item 5130 and summons MountID.Wolf
+                    // (mount 52). Reviewed loadout: necklace + Bundle of Balloons
+                    // + featherfall.
+                    player.miscEquips[3].SetDefaults(5130);
+                    player.armor[3].SetDefaults(1164);
+                    player.AddBuff(BuffID.Featherfall,36000);
+                    scenario.Equipment="Fishron formula fixture: fishron-lilith-wolf";
                 }
                 else if(formulaRoute=="fishron-trusty-chillet" ||
                     formulaRoute=="fishron-trusty-chillet-ignis")
                 {
                     player.miscEquips[3].SetDefaults(formulaRoute==
-                        "fishron-trusty-chillet"?6150:6151);
+                        "fishron-trusty-chillet"?ItemID.PalworldMountTrustyChillet:
+                        ItemID.PalworldMountTrustyChilletIgnis);
+                    player.armor[3].SetDefaults(1164);
+                    player.AddBuff(BuffID.Featherfall,36000);
                     scenario.Equipment="Fishron formula fixture: "+formulaRoute;
                 }
                 else
@@ -1698,6 +2902,10 @@ public static class ChaiteGameProbe
                     player.armor[7].SetDefaults(ItemID.EoCShield);
                     if(difficultyCode>0)
                         player.armor[8].SetDefaults(ItemID.RangerEmblem);
+                    // Every non-broom loadout carries featherfall (user ruling
+                    // 2026-09-21); applied through the native buff call so
+                    // UpdateBuffs derives the fall behaviour every frame.
+                    player.AddBuff(BuffID.Featherfall,36000);
                     scenario.Equipment="Fishron formula fixture: "+
                         (formulaRoute??"fishron-fairy-wing");
                 }
@@ -1734,11 +2942,23 @@ public static class ChaiteGameProbe
                 // the literal "frog boots" source; Fishron Wings (2609) and
                 // Fairy Wings (761) are the two reviewed wing tiers, and the
                 // Shield of Cthulhu (3097) is the reviewed dash source.
-                player.armor[3].SetDefaults(ItemID.AmphibianBoots);
-                if(formulaRoute=="fishron-queen-slime")
+                //
+                // A reviewed loadout is a whole SET, not one item, and the boots
+                // belong to the wing sets only. The user confirmed on
+                // 2026-09-19 that the mount sets carry no boots, and that set 4
+                // is the mount plus the Bundle of Balloons (1164) and
+                // featherfall. The fixture previously gave every Fishron route
+                // the boots and gave set 4 neither the balloons nor the potion,
+                // so both mount sets were training against gear nobody wears.
+                if(formulaRoute=="fishron-lilith-wolf")
                 {
-                    player.miscEquips[3].SetDefaults(ItemID.QueenSlimeMountSaddle);
-                    scenario.Equipment="Fishron formula fixture: fishron-queen-slime";
+                    // 2026-09-21 user ruling: the mount sets carry the Bundle of
+                    // Balloons too, and every non-broom loadout carries
+                    // featherfall.
+                    player.armor[3].SetDefaults(1164);
+                    player.miscEquips[3].SetDefaults(5130);
+                    player.AddBuff(BuffID.Featherfall,36000);
+                    scenario.Equipment="Fishron formula fixture: fishron-lilith-wolf";
                 }
                 else if(formulaRoute=="fishron-trusty-chillet" ||
                     formulaRoute=="fishron-trusty-chillet-ignis")
@@ -1746,10 +2966,17 @@ public static class ChaiteGameProbe
                     player.miscEquips[3].SetDefaults(formulaRoute==
                         "fishron-trusty-chillet"?ItemID.PalworldMountTrustyChillet:
                         ItemID.PalworldMountTrustyChilletIgnis);
+                    // Set 4's other two parts, in the same shapes set 1 already
+                    // uses: the Bundle of Balloons in the accessory slot and
+                    // featherfall through the native buff call so UpdateBuffs
+                    // derives the fall behaviour every frame.
+                    player.armor[3].SetDefaults(1164);
+                    player.AddBuff(BuffID.Featherfall,36000);
                     scenario.Equipment="Fishron formula fixture: "+formulaRoute;
                 }
                 else
                 {
+                    player.armor[3].SetDefaults(ItemID.AmphibianBoots);
                     player.armor[4].SetDefaults(formulaRoute=="fishron-strong-wing"?
                         ItemID.FishronWings:ItemID.FairyWings);
                     // The declared route identity is frog-boots + wing + dash.
@@ -1757,24 +2984,13 @@ public static class ChaiteGameProbe
                     // players; the fixture pins the amphibian-boots reading.
                     player.armor[5].SetDefaults(0);
                     player.armor[8].SetDefaults(ItemID.EoCShield);
+                    // 2026-09-21 user ruling: the weak-wing set (Fairy Wings and
+                    // its same-tier equivalents) carries featherfall, like every
+                    // other non-broom loadout. Applied through the native buff
+                    // call so UpdateBuffs derives the fall behaviour every frame.
+                    player.AddBuff(BuffID.Featherfall,36000);
                     scenario.Equipment="Fishron formula fixture: "+
                         (formulaRoute??"fishron-fairy-wing");
-                }
-            }
-            if (IsMonitorFixture && (scenario.Id == "empress-night" || scenario.Id == "empress-day"))
-            {
-                if(formulaRoute=="empress-broom" ||
-                    formulaRoute=="empress-rain-fishron")
-                {
-                    player.miscEquips[3].SetDefaults(formulaRoute==
-                        "empress-broom"?4444:3367);
-                    scenario.Equipment="Empress formula fixture: "+formulaRoute;
-                }
-                else
-                {
-                    player.armor[4].SetDefaults(ItemID.FishronWings);
-                    player.armor[5].SetDefaults(ItemID.FrogLeg);
-                    scenario.Equipment="Empress formula fixture: empress-strong-wing";
                 }
             }
         }
@@ -1863,16 +3079,46 @@ public static class ChaiteGameProbe
         };
     }
 
+    // A staged fight runs inside a real world, so natural spawns keep happening
+    // around it. A stray enemy that touches the player adds a hit with nothing to
+    // do with the script, and because a day Empress hit is lethal it ends the run
+    // outright: two of nine day seeds died that way, one to type 75 and one to
+    // type 1, while the observation channel's filtered npc list showed only the
+    // Empress and could not reveal it. The scenarios that opt in stage a boss with
+    // no adds, so anything that is not an expected root can be retired. The count
+    // is recorded so a probe can prove this branch actually ran.
+    static int strayNpcsRetired;
+
+    static void RetireStrayNpcs()
+    {
+        if(scenario==null || !scenario.SuppressStrayNpcs) return;
+        if(!booted || IsMotion || ticks<takeoverTick) return;
+        if(Game.npc==null) return;
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc==null || !npc.active || IsExpectedRoot(npc)) continue;
+            npc.active=false;
+            strayNpcsRetired++;
+        }
+    }
+
     // Synthetic edges ONLY in test copy's poller. No OS keys or mouse are sent.
     public static bool ActivateDown()
     {
-        bool down=!IsMotion && booted && ticks==takeoverTick;
+        // Episode mode re-arms the monitor with the same synthetic edge the
+        // initial takeover uses, so the plugin's session restarts without a
+        // process relaunch. Variant identity stays captured once, at the first
+        // arm: the re-arms drive the same fixture.
+        bool down=!IsMotion && booted && (ticks==takeoverTick ||
+            (episodeArmTick>=0 && ticks==episodeArmTick));
         if(down)
         {
             actualTakeoverTick=ticks;
             if(IsScopeNegative) CaptureScopeNegativeActivation();
-            CaptureVariantAtActivation();
+            if(episodeIndex==0 && ticks==takeoverTick) CaptureVariantAtActivation();
         }
+        RetireStrayNpcs();
         return down;
     }
     public static bool CancelDown() { return false; }
@@ -2008,7 +3254,6 @@ public static class ChaiteGameProbe
             case "queen-bee": StageQueenBee(root,mutation); break;
             case "wall-of-flesh": StageWall(root,mutation); break;
             case "duke-fishron": StageFishron(root,mutation); break;
-            case "empress-night": case "empress-day": StageEmpress(root,mutation); break;
             case "moon-lord": StageMoonLord(root,mutation); break;
             default: throw new InvalidOperationException("Direct Boss scenario lacks a reviewed phase stager");
         }
@@ -2080,46 +3325,6 @@ public static class ChaiteGameProbe
         {"p3-reposition",new[]{10,0,1}}, {"p3-dash",new[]{11,0,0}},
         {"p3-teleport",new[]{12,10,1}}
     };
-
-    // Complete root ai[0..3] tuples from AI_120's fixed attack tables.  The
-    // selected attack increments ai[2], so these are post-selection indices.
-    // Classic-night predictive lances are the legal day-table attack carried
-    // across sunset (form 3), as covered by the native schedule regressions.
-    static readonly Dictionary<string,int[]> EmpressClassicNightStageTuples = new Dictionary<string,int[]>(StringComparer.Ordinal)
-    {
-        {"p1-reposition",new[]{1,0,0,0}}, {"p1-bolts",new[]{2,1,1,0}},
-        {"p1-rainbow",new[]{5,5,5,0}}, {"p1-sun-dance",new[]{6,3,3,0}},
-        {"p1-dash",new[]{8,50,2,0}}, {"transition",new[]{10,20,1,0}},
-        {"p2-reposition",new[]{1,0,0,1}}, {"p2-lance-wall",new[]{7,80,1,1}},
-        {"p2-predictive-lances",new[]{11,40,4,3}}, {"p2-spiral",new[]{12,70,9,1}}
-    };
-
-    static readonly Dictionary<string,int[]> EmpressExpertNightStageTuples = new Dictionary<string,int[]>(StringComparer.Ordinal)
-    {
-        {"p1-reposition",new[]{1,0,0,0}}, {"p1-bolts",new[]{2,1,1,0}},
-        {"p1-rainbow",new[]{5,5,5,0}}, {"p1-sun-dance",new[]{6,3,3,0}},
-        {"p1-dash",new[]{8,50,2,0}}, {"transition",new[]{10,20,1,0}},
-        {"p2-reposition",new[]{1,0,0,1}}, {"p2-lance-wall",new[]{7,80,1,1}},
-        {"p2-predictive-lances",new[]{11,40,4,1}}, {"p2-spiral",new[]{12,70,10,1}}
-    };
-
-    static readonly Dictionary<string,int[]> EmpressDayStageTuples = new Dictionary<string,int[]>(StringComparer.Ordinal)
-    {
-        {"p1-reposition",new[]{1,0,0,2}}, {"p1-bolts",new[]{2,1,1,2}},
-        {"p1-rainbow",new[]{5,5,5,2}}, {"p1-sun-dance",new[]{6,3,3,2}},
-        {"p1-dash",new[]{8,50,2,2}}, {"transition",new[]{10,20,1,2}},
-        {"p2-reposition",new[]{1,0,0,3}}, {"p2-lance-wall",new[]{7,80,1,3}},
-        {"p2-predictive-lances",new[]{11,40,4,3}}, {"p2-spiral",new[]{12,70,10,3}}
-    };
-
-    static bool TryGetEmpressStageTuple(out int[] tuple)
-    {
-        if(scenario.Daytime)
-            return EmpressDayStageTuples.TryGetValue(requestedPhase,out tuple);
-        if(difficultyCode>0)
-            return EmpressExpertNightStageTuples.TryGetValue(requestedPhase,out tuple);
-        return EmpressClassicNightStageTuples.TryGetValue(requestedPhase,out tuple);
-    }
 
     static Player FixturePlayer()
     {
@@ -2393,19 +3598,6 @@ public static class ChaiteGameProbe
         return speed<=0f || VelocityAlong(root,FixturePlayer().Center,speed,true);
     }
 
-    static void StageEmpress(NPC root,Dictionary<string,object> mutation)
-    {
-        int[] tuple;
-        if(!TryGetEmpressStageTuple(out tuple))
-            throw new InvalidOperationException("Missing Empress native phase tuple");
-        bool second=requestedPhase=="transition"||requestedPhase.StartsWith("p2-",StringComparison.Ordinal);
-        SetNativeAi(root,tuple[0],tuple[1],tuple[2],tuple[3]);
-        SetLifeFraction(root,second?45:80,100);
-        mutation["root.ai0"]=tuple[0];mutation["root.ai1"]=tuple[1];
-        mutation["root.ai2"]=tuple[2];mutation["root.ai3"]=tuple[3];
-        mutation["root.lifePercent"]=second?45:80;mutation["world.dayTime"]=scenario.Daytime;
-    }
-
     static void StageMoonLord(NPC root,Dictionary<string,object> mutation)
     {
         if(requestedPhase=="intro") return;
@@ -2468,13 +3660,6 @@ public static class ChaiteGameProbe
                     (int)root.ai[0]==fishTuple[0] && Near(root.ai[1],0f,0.001f) &&
                     (int)root.ai[2]==fishTuple[1] && (int)root.ai[3]==fishTuple[2] &&
                     FishronMotionMatches(root,fishTuple[0]);
-            case "empress-night": case "empress-day":
-                int[] empressTuple;
-                return TryGetEmpressStageTuple(out empressTuple) &&
-                    Near(root.ai[0],empressTuple[0],0.001f) &&
-                    Near(root.ai[1],empressTuple[1],0.001f) &&
-                    Near(root.ai[2],empressTuple[2],0.001f) &&
-                    Near(root.ai[3],empressTuple[3],0.001f);
             case "moon-lord":
                 if(requestedPhase=="intro") return (int)root.ai[0]==-1;
                 var moonHead=FirstActiveNpc(396);if(moonHead==null || FirstActiveNpc(397)==null) return false;
@@ -2515,6 +3700,19 @@ public static class ChaiteGameProbe
         {
             if (!booted) return;
             ticks++;
+            // The pre-update projectile field, captured at the only moment it
+            // exists: after the previous tick finished and before this one's
+            // native update can kill a projectile for landing a hit. Only in
+            // dense mode, because only a per-tick trace can use it.
+            if(denseFramesRequested && IsBattleObservation &&
+                Game.player!=null && Game.player.Length!=0)
+            {
+                battleProjectilesBeforeUpdate=new List<Dictionary<string,object>>();
+                CaptureHostileProjectiles(battleProjectilesBeforeUpdate,
+                    out battleProjectileCountBeforeUpdate,
+                    out battleOmittedProjectilesBeforeUpdate);
+            }
+            else battleProjectilesBeforeUpdate=null;
             if(scenario.DirectSpawn && ticks==directSpawnTick) SpawnDirectEncounter();
             if(scenario.DirectSpawn && !IsScopeNegative && !IsMonitorFixture && ticks==takeoverTick) StageRequestedPhase();
             Game.screenPosition=Game.player[0].Center-new Vector2(Game.screenWidth/2f,Game.screenHeight/2f);
@@ -2566,7 +3764,9 @@ public static class ChaiteGameProbe
                     " controls="+p.controlLeft+","+p.controlRight+","+p.controlJump+","+p.controlUseItem);
                 if(state != lastSession) { Log("STATE "+state); lastSession=state; }
             }
-            if(ticks >= tickLimit || clock.Elapsed.TotalSeconds >= wallLimitSeconds) Finish("test-time-limit");
+            if((episodeLimit>0 ? ticks-episodeStartTick : ticks) >= tickLimit ||
+                (runTickLimit>0 && ticks >= runTickLimit) ||
+                clock.Elapsed.TotalSeconds >= wallLimitSeconds) Finish("test-time-limit");
         }
         catch(Exception e) { Fail(e); }
     }
@@ -2599,6 +3799,115 @@ public static class ChaiteGameProbe
             {"lifeBefore",shieldBeforeLife},{"lifeAfterDash",player.statLife}
         };
         shieldTraceRows++;
+    }
+
+    /// <summary>Simulated player output.
+    ///
+    /// The takeover is a movement claim: the policy flies the player and nothing
+    /// else, so weapon use, aiming and firing are out of scope and the boss's
+    /// health is driven here instead of by the policy. Each episode draws a DPS
+    /// in [Min,Max] from (seed, episode) -- deterministic, so an episode is
+    /// reproducible -- and drains it straight off the boss's life. No projectiles
+    /// are simulated: the point is a realistic kill clock, not ballistics.
+    ///
+    /// The band was 300-1000 and is now 600-1200 by the user's call. Measured,
+    /// only 60-97% of the nominal DPS actually lands (the drain needs an active
+    /// boss, so the spawn and phase transitions do not count), which at 300 DPS
+    /// meant a 17333 tick kill -- a 4.3 minute no-hit run for the slowest draw,
+    /// the single hardest thing in the whole training set. 600-1200 puts the
+    /// longest fight near 9500 ticks while still varying the kill clock enough
+    /// that a policy cannot memorise one.
+    ///
+    /// The one threat that has to be modelled by hand is Duke Fishron's
+    /// Detonating Bubble (NPC 371). A real player shoots those out of the air,
+    /// and it is the only projectile in these fights that is trivially broken,
+    /// so each one is destroyed with a high per-tick probability rather than
+    /// being left as a threat the movement policy cannot answer. The Sharknado
+    /// bubbles and column (372/373/384) stay real threats.</summary>
+    const float SimulatedDpsMin = 600f;
+    const float SimulatedDpsMax = 1200f;
+    const double DetonatingBubbleBreakChance = 0.35;
+    const int DetonatingBubbleType = 371;
+    static float simulatedDps;
+    static int simulatedDpsEpisode = -1;
+    static double simulatedDamageCarry;
+    static System.Random simulatedOutputRandom;
+    static float simulatedDpsOverride;
+    static readonly System.Collections.Generic.HashSet<int> reportedKilledBossSlots=new System.Collections.Generic.HashSet<int>();
+    static int simulatedBubbleBreaks, simulatedDamageApplied;
+    static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
+
+    static void ApplySimulatedPlayerOutput()
+    {
+        if(episodeLimit<=0) return;
+        if(simulatedDpsEpisode!=episodeIndex)
+        {
+            simulatedDpsEpisode=episodeIndex;
+            // System.Random is seeded from the run seed and the episode, so the
+            // same (seed, episode) always produces the same DPS and the same
+            // bubble rolls: acceptance has to be able to replay this exactly.
+            simulatedOutputRandom=new System.Random(unchecked(seed*7919+episodeIndex*104729+17));
+            simulatedDps=simulatedDpsOverride>0f?simulatedDpsOverride:
+                SimulatedDpsMin+(float)simulatedOutputRandom.NextDouble()*(SimulatedDpsMax-SimulatedDpsMin);
+            simulatedDamageCarry=0d;
+            Log("SIM_OUTPUT episode="+episodeIndex+" dps="+simulatedDps.ToString("F1",CultureInfo.InvariantCulture));
+        }
+        if(simulatedOutputRandom==null) return;
+        // Terraria's native tick is 60 Hz, so DPS/60 per tick, with the
+        // fractional part carried so the total dealt matches the DPS exactly.
+        simulatedDamageCarry+=simulatedDps/60d;
+        int whole=(int)simulatedDamageCarry;
+        simulatedDamageCarry-=whole;
+        if(whole>0)
+        {
+            for(int i=0;i<Game.npc.Length;i++)
+            {
+                var npc=Game.npc[i];
+                if(npc==null || !npc.active || !IsExpectedRoot(npc)) continue;
+                int applied=Math.Min(whole,Math.Max(0,npc.life));
+                if(applied<=0) continue;
+                npc.life-=applied;
+                simulatedDamageApplied+=applied;
+            }
+        }
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc==null || !npc.active || npc.type!=DetonatingBubbleType) continue;
+            if(simulatedOutputRandom.NextDouble()>=DetonatingBubbleBreakChance) continue;
+            npc.life=0;
+            simulatedBubbleBreaks++;
+        }
+    }
+
+    /// <summary>Report a dead Boss to the plugin.
+    ///
+    /// Runtime.OnNpcKilled is the plugin's only writer of PendingKilledBosses,
+    /// and the observation's KilledBossKeys come from DrainKilledBosses, so the
+    /// encounter can only reach SuccessNoDeath if this call happens. Nothing in
+    /// the probe, the patcher or the plugin ever called it -- it was dead code --
+    /// which is why a Boss whose life reached 0 was reported as
+    /// "Unsupported Boss rejected: no verifiable active Boss root" and the
+    /// session ended Cancelled instead of won. Measured on an isolated probe with
+    /// a forced 20000 DPS: bossDamage 77667 (its whole bar), bossLife=0,
+    /// FINISH Cancelled, win=false.
+    ///
+    /// A despawn is not a kill: the episode reset deactivates the Boss without
+    /// dropping its life, so requiring life&lt;=0 separates a real kill from the
+    /// harness's own teardown. Each slot is reported once per activation.</summary>
+    static void ReportBossKills()
+    {
+        if(Game.npc==null) return;
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc==null || npc.life>0) continue;
+            if(!IsExpectedRoot(npc)) continue;
+            if(!reportedKilledBossSlots.Add(npc.whoAmI)) continue;
+            Log("BOSS_KILL_REPORT slot="+npc.whoAmI+" type="+npc.type+" life="+npc.life+" tick="+ticks);
+            try { Chaite.Plugin.Runtime.OnNpcKilled(npc); }
+            catch(Exception ex) { Log("BOSS_KILL_REPORT failed: "+ex.Message); }
+        }
     }
 
     static void AfterNativeUpdate()
@@ -2645,7 +3954,25 @@ public static class ChaiteGameProbe
             return;
         }
         bool lostLifeThisFrame=p.statLife<lastLife;
-        if(lostLifeThisFrame) hits++;
+        if(lostLifeThisFrame) { hits++; episodeHits++; }
+        // The simulated player's output lands before the boss bookkeeping below
+        // reads native life, so the drain is counted as damage and the boss's
+        // death flows through the ordinary state machine as a real kill.
+        ApplySimulatedPlayerOutput();
+        // Report the kill in the same frame the drain drops the Boss to zero.
+        // Runtime.Tick runs at Player.Update entry and its live-scope check
+        // rejects the session as soon as no active Boss root is left, so a
+        // report filed any later loses the race: measured with a forced
+        // 20000 DPS, reporting at the top of this method still ended
+        // "FINISH Cancelled win=false" while the same kill reported here
+        // completes the encounter.
+        ReportBossKills();
+        // Ends the probe at the first hit when asked. Finish is idempotent and
+        // Exits the process, so a later frame cannot restart anything, and the
+        // status this produces is the same "loss" a full-length doomed run
+        // reports -- only the tick count differs, which is exactly the field a
+        // no-hit run must not be judged on.
+        if(stopOnFirstHit && lostLifeThisFrame && IsMonitorFixture) Finish("stop-on-hit");
         if(p.poisoned)
         {
             poisonedFrames++;
@@ -2701,10 +4028,22 @@ public static class ChaiteGameProbe
         foreach(var shot in Game.projectile) if(shot!=null && shot.active && shot.friendly && shot.owner==0) shots++;
         maximumShots=Math.Max(maximumShots,shots);
         ObserveBattleAfterNative(nativePhaseKey);
-        string state=SessionState();
+        // Normalised before the observation is written, because the terminal
+        // observation row is what the trainer reads its `win` flag from -- the
+        // episode summary alone would not reach the reward.
+        string state=NormalizeTerminalState(SessionState());
+        // The bridge observation is the trainer's rollout: one compact line
+        // per native tick, written before the terminal check so the final
+        // tick of an episode carries its done flag.
+        if(bridgeBase!=null) WriteBridgeObservation(p, state);
         if(state=="Faulted") throw new InvalidOperationException("Production automation entered fail-closed; inspect Chaite log");
         if(state=="SuccessNoDeath" || state=="SuccessAfterDeath" || state=="FailedAfterDeath" || state=="EncounterInterrupted" || state=="Cancelled") Finish(state);
-        if(ticks>=240 && (state=="RejectedNoEncounter" || state=="Idle")) Finish("activation-ended");
+        // The activation-ended contract is about a first activation that never
+        // produced an encounter. Between an episode reset and its re-arm the
+        // production session is legitimately Idle, and that gap must not be
+        // mistaken for a rejected activation.
+        if(ticks>=240 && (state=="RejectedNoEncounter" || state=="Idle") &&
+            episodeArmTick<0) Finish("activation-ended");
     }
 
     static void AfterScopeNegativeUpdate(Player p)
@@ -2753,6 +4092,14 @@ public static class ChaiteGameProbe
     {
         if(IsFlight) return FlightJumpRequested();
         if(ticks<=MotionWarmupFrames || ticks>80) return false;
+        if(motionCase.EndsWith("-multijump",StringComparison.Ordinal))
+        {
+            // Four separated one-tick presses. The wolf cannot double jump, so a
+            // second upward impulse can only come from an extra-jump accessory.
+            // Fifteen ticks between presses lets each arc settle far enough that
+            // an impulse can be attributed to the press that caused it.
+            return ticks==21||ticks==36||ticks==51||ticks==66;
+        }
         if(motionCase.EndsWith("-tap",StringComparison.Ordinal)) return ticks==21;
         if(motionCase.EndsWith("-release-press",StringComparison.Ordinal)) return ticks!=26;
         return true;
@@ -2763,6 +4110,14 @@ public static class ChaiteGameProbe
         if(IsFlight) return FlightPhase();
         if(ticks<=MotionWarmupFrames) return "warmup-release";
         if(ticks>80) return "final-release-and-land";
+        if(motionCase.EndsWith("-multijump",StringComparison.Ordinal))
+        {
+            if(ticks==21) return "multijump-press-1";
+            if(ticks==36) return "multijump-press-2";
+            if(ticks==51) return "multijump-press-3";
+            if(ticks==66) return "multijump-press-4";
+            return "multijump-between";
+        }
         if(ticks==21) return "ground-initial-press";
         if(motionCase.EndsWith("-tap",StringComparison.Ordinal)) return "released-after-one-frame-tap";
         if(motionCase.EndsWith("-release-press",StringComparison.Ordinal))
@@ -3171,6 +4526,7 @@ public static class ChaiteGameProbe
             lastBossLife=total;
             lastBossLifeObservedTick=ticks;
             lastBossLifeExpectedRootCount=count;
+            if(total<=0) episodeBossKilled=true;
         }
         return count;
     }
@@ -3252,6 +4608,31 @@ public static class ChaiteGameProbe
         return encounter==null?"Uninitialized":encounter.GetType().GetProperty("State").GetValue(encounter,null).ToString();
     }
 
+    /// <summary>
+    /// A dead Boss is a won fight, whatever the session state says.
+    ///
+    /// MEASURED 2026-09-21: fsw121d recorded 70 episodes as "Cancelled" carrying
+    /// bossLifeRemaining==0 and bossDamage at the full 77,980 -- the Boss was
+    /// dead and the fight was won, but the plugin's safety abort had already set
+    /// the session state to Cancelled, so the win reached the trainer as neither
+    /// a win nor a death. Those 70 were 26% of that arm's recorded wins, and the
+    /// reward is what teaches the policy, so denying them is a training defect
+    /// rather than a fact about the fight. The Boss's own health is the fact; the
+    /// session state is a race the abort can win.
+    ///
+    /// `lastBossLife` is reset to 0 alongside `lastBossLifeObservedTick=-1` at
+    /// every episode reset, so requiring an observation is what forbids matching
+    /// a Boss that has not spawned yet -- without it, the first abort of an
+    /// episode would be scored as a win.
+    /// </summary>
+    static string NormalizeTerminalState(string state)
+    {
+        if(state!="Cancelled" && state!="EncounterInterrupted") return state;
+        if(!episodeBossKilled) return state;
+        bool playerDead=Game.player[0]!=null && Game.player[0].dead;
+        return playerDead?"SuccessAfterDeath":"SuccessNoDeath";
+    }
+
     public static void AfterDraw()
     {
         if(!booted || failed || captured || ticks < 180) return;
@@ -3280,12 +4661,12 @@ public static class ChaiteGameProbe
         if(damageMethod==null) throw new MissingMethodException("Projectile.Damage_CanDealDamage");
         var canDealDamage=(Func<Projectile,bool>)Delegate.CreateDelegate(typeof(Func<Projectile,bool>),damageMethod);
         int compared=0, falseNegative=0, conservative=0, scenarios=0;
-        int sourceWarmupHits=0, suppressedSunWarmupHits=0, expiredChecks=0;
-        foreach(int type in new[]{455,923})
+        int sourceWarmupHits=0, expiredChecks=0;
+        foreach(int type in new[]{455})
         {
-            var ages=type==455?new[]{0,1,19,20,21,90,170,179,180}:new[]{0,1,19,20,59,60,61,90,150,179,180};
+            var ages=new[]{0,1,19,20,21,90,170,179,180};
             foreach(int age in ages)
-            for(int variant=0;variant<(type==455?2:1);variant++)
+            for(int variant=0;variant<2;variant++)
             for(int phase=0;phase<12;phase++)
             {
                 var projectile=new Projectile();projectile.SetDefaults(type);
@@ -3298,22 +4679,20 @@ public static class ChaiteGameProbe
                 projectile.localAI[1]=length;
                 projectile.ai[0]=angle;
                 projectile.rotation=angle+.3490659f*Math.Max(0f,Math.Min(1f,(age-50f)/130f));
-                projectile.scale=type==455
-                    ?Math.Max(0f,Math.Min(limit,(float)Math.Sin(age*3.141593f/180f)*10f*limit))
-                    :Math.Max(0f,Math.Min(1f,age/20f))*Math.Max(0f,Math.Min(1f,(180f-age)/60f));
-                // Both original AI routines kill at age>=180. This is a lifecycle
-                // fixture, not an assertion that this comparison executes their AI.
+                projectile.scale=Math.Max(0f,Math.Min(limit,(float)Math.Sin(age*3.141593f/180f)*10f*limit));
+                // The original AI routine kills at age>=180. This is a lifecycle
+                // fixture, not an assertion that this comparison executes its AI.
                 projectile.active=age<180;
                 bool nativeDamageGate=canDealDamage(projectile);
-                if(nativeDamageGate!=(type==455||age>60))
+                if(!nativeDamageGate)
                     throw new InvalidOperationException("Unexpected native beam damage gate: type="+type+" age="+age);
-                var threat=new Chaite.Core.ThreatSnapshot { Type=type, Geometry=type==455?Chaite.Core.ThreatGeometry.MoonLordDeathray:Chaite.Core.ThreatGeometry.EmpressSunDance,
+                var threat=new Chaite.Core.ThreatSnapshot { Type=type, Geometry=Chaite.Core.ThreatGeometry.MoonLordDeathray,
                     Position=new Chaite.Core.Vec2(projectile.position.X,projectile.position.Y),Width=projectile.width,Height=projectile.height,
                     BeamOrigin=new Chaite.Core.Vec2(center.X,center.Y),BeamDirection=new Chaite.Core.Vec2(projectile.velocity.X,projectile.velocity.Y),
                     BeamAge=age,BeamLength=length,BeamScale=projectile.scale,BeamScaleLimit=limit,
                     BeamAngle=projectile.rotation,BeamBaseAngle=angle,TimeLeft=600 };
                 var beam=Chaite.Core.BeamGeometry.AtTime(in threat,0);
-                float collisionAngle=type==455?angle:projectile.rotation;
+                float collisionAngle=angle;
                 var axis=new Vector2((float)Math.Cos(collisionAngle),(float)Math.Sin(collisionAngle));
                 var normal=new Vector2(-axis.Y,axis.X);
                 for(int sample=0;sample<160;sample++)
@@ -3325,23 +4704,21 @@ public static class ChaiteGameProbe
                     {
                         // Concentrate on segment edges/tips as well as the unscaled
                         // source body; a uniform full-world draw rarely hits either.
-                        int lobe=sample%3;
-                        float reach=type==455?length:(lobe==0?510f:lobe==1?660f:800f)*projectile.scale;
-                        float width=type==455?36f*projectile.scale:(lobe==0?70f:lobe==1?42f:7f)*projectile.scale;
+                        float reach=length;
+                        float width=36f*projectile.scale;
                         float along=(float)(random.NextDouble()*(reach+80f)-40f);
                         float across=(float)((random.NextDouble()*2f-1f)*(width*.5f+45f));
                         var targetCenter=center+axis*along+normal*across;
                         box=new Rectangle((int)(targetCenter.X-10f),(int)(targetCenter.Y-21f),20,42);
                     }
                     else box=new Rectangle(2500+random.Next(5000),2500+random.Next(5000),20,42);
-                    // Sun Dance's <=60 damage gate is OUTSIDE Colliding. Deathray's
-                    // age<20 branch suppresses its line only, not source-body contact.
+                    // Deathray's age<20 branch suppresses its line only, not
+                    // source-body contact.
                     bool nativeShape=projectile.Colliding(projectile.Hitbox,box);
                     bool native=projectile.active&&nativeDamageGate&&nativeShape;
                     var bounds=new Chaite.Core.RectF(box.X,box.Y,box.Width,box.Height);
                     bool actual=Chaite.Core.BeamGeometry.Intersects(in bounds,in beam,0);
-                    if(type==455&&age<20&&native) sourceWarmupHits++;
-                    if(type==923&&age<=60&&nativeShape&&!native) suppressedSunWarmupHits++;
+                    if(age<20&&native) sourceWarmupHits++;
                     if(!projectile.active) expiredChecks++;
                     if(native&&!actual)
                     {
@@ -3359,8 +4736,8 @@ public static class ChaiteGameProbe
             }
         }
         Log("NATIVE_BEAM_COMPARE scenarios="+scenarios+" samples="+compared+" falseNegative="+falseNegative+" conservativeExtra="+conservative+
-            " sourceWarmupHits="+sourceWarmupHits+" suppressedSunWarmupHits="+suppressedSunWarmupHits+" expiredChecks="+expiredChecks);
-        if(sourceWarmupHits==0||suppressedSunWarmupHits==0||expiredChecks==0)
+            " sourceWarmupHits="+sourceWarmupHits+" expiredChecks="+expiredChecks);
+        if(sourceWarmupHits==0||expiredChecks==0)
             throw new InvalidOperationException("Native beam comparison missed a required gate/lifecycle category");
         if(falseNegative>0) throw new InvalidOperationException("Beam model missed native collisions");
     }
@@ -3377,13 +4754,16 @@ public static class ChaiteGameProbe
     static bool EncounterFixtureReady()
     {
         if (IsMonitorFixture)
-            return monitorArmedTick == takeoverTick && monitorPassiveFrames >= 120 &&
+            return monitorArmedTick == (episodeLimit>0 ? episodeArmTick : takeoverTick) && monitorPassiveFrames >= 120 &&
                 monitorCombatTick >= directSpawnTick && monitorCombatTick <= directSpawnTick + 1 &&
                 directSpawnCompleted && !phaseStageAttempted;
+        // Episode mode re-arms through the synthetic edge, so the takeover the
+        // fixture compares against is the arm that started the last fight.
+        int armTick = episodeLimit>0 ? episodeArmTick : takeoverTick;
         return scenario!=null && (scenario.DirectSpawn?
             directSpawnAttempted && directSpawnCompleted && phaseStageAttempted && phaseStaged &&
-                phaseVerifiedAtTakeover && actualTakeoverTick==takeoverTick:
-            sawSummonConsumed && actualTakeoverTick==takeoverTick);
+                phaseVerifiedAtTakeover && actualTakeoverTick==armTick:
+            sawSummonConsumed && actualTakeoverTick==armTick);
     }
     static int ScopeNegativeControlFrameTotal()
     {
@@ -3430,6 +4810,23 @@ public static class ChaiteGameProbe
     {
         if(finishing) return;
         finishing=true;
+        if(timerResolutionRaised)
+        {
+            try { TimeEndPeriod(1); } catch { }
+            timerResolutionRaised=false;
+        }
+        // Episode mode: the probe is a training session, not one fight. The
+        // episode that just ended is summarised into the bridge's own log and
+        // the arena is soft-reset the way t-agent's ResetManager does, inside
+        // the same process, so the trainer keeps its stream and the engine
+        // keeps its identity. The final episode falls through to the ordinary
+        // result path so the run still ends with a first-class result.json.
+        if(episodeLimit>0 && episodeIndex+1<episodeLimit)
+        {
+            AppendEpisodeSummary(outcome);
+            ResetEpisode();
+            return;
+        }
         bool expectedSeen=scenario!=null && expectedBossMask==((1<<scenario.BossTypes.Length)-1);
         bool fixtureReady=EncounterFixtureReady();
         bool battlePassed=(outcome=="SuccessNoDeath" || outcome=="SuccessAfterDeath") &&
@@ -3446,6 +4843,518 @@ public static class ChaiteGameProbe
         Environment.Exit(exitCode);
     }
 
+    /// <summary>
+    /// One line per finished training episode, appended to the bridge's own
+    /// log so the trainer sees episode boundaries and outcomes without parsing
+    /// production result files.
+    /// </summary>
+    static void AppendEpisodeSummary(string outcome)
+    {
+        var row=new Dictionary<string,object>
+        {
+            {"schema","chaite-bridge-episode/v1"},
+            {"e",episodeIndex},{"outcome",outcome},{"win",outcome=="SuccessNoDeath"||outcome=="SuccessAfterDeath"},
+            {"hits",episodeHits},{"deaths",Game.player[0]!=null && Game.player[0].dead?1:0},
+            {"ticks",ticks-episodeStartTick},{"tickLimit",tickLimit},
+            {"bossDamage",bossDamage-episodeBossDamageStart},
+            {"simulatedDps",simulatedDps},
+            {"simulatedDamage",simulatedDamageApplied-simulatedDamageEpisodeStart},
+            {"bubblesBroken",simulatedBubbleBreaks-simulatedBubbleEpisodeStart},
+            {"bossLifeRemaining",lastBossLife},{"elapsedWallMs",(long)clock.ElapsedMilliseconds},
+            // Diagnostics for the dead-Boss normalization. A fix that silently
+            // does not fire is exactly the failure this session kept finding, so
+            // the evidence travels with the row instead of being inferred later.
+            {"dbgBossKilled",episodeBossKilled},
+            {"dbgObsTick",lastBossLifeObservedTick},
+            {"dbgRootCount",lastBossLifeExpectedRootCount}
+        };
+        try
+        {
+            File.AppendAllText(bridgeBase+".episodes.jsonl",Json(row)+Environment.NewLine,
+                new UTF8Encoding(false));
+        }
+        catch(Exception error)
+        {
+            Log("BRIDGE_EPISODE_LOG_FAILED "+error.Message);
+        }
+    }
+
+    /// <summary>
+    /// Summons whatever mount the loadout's mount-slot item provides. The item
+    /// is the single source: Item.mountType is the native mapping vanilla
+    /// itself uses when the mount key is pressed, so no loadout-specific id
+    /// table can drift away from the equipped gear.
+    /// </summary>
+    static void SummonLoadoutMount(Player player)
+    {
+        try
+        {
+            var item=player.miscEquips[3];
+            int mountType=item==null?0:item.mountType;
+            if(mountType<=0) return;
+            if(player.mount.Active && player.mount.Type==mountType) return;
+            player.mount.SetMount(mountType,player);
+            Log("BRIDGE_MOUNT_SUMMONED type="+mountType+" active="+player.mount.Active);
+        }
+        catch(Exception error)
+        {
+            Log("BRIDGE_MOUNT_FAILED "+error.GetType().Name+" "+error.Message);
+        }
+    }
+
+    /// <summary>
+    /// The t-agent reset, ported onto the vanilla harness: despawn everything
+    /// hostile, clear the world's loose items, restore the player to the
+    /// fixture start with full life and the fixture's buffs, reset the
+    /// per-episode counters, and schedule the synthetic re-arm edge that
+    /// restarts the production monitor and the boss spawn.
+    /// </summary>
+    static void ResetEpisode()
+    {
+        var p=Game.player[0];
+        // 1) Despawn every NPC that is not a town NPC and every projectile,
+        //    ours included: leftover shots would hit the respawned boss for
+        //    free, and natural spawns fill the 200 NPC slots at about twenty
+        //    per episode. Clearing active alone is not enough: the 1.4.5 slot
+        //    allocator keeps a per-slot protection counter
+        //    (NPC.spawnSlotProtected, set to 2 by NewNPC), so a retired slot
+        //    still reads as "in use", the boss spawn climbs one index per
+        //    episode and the eleventh returns 200 and kills the harness.
+        //    Measured: root indices 107, 128, 151, 173, 195, then 200.
+        //    protection counter is itself bounded below Main.npc's length, so
+        //    it is cleared by its own size, never by the NPC array's.
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc!=null && npc.active && !npc.townNPC) npc.active=false;
+            if(npc!=null && !npc.townNPC && i<NPC.spawnSlotProtected.Length)
+                NPC.spawnSlotProtected[i]=0;
+        }
+        for(int i=0;i<Game.projectile.Length;i++)
+        {
+            var shot=Game.projectile[i];
+            if(shot!=null && shot.active) shot.active=false;
+        }
+        for(int i=0;i<Game.item.Length;i++)
+        {
+            var drop=Game.item[i];
+            if(drop!=null && drop.active) drop.TurnToAir();
+        }
+        // 2) Restore the player: revive, heal, return to the fixture start
+        //    with the fixture's buffs, and replenish the consumables the fight
+        //    consumes so every episode is the same fight.
+        //
+        //    The real Fishron fight opens about twenty tiles from ONE end of
+        //    the runway and which end varies per fight, so an episode loop that
+        //    only ever used the launch side would never show the policy the
+        //    mirrored opening and it would be unusable on the other side. The
+        //    observation carries absolute positions, so alternating the end
+        //    per episode costs no observation change and one policy can learn
+        //    both openings.
+        if(scenario!=null && scenario.Ocean && episodeLimit>0)
+        {
+            bool launchSide=(episodeIndex%2==0);
+            requestedStartSide=launchSide?launchStartSide:
+                (launchStartSide=="right"?"left":"right");
+            int startTileX=PlayerStartTileX(arenaCenterXTiles);
+            initialPosition=new Vector2(startTileX*16, arenaGroundYTiles*16 - p.height);
+        }
+        p.dead=false;
+        p.ghost=false;
+        p.respawnTimer=0;
+        p.statLife=p.statLifeMax2;
+        p.statMana=p.statManaMax2;
+        p.velocity=Vector2.Zero;
+        p.position=initialPosition;
+        p.fallStart=p.fallStart2=(int)(p.position.Y/16f);
+        for(int i=p.buffType.Length-1;i>=0;i--)
+        {
+            int type=p.buffType[i];
+            if(type>0 && Main.debuff[type]) p.DelBuff(i);
+        }
+        p.AddBuff(BuffID.Ironskin,36000);
+        p.AddBuff(BuffID.Regeneration,36000);
+        p.AddBuff(BuffID.Swiftness,36000);
+        p.AddBuff(BuffID.Endurance,36000);
+        p.AddBuff(BuffID.Lifeforce,36000);
+        p.AddBuff(BuffID.WellFed,36000);
+        p.AddBuff(BuffID.Wrath,36000);
+        p.AddBuff(BuffID.Rage,36000);
+        p.potionDelay=0;
+        p.itemAnimation=0;
+        p.itemTime=0;
+        p.reuseDelay=0;
+        p.inventory[10].stack=20;
+        p.inventory[54].stack=9999;
+        if(formulaRoute!=null && formulaRoute.StartsWith("fishron",StringComparison.Ordinal) &&
+            p.inventory[11].type==ItemID.InfernoPotion)
+            p.inventory[11].stack=Chaite.Core.FishronThreatCatalog.RequiredInfernoPotionStock;
+        // 2b) Summon the loadout's mount. Four of the six reviewed Fishron
+        //     loadouts carry their mount as the miscEquips[3] item, and the
+        //     bridge owns movement, so nothing ever pressed the mount key.
+        //     Measured on fishron-trusty-chillet: mountActive=False and
+        //     mountType=-1 for the whole session, per-episode damage stuck at
+        //     285 while the wing loadouts reached 17156 over the same number of
+        //     episodes. Mounting up is part of the loadout, not a decision the
+        //     fight asks for, so the fixture summons the mount the equipped
+        //     item provides, exactly as the real player would before engaging.
+        //     Death dismounts, so this runs on every episode, not once at boot.
+        SummonLoadoutMount(p);
+        // 3) Reset the per-episode counters the way the boot path set them.
+        episodeIndex++;
+        episodeStartTick=ticks;
+        episodeHits=0;
+        episodeBossDamageStart=bossDamage;
+    reportedKilledBossSlots.Clear();
+    // The simulation counters are session totals; the episode record reports
+    // per-episode figures, so the baselines are captured here. Reporting the
+    // running total made a single episode look like it had dealt 469078 damage
+    // to a boss with 78000 health.
+    simulatedDamageEpisodeStart=simulatedDamageApplied;
+    simulatedBubbleEpisodeStart=simulatedBubbleBreaks;
+        episodeArmTick=ticks+30;
+        directSpawnTick=episodeArmTick+120;
+        directSpawnAttempted=false;
+        directSpawnCompleted=false;
+        directSpawnRootIndex=-1;
+        monitorArmedTick=-1;
+        monitorCombatTick=-1;
+        monitorPassiveFrames=0;
+        lastLife=p.statLife;
+        minLife=p.statLife;
+        sawBoss=false;
+        sawBossDamage=false;
+        sawMovement=false;
+        sawSummonConsumed=false;
+        maximumShots=0;
+        maximumBossLife=0;
+        expectedBossMask=0;
+        previousBosses.Clear();
+        lastBossLifeExpectedRoots.Clear();
+        lastBossLife=0;
+        lastBossLifeObservedTick=-1;
+        lastBossLifeExpectedRootCount=0;
+        episodeBossKilled=false;
+        // 4) Release the terminal lock so the next terminal transition can
+        //    become the next episode boundary.
+        finishing=false;
+        Log("BRIDGE_EPISODE_RESET e="+episodeIndex+" armAt="+episodeArmTick+" spawnAt="+directSpawnTick+
+            " bossDamageCarried="+(bossDamage-episodeBossDamageStart)+
+            " startSide="+requestedStartSide+" startX="+(int)initialPosition.X);
+    }
+
+    /// <summary>
+    /// One compact observation per native tick, appended to the bridge's
+    /// stream. This is the rollout a policy trains on: the player, the boss
+    /// and the hostile projectiles that matter for dodging, with the episode
+    /// index and the done flag that mark episode boundaries.
+    /// </summary>
+    /// <summary>The tick carried by the trainer's latest action line, or -1 when
+    /// no action is readable yet. Read on every native tick, uncached: the cache
+    /// this used to keep (1 ms) added up to a millisecond of latency to the
+    /// round trip that the trainer is waiting on, and a small file read from the
+    /// page cache costs far less than that. Measured: sessions sat at 137-165
+    /// ticks/s with ~0.2 ms of real work per step, i.e. the two polling
+    /// granularities, not the work, set the rate.</summary>
+    static int ReadBridgeActionTick()
+    {
+        try
+        {
+            string path = bridgeBase + ".action";
+            if(!System.IO.File.Exists(path)) return bridgeActionTick;
+            string text;
+            // Share delete as well: the trainer may replace the file, and a
+            // reader that holds it without FileShare.Delete makes that fail.
+            using(var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete))
+            using(var reader = new StreamReader(stream))
+                text = reader.ReadToEnd();
+            int comma = text.IndexOf(',');
+            int parsed;
+            if(comma > 0 && int.TryParse(text.Substring(0, comma),
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed))
+                bridgeActionTick = parsed;
+        }
+        catch { }
+        return bridgeActionTick;
+    }
+
+    /// <summary>
+    /// How soon this projectile can reach the player, in ticks, for the
+    /// <c>CHAITE_PROJ_SORT=threat</c> ordering.
+    ///
+    /// The measured failure of the distance ordering: the Sharknado column is a
+    /// large, slow, numerous set of hitboxes, so it filled all 12 slots on 1159
+    /// of 2757 recorded life-loss frames while the fast closing projectiles that
+    /// actually connect were pushed out. Distance cannot separate them, because
+    /// "next to the player" is exactly where a column also is.
+    ///
+    /// The score is a time, not a distance, so a fast far projectile outranks a
+    /// slow near one:
+    /// <code>
+    ///   gap    = |relative position| - half the projectile's larger extent
+    ///   closing= -(relative position . relative velocity) / |relative position|
+    ///   score  = gap / max(closing, 8)   +   0.25 * gap / 8
+    /// </code>
+    /// The first term is the time to closest approach at the current closing
+    /// speed, floored at 8 px/tick so a projectile that is receding, or drifting
+    /// sideways, still gets a finite rank instead of sorting last by accident.
+    /// The second is a nominal time-to-cover-the-gap and keeps a stationary
+    /// hitbox the player is about to fly into ranked ahead of a distant one. The
+    /// half-extent subtraction is what makes a big hitbox count as closer, since
+    /// it can connect from further away.
+    /// </summary>
+    static float ThreatScore(Projectile shot,Vector2 playerCenter)
+    {
+        float rx=shot.Center.X-playerCenter.X;
+        float ry=shot.Center.Y-playerCenter.Y;
+        float rvx=shot.velocity.X;
+        float rvy=shot.velocity.Y;
+        float range=(float)Math.Sqrt(rx*rx+ry*ry);
+        float halfExtent=Math.Max(shot.width,shot.height)*0.5f;
+        float gap=range-halfExtent;
+        if(gap<0f) gap=0f;
+        float closing;
+        if(range<1f) closing=8f;
+        else closing=-(rx*rvx+ry*rvy)/range;
+        if(closing<8f) closing=8f;
+        // Both terms are bounded so a far-away projectile cannot produce an
+        // unbounded score that would overflow the comparison.
+        float timeToClosest=gap/closing;
+        float timeToGap=gap/8f;
+        if(timeToClosest>10000f) timeToClosest=10000f;
+        if(timeToGap>10000f) timeToGap=10000f;
+        return timeToClosest+0.25f*timeToGap;
+    }
+
+    static void WriteBridgeObservation(Player p, string state)
+    {
+        if(bridgeObsWriter==null)
+        {
+            bridgeObsWriter=new System.IO.StreamWriter(
+                new FileStream(bridgeBase+".obs.jsonl",FileMode.Append,FileAccess.Write,
+                    FileShare.Read),new UTF8Encoding(false));
+            bridgeObsWriter.AutoFlush=true;
+        }
+        NPC boss=null;
+        foreach(var npc in Game.npc)
+        {
+            if(npc!=null && npc.active && IsExpectedRoot(npc)) { boss=npc; break; }
+        }
+        var playerCenter=p.Center;
+        // Nearest hostile projectiles, bounded so the line stays cheap to
+        // write and to parse even when the screen is full.
+        var nearest=new List<Projectile>(24);
+        foreach(var shot in Game.projectile)
+        {
+            if(shot==null || !shot.active || shot.friendly) continue;
+            nearest.Add(shot);
+        }
+        // Threat-density aggregates over the FULL hostile set, not the truncated
+        // window. The slot list is capped, so a policy reading only the slots
+        // goes blind exactly when the screen is fullest; these counts are
+        // cumulative within 200/400/800 px and are computed from the same
+        // distance the sort uses (Manhattan). The owner warned that the Empress
+        // can put well over a hundred projectiles up, and the measured per-tick
+        // maximum here is 44, so a fixed slot count alone has no margin: the
+        // aggregates stay meaningful however far past the cap the real count goes.
+        //
+        // These are computed BEFORE the ordering and the type-collapse below,
+        // because they are documented as counts over the whole hostile set and
+        // collapsing would silently shrink them.
+        int hostileTotal=nearest.Count;
+        int near200=0,near400=0,near800=0;
+        foreach(var shot in nearest)
+        {
+            float d=Math.Abs(shot.Center.X-playerCenter.X)+Math.Abs(shot.Center.Y-playerCenter.Y);
+            if(d<200f) near200++;
+            if(d<400f) near400++;
+            if(d<800f) near800++;
+        }
+        // Ordering. Manhattan distance is the historical default and is what
+        // every recorded stream and every existing checkpoint was built with.
+        // `threat` replaces it with an estimate of how soon the projectile can
+        // reach the player, because distance alone ranks a large slow hitbox
+        // sitting next to the player above a fast one that is about to arrive.
+        // See ThreatScore for the formula.
+        nearest.Sort((a,b)=>
+        {
+            if(!projectileSortByThreat)
+            {
+                float da=Math.Abs(a.Center.X-playerCenter.X)+Math.Abs(a.Center.Y-playerCenter.Y);
+                float db=Math.Abs(b.Center.X-playerCenter.X)+Math.Abs(b.Center.Y-playerCenter.Y);
+                return da.CompareTo(db);
+            }
+            return ThreatScore(a,playerCenter).CompareTo(ThreatScore(b,playerCenter));
+        });
+        // Membership. Twelve slots filled with twelve copies of one hitbox tell
+        // the policy nothing that one slot does not, and the measured stream
+        // shows exactly that: type 384 alone took 2.48M slot appearances. This
+        // keeps the nearest instance of each type and counts the rest, so the
+        // truncation is reported in `pe` instead of being silent.
+        int collapsedOut=0;
+        if(projectileCollapseTypes)
+        {
+            var seenType=new Dictionary<int,bool>();
+            var kept=new List<Projectile>(nearest.Count);
+            foreach(var shot in nearest)
+            {
+                if(seenType.ContainsKey(shot.type)) { collapsedOut++; continue; }
+                seenType[shot.type]=true;
+                kept.Add(shot);
+            }
+            nearest=kept;
+        }
+        var projectileRows=new List<object>(Math.Min(nearest.Count,projectileSlots));
+        for(int i=0;i<nearest.Count && i<projectileSlots;i++)
+        {
+            var shot=nearest[i];
+            projectileRows.Add(new Dictionary<string,object>
+            {
+                {"x",shot.position.X},{"y",shot.position.Y},{"vx",shot.velocity.X},{"vy",shot.velocity.Y},
+                {"w",shot.width},{"h",shot.height},{"ty",shot.type}
+            });
+        }
+        // NPC-class threats (the Fishron bubbles and the Sharknado column are
+        // NPCs, not projectiles -- see the note above CaptureHostileProjectiles).
+        // The projectile window below therefore never contained them, which made
+        // the policy blind to Fishron's primary threat. The classification here
+        // mirrors the boss-state sampler's (L838-850): an enemy is neither
+        // friendly (which covers the player's own minions), nor a town NPC, nor a
+        // critter. Diagnostic keys only -- chaite_env builds its vector from
+        // named keys, so adding them does not change OBS_DIM by itself.
+        int npcNear200=0, npcNear400=0, npcNear800=0;
+        float npcThreatDistance=float.MaxValue;
+        float npcThreatRelX=0f, npcThreatRelY=0f, npcThreatVX=0f, npcThreatVY=0f;
+        int npcThreatType=-1, npcThreatLife=0;
+        float npcThreatWidth=0f, npcThreatHeight=0f;
+        for(int i=0;i<Main.npc.Length;i++)
+        {
+            NPC npc=Main.npc[i];
+            if(npc==null || !npc.active || npc.boss) continue;
+            if(npc.friendly || npc.townNPC || npc.CountsAsACritter) continue;
+            float ndx=npc.Center.X-p.Center.X, ndy=npc.Center.Y-p.Center.Y;
+            float nd=(float)Math.Sqrt(ndx*ndx+ndy*ndy);
+            if(nd<200f) npcNear200++;
+            if(nd<400f) npcNear400++;
+            if(nd<800f) npcNear800++;
+            if(nd<npcThreatDistance)
+            {
+                npcThreatDistance=nd;
+                npcThreatRelX=ndx; npcThreatRelY=ndy;
+                npcThreatVX=npc.velocity.X; npcThreatVY=npc.velocity.Y;
+                npcThreatType=npc.type; npcThreatLife=npc.life;
+                npcThreatWidth=npc.width; npcThreatHeight=npc.height;
+            }
+        }
+        bool terminal=state=="SuccessNoDeath" || state=="SuccessAfterDeath" ||
+            state=="FailedAfterDeath" || state=="EncounterInterrupted" || state=="Cancelled";
+        var row=new Dictionary<string,object>
+        {
+            {"schema","chaite-bridge-obs/v1"},
+            {"e",episodeIndex},{"t",ticks},{"et",ticks-episodeStartTick},
+            {"hits",episodeHits},{"pl",p.statLife},{"plm",p.statLifeMax2},
+            {"px",p.position.X},{"py",p.position.Y},{"vx",p.velocity.X},{"vy",p.velocity.Y},
+            {"wt",p.wingTime},{"wm",p.wingTimeMax},{"dd",p.dashDelay},{"eo",p.eocDash},{"jt",p.jump},
+            {"dead",p.dead},
+            {"ma",p.mount.Active},{"mt",p.mount.Active?p.mount.Type:-1},
+            {"bl",boss!=null?boss.life:0},{"blm",boss!=null?boss.lifeMax:0},
+            {"bx",boss!=null?boss.position.X:0f},{"by",boss!=null?boss.position.Y:0f},
+            {"bvx",boss!=null?boss.velocity.X:0f},{"bvy",boss!=null?boss.velocity.Y:0f},
+            {"bs",boss!=null?boss.ai[0]:-1f},{"bi",boss!=null?boss.ai[1]:0f},
+            // The Boss's hitbox. MEASURED 2026-09-21: contact with the Boss body
+            // is the dominant damage source -- at hit frames the gap to the Boss
+            // centre is p50 104 px and 48.8% of hits land within 100 px, while
+            // P(this tick is a hit) falls from 4.80% inside 50 px to 0.04% beyond
+            // 200 px. The policy could see the Boss position but not its extent,
+            // so it could not turn a centre distance into the surface gap that
+            // decides contact. `bw`/`bh` are the missing half of that quantity;
+            // zero when no Boss is alive, so the trainer can tell "absent" from
+            // "present and tiny".
+            {"bw",boss!=null?boss.width:0},{"bh",boss!=null?boss.height:0},
+            // The Boss's own attack clock, and the two fields the reviewed
+            // formula scripts branch on. FormulaScriptController reads Duke
+            // Fishron's ai[0] as the state, ai[2] as the timer and ai[3] as the
+            // sequence; FishronFormulaStateContract.TimerLimit turns
+            // (state, sequence, difficulty, enraged) into the exact tick the
+            // state ends on, and the sequence selects which attack starts next
+            // (state 2 emits 20 Detonating Bubbles, state 3 drops Sharknado
+            // projectiles, state 7 circles, state 8 drops the Cthulhunado).
+            // Without them the policy can only guess how far into an attack the
+            // Boss is. -1 when no Boss is alive, exactly like `bs`, so the
+            // trainer's (value + 1) scaling puts "absent" at zero.
+            {"bs2",boss!=null?boss.ai[2]:-1f},{"bs3",boss!=null?boss.ai[3]:-1f},
+            // The multi-jump charges, one key per balloon type, in the assembly's
+            // own field order. The audit flagged this as the last unobservable
+            // mobility resource: the Lilith's Wolf loadout is the only one that
+            // carries the Bundle of Balloons (1164), and its whole mobility is
+            // the multi-jump, so a policy that cannot read how many are left
+            // cannot decide whether to spend one. `jt` (p.jump) is the jump
+            // hold counter and does NOT carry the charge count -- measured in
+            // current-focus C122: a held jump reaches jt 0-5 with wingTime
+            // untouched, a tapped one reaches jt 11-18 with wingTime spent, so
+            // the two are distinguishable by their consequences but the
+            // remaining charges are not readable at all.
+            //
+            // Nine keys rather than one sum: MEASURED on a recorded lilith-wolf
+            // stream (254,957 rows, balloons equipped throughout), the Bundle of
+            // Balloons (1164) sets jc0, jc1 AND jc2 -- cloud, sandstorm and
+            // blizzard -- on every row, and leaves jc3..jc8 false. A single
+            // count would report "3" and leave the policy unable to tell which
+            // jump it is about to spend; the nine booleans cost nothing next to
+            // a 121-wide vector.
+            {"jc0",p.canJumpAgain_Cloud},
+            {"jc1",p.canJumpAgain_Sandstorm},
+            {"jc2",p.canJumpAgain_Blizzard},
+            {"jc3",p.canJumpAgain_Fart},
+            {"jc4",p.canJumpAgain_Sail},
+            {"jc5",p.canJumpAgain_Basilisk},
+            {"jc6",p.canJumpAgain_Santank},
+            {"jc7",p.canJumpAgain_Unicorn},
+            {"jc8",p.canJumpAgain_WallOfFleshGoat},
+            {"pr",projectileRows},
+            // Diagnostic only: the TRUE hostile projectile count, before the
+            // 12-slot truncation above. The observation's projectile window is
+            // capped at 12 and nothing recorded how often that cap binds, so the
+            // policy's blindness to the rest could not be sized. chaite_env
+            // builds its feature vector from named keys, so an extra key here
+            // does not change OBS_DIM or the observation.
+            {"pc",hostileTotal},
+            {"p2",near200},{"p4",near400},{"p8",near800},
+            // How many hostiles the type-collapse removed from the window, and
+            // which ordering the window is in. Both are diagnostic only: the
+            // trainer reads named keys, so neither changes OBS_DIM. `pe` exists
+            // so the omission cannot be silent the way the old 12-slot cap was.
+            {"pe",collapsedOut},
+            {"ps",projectileSortByThreat?"threat":"manhattan"},
+            // NPC-class threats: counts plus the nearest one's full state, so the
+            // policy can actually see Fishron's Detonating Bubbles and the
+            // Sharknado column (NPCs, absent from the projectile window).
+            {"nt2",npcNear200},{"nt4",npcNear400},{"nt8",npcNear800},
+            {"nrx",npcThreatDistance<float.MaxValue?npcThreatRelX:0f},
+            {"nry",npcThreatDistance<float.MaxValue?npcThreatRelY:0f},
+            {"nrvx",npcThreatDistance<float.MaxValue?npcThreatVX:0f},
+            {"nrvy",npcThreatDistance<float.MaxValue?npcThreatVY:0f},
+            {"nrt",npcThreatType},{"nrl",npcThreatLife},
+            {"nrw",npcThreatWidth},{"nrh",npcThreatHeight},
+            {"done",terminal || p.dead},{"win",state=="SuccessNoDeath"||state=="SuccessAfterDeath"},
+            // The terminal STATE and the episode's own tick budget. MEASURED
+            // 2026-09-21: 13-26% of fights end with the plugin's safety abort
+            // ("safe conditions persistently lost"), which the trainer saw as
+            // done=true, win=false, dead=false -- exactly the shape of a genuine
+            // tick-limit timeout -- and therefore charged the timeout penalty for.
+            // Those episodes are not timeouts: they end when Fishron's native AI
+            // leaves the reviewed formula table, which the measured stream shows
+            // happens with the Boss at 60-100% damage, i.e. while the policy is
+            // winning. Charging a penalty there teaches the policy to avoid the
+            // endgame. With the state and the budget in the row the trainer can
+            // tell the two apart and stop punishing a truncation it did not cause.
+            {"st",state},{"etl",ticks-episodeStartTick},{"tlim",tickLimit}
+        };
+        try { bridgeObsWriter.WriteLine(Json(row)); }
+        catch(Exception error) { Log("BRIDGE_OBS_FAILED "+error.Message); }
+    }
+
     static void WriteResult(string status,string outcome,bool win,int exitCode,string failure)
     {
         if(IsScopeNegative) { WriteScopeNegativeResult(status,outcome,win,exitCode,failure); return; }
@@ -3453,6 +5362,9 @@ public static class ChaiteGameProbe
         if(IsMotion) { WriteMotionResult(status,exitCode,failure); return; }
         DrainHurtObservations();
         FlushHurtObservations();
+        CloseChargeObservation(true);
+        FlushChargeObservations();
+        FlushPreHitWindow();
         CaptureBattleObservation(true);
         FlushBattleObservations();
         bool expectedSeen=scenario!=null && scenario.BossTypes!=null && expectedBossMask==((1<<scenario.BossTypes.Length)-1);
@@ -3492,6 +5404,7 @@ public static class ChaiteGameProbe
             {"minLife",minLife==int.MaxValue?0:minLife},{"bossDamage",bossDamage},{"bossLifeRemaining",reportedBossLife},
             {"bossLifeObservation",bossLifeObservation},
             {"maxGrappleTicks",maximumGrappleTicks},{"maximumShots",maximumShots},
+            {"strayNpcsRetired",strayNpcsRetired},
             {"summonConsumed",sawSummonConsumed},{"bossDamaged",sawBossDamage},{"playerMoved",sawMovement},
             {"unexpectedBossTypes",unexpected},{"equipment",equipmentReport},
             {"nativeDifficultyVerified",nativeDifficultyVerified},{"nativeDifficulty",nativeDifficultyReport},
@@ -3510,19 +5423,35 @@ public static class ChaiteGameProbe
             {"arena",new Dictionary<string,object>
                 {
                     {"kind","in-memory hand-built fixture; not a generated/saved user world"},
-                    {"worldWidthTiles",4200},{"worldHeightTiles",1200},{"groundLeft",scenario!=null && scenario.Ocean?1:800},{"groundRightExclusive",scenario!=null && scenario.Ocean?400:3400},
+                    {"worldWidthTiles",4200},{"worldHeightTiles",1200},{"groundLeft",ArenaGroundLeft},{"groundRightExclusive",ArenaGroundRightExclusive},
+                    // Published because it is a second, wider number that builds
+                    // real tiles: without it a reader comparing the published
+                    // arena to the map would find floor where the arena says
+                    // there is none, which is exactly the kind of drift the
+                    // platform-row note below was written about.
+                    {"safetyFloorRightExclusive",scenario!=null && scenario.Ocean?SafetyFloorRightExclusive:ArenaGroundRightExclusive},
                     {"oceanBasinFilled",scenario!=null && scenario.Ocean && !IsMonitorFixture},
                     {"groundTop",scenario!=null && scenario.Underworld?Game.maxTilesY-140:scenario!=null && scenario.Jungle?700:500},{"groundThickness",scenario!=null && scenario.Snow?12:6},
                     {"groundTile",scenario!=null && scenario.Hallow?"Pearlstone":scenario!=null && scenario.Jungle?"JungleGrass":scenario!=null && scenario.Snow?"IceBlock":"GrayBrick"},
-                    {"platformRows",scenario!=null && (scenario.HardMode || scenario.PriorityArena || scenario.DirectSpawn) && !scenario.Underworld?
-                        new[]{(scenario.Jungle?700:500)-40,(scenario.Jungle?700:500)-80}:new int[0]},
-                    {"platformLeft",scenario!=null && scenario.Ocean?50:1850},{"platformRightExclusive",scenario!=null && scenario.Ocean?550:2350},
+                    // Published from the same expression that builds the tiles,
+                    // so the two cannot disagree again. platformTileCount is the
+                    // in-engine control: it counts the platform tiles still
+                    // present in the world, so a block that claims rows while the
+                    // world has none is caught by reading the evidence.
+                    {"platformRows",arenaPlatformRows},
+                    {"platformRowSpacingTiles",PlatformRowSpacingTiles},
+                    {"platformTileCount",arenaPlatformTileCount},
+                    {"startSide",scenario!=null && scenario.Ocean?requestedStartSide:"centre"},
+                    {"playerStartTileX",scenario!=null?PlayerStartTileX(scenario.Ocean?200:2100):0},
+                    {"arenaShape",scenario!=null && scenario.Ocean && IsMonitorFixture
+                        ? "three horizontal layers including the ground, 60 tiles apart: the ground plus two wooden-platform rows spanning the arena's own horizontal bounds. The strong wing fights the same layered arena; its flat-ground behaviour is unchanged because it does not need to land"
+                        : "one long straight flat ground; no platform rows are built for this fixture"},
                     {"startingDay",scenario!=null && scenario.Daytime},{"startingWorldTime",scenario!=null && scenario.Daytime?27000:1000},
                     {"sceneMetricsPolicy","headless: native Player.UpdateSceneMetrics each tick after frame counter advance; native Player.Update transfers biome state; no forced Zone flags"},
                     {"nativeSceneMetricRefreshes",nativeSceneMetricRefreshes}
                 }},
             {"elapsedMs",processClock.Elapsed.TotalMilliseconds},{"combatLoopElapsedMs",clock.Elapsed.TotalMilliseconds},
-            {"limits",new Dictionary<string,object>{{"ticks",tickLimit},{"wallSeconds",wallLimitSeconds}}},
+            {"limits",new Dictionary<string,object>{{"ticks",tickLimit},{"wallSeconds",wallLimitSeconds},{"runTicks",runTickLimit}}},
             {"runtime",TimingSummary(runtimeSamples,"production snapshot+plan+capture; excludes vanilla update/render/input presentation")},
             {"nativeUpdate",TimingSummary(engineSamples,"native scene-metric refresh plus headless DoUpdateInWorld including production plugin; excludes harness tracking and Sleep")},
             {"randomScope","after all setup, seed installs Main.rand and a fresh native named-stream registry; verified WorldFileData.Seed drives Main.SwapRandom; Main.UnpausedUpdateSeed deterministically initialized and advanced by native Utils.RandomNextSeed each frame; cold states verified without consumption and references checked at every native-frame boundary; WorldGen.genRand and other thread/local/wall-time sources are not controlled; arena is not world-generated"},
@@ -3601,7 +5530,7 @@ public static class ChaiteGameProbe
                     {"lifeLossFrames",scopeNegativeLifeLossFrames},{"deaths",deaths}
                 }},
             {"nativeDifficultyVerified",nativeDifficultyVerified},{"nativeDifficulty",nativeDifficultyReport},
-            {"limits",new Dictionary<string,object>{{"ticks",tickLimit},{"wallSeconds",wallLimitSeconds}}},
+            {"limits",new Dictionary<string,object>{{"ticks",tickLimit},{"wallSeconds",wallLimitSeconds},{"runTicks",runTickLimit}}},
             {"scope","fixed vanilla-engine admission rejection fixture; one synthetic F8 edge; exact native Boss-root topology captured before production admission; one post-activation native frame; no readiness or win-rate claim"},
             {"createdUtc",DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)}
         };

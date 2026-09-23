@@ -15,8 +15,8 @@ namespace Chaite.Tests
                 NativeTargetCapturePreservesEveryZeroSlot);
             Run(nameof(NativeTargetCaptureClosesOnlyTheMalformedSlot),
                 NativeTargetCaptureClosesOnlyTheMalformedSlot);
-            Run(nameof(RainbowStreakTargetCaptureRequiresExactPlayerSlot),
-                RainbowStreakTargetCaptureRequiresExactPlayerSlot);
+            Run(nameof(FishronBubbleTargetCaptureRequiresExactPlayerSlot),
+                FishronBubbleTargetCaptureRequiresExactPlayerSlot);
             Run(nameof(EntityDirectionGetterAcceptsANativeNpcInstance),
                 EntityDirectionGetterAcceptsANativeNpcInstance);
             Run(nameof(SkeletronHeadAndHandsAlwaysReceivePriorityCapture),
@@ -35,8 +35,10 @@ namespace Chaite.Tests
                 TargetThreatCaptureCallsEverySourceBoundGate);
             Run(nameof(NativeNeutralHoldDominatesEveryPlanAction),
                 NativeNeutralHoldDominatesEveryPlanAction);
-            Run(nameof(EmpressCaptureReadsTheLatchWithoutCallingTheMutatingMethod),
-                EmpressCaptureReadsTheLatchWithoutCallingTheMutatingMethod);
+            Run(nameof(MoonLordMetadataIsCapturedBeforeHostileFiltering),
+                MoonLordMetadataIsCapturedBeforeHostileFiltering);
+            Run(nameof(ProjectileWindowFiltersHostileAndNotFriendly),
+                ProjectileWindowFiltersHostileAndNotFriendly);
         }
 
         private static Type TerrariaFacadeType() =>
@@ -110,32 +112,34 @@ namespace Chaite.Tests
             return (ThreatSnapshot)arguments[0];
         }
 
-        private static void RainbowStreakTargetCaptureRequiresExactPlayerSlot()
+        private static void FishronBubbleTargetCaptureRequiresExactPlayerSlot()
         {
+            // Fishron bubble AI_065 stores the target player slot one-based in
+            // ai[1]; zero means the untargeted, outward-drifting phase.
             foreach (var slot in new[] { 0, 1, 254 })
             {
                 var threat = PopulateProjectileNativeTarget(
-                    ThreatTrajectory.EmpressRainbowStreak,
-                    new[] { (float)slot });
+                    ThreatTrajectory.UnmodeledDukeFishronHazard,
+                    new[] { 0f, (float)slot + 1f });
                 True(threat.NativeTargetPlayerKnown);
                 Equal(slot, threat.NativeTargetPlayerIndex);
             }
 
             foreach (var malformed in new[]
             {
-                (float[])null, Array.Empty<float>(), new[] { -1f },
-                new[] { 255f }, new[] { .5f }, new[] { float.NaN },
-                new[] { float.PositiveInfinity }
+                (float[])null, Array.Empty<float>(), new[] { 0f, 0f },
+                new[] { 0f, -1f }, new[] { 0f, 256f }, new[] { 0f, .5f },
+                new[] { 0f, float.NaN }, new[] { 0f, float.PositiveInfinity }
             })
             {
                 var threat = PopulateProjectileNativeTarget(
-                    ThreatTrajectory.EmpressRainbowStreak, malformed);
+                    ThreatTrajectory.UnmodeledDukeFishronHazard, malformed);
                 False(threat.NativeTargetPlayerKnown);
                 Equal(-1, threat.NativeTargetPlayerIndex);
             }
 
             var ordinary = PopulateProjectileNativeTarget(
-                ThreatTrajectory.Linear, new[] { 0f });
+                ThreatTrajectory.Linear, new[] { 0f, 1f });
             False(ordinary.NativeTargetPlayerKnown);
             Equal(-1, ordinary.NativeTargetPlayerIndex);
         }
@@ -174,7 +178,7 @@ namespace Chaite.Tests
         }
 
         private static void PopulatePriorityWorld(PriorityBossNativeContext value,
-            double surface, int width, int top, int bottom, bool rage)
+            double surface, int width, int top, int bottom)
         {
             var method = TerrariaFacadeType().GetMethod(
                 "PopulatePriorityWorldContext",
@@ -182,27 +186,26 @@ namespace Chaite.Tests
             True(method != null);
             method.Invoke(null, new object[]
             {
-                value, surface, width, top, bottom, rage
+                value, surface, width, top, bottom
             });
         }
 
         private static void PriorityWorldCaptureDistinguishesUninitializedWallBounds()
         {
             var value = new PriorityBossNativeContext();
-            PopulatePriorityWorld(value, 250d, 8400, -1, -1, false);
+            PopulatePriorityWorld(value, 250d, 8400, -1, -1);
             True(value.WorldGeometryKnown);
             False(value.WallOfFleshDrawAreaKnown);
             Equal(-1, value.WallOfFleshDrawAreaTopPixels);
             Equal(-1, value.WallOfFleshDrawAreaBottomPixels);
 
-            PopulatePriorityWorld(value, 0d, 8400, 0, 160, true);
+            PopulatePriorityWorld(value, 0d, 8400, 0, 160);
             False(value.WorldGeometryKnown);
             True(value.WallOfFleshDrawAreaKnown);
-            True(value.EmpressRageModeKnown && value.EmpressRageMode);
 
-            PopulatePriorityWorld(value, double.NaN, 8400, 0, 160, false);
+            PopulatePriorityWorld(value, double.NaN, 8400, 0, 160);
             False(value.WorldGeometryKnown);
-            PopulatePriorityWorld(value, 250d, 0, 0, 160, false);
+            PopulatePriorityWorld(value, 250d, 0, 0, 160);
             False(value.WorldGeometryKnown);
         }
 
@@ -246,12 +249,7 @@ namespace Chaite.Tests
             snapshot.Difficulty.DayTime = true;
             snapshot.Difficulty.Remix = true;
             PopulatePriorityWorld(snapshot.PriorityBoss, 100d, 8400,
-                0, 160, false);
-            snapshot.PriorityBoss.EmpressRagePredicateKnown = true;
-            snapshot.PriorityBoss.EmpressPredicateNpcSlotKnown = true;
-            snapshot.PriorityBoss.EmpressPredicateNpcSlot = 15;
-            snapshot.PriorityBoss.EmpressFirstBossAboveWorldSurface = true;
-            snapshot.PriorityBoss.EmpressShouldBeEnraged = true;
+                0, 160);
 
             snapshot.Targets.Add(NativeTarget(10, 222));
             snapshot.Targets.Add(NativeTarget(11, 113));
@@ -262,7 +260,6 @@ namespace Chaite.Tests
             lowerEye.Ai0 = 1f;
             snapshot.Targets.Add(lowerEye);
             snapshot.Targets.Add(NativeTarget(14, 370));
-            snapshot.Targets.Add(NativeTarget(15, 636));
             snapshot.Targets.Add(NativeTarget(16, 668));
 
             ReadPriorityNpcs(snapshot);
@@ -286,10 +283,6 @@ namespace Chaite.Tests
             True(fishron.Known && fishron.NativeEnraged);
             True(fishron.PlayerAboveY800Band);
             True(fishron.PlayerInsideCentralHorizontalBand);
-            var empress = snapshot.PriorityBoss.Empresses[0];
-            True(empress.Known && empress.NativeShouldBeEnraged);
-            False(snapshot.PriorityBoss.EmpressRageMode,
-                "read-only recomputation must not mutate the Remix latch");
             var deer = snapshot.PriorityBoss.Deerclopses[0];
             True(deer.Known);
             Equal(0, deer.State);
@@ -445,7 +438,7 @@ namespace Chaite.Tests
                 False(context.MoonLordProjectiles456[index].Known);
         }
 
-        private static bool[] ReadPriorityThreatSources(object[] npcs)
+        private static bool ReadPriorityThreatSource(object[] npcs)
         {
             var facadeType = TerrariaFacadeType();
             var facade = FormatterServices.GetUninitializedObject(facadeType);
@@ -472,9 +465,9 @@ namespace Chaite.Tests
             var method = facadeType.GetMethod("ReadSupportedThreatSources",
                 BindingFlags.Instance | BindingFlags.NonPublic);
             True(method != null);
-            var arguments = new object[] { npcs, false, false };
+            var arguments = new object[] { npcs, false };
             method.Invoke(facade, arguments);
-            return new[] { (bool)arguments[1], (bool)arguments[2] };
+            return (bool)arguments[1];
         }
 
         private static NativeCaptureNpc ThreatSourceNpc(int who, int type)
@@ -494,10 +487,7 @@ namespace Chaite.Tests
         {
             var npcs = new object[4];
             npcs[1] = ThreatSourceNpc(1, 370);
-            npcs[3] = ThreatSourceNpc(3, 636);
-            var sources = ReadPriorityThreatSources(npcs);
-            True(sources[0]);
-            True(sources[1]);
+            True(ReadPriorityThreatSource(npcs));
 
             var invalid = new[]
             {
@@ -507,7 +497,10 @@ namespace Chaite.Tests
                 ThreatSourceNpc(2, 370),
                 ThreatSourceNpc(1, 371),
                 ThreatSourceNpc(1, 372),
-                ThreatSourceNpc(1, 373)
+                ThreatSourceNpc(1, 373),
+                // The Empress of Light left the production scope, so her NPC
+                // id must not authorize the Fishron threat family either.
+                ThreatSourceNpc(1, 636)
             };
             invalid[0].Active = false;
             invalid[1].Friendly = true;
@@ -517,24 +510,19 @@ namespace Chaite.Tests
             {
                 npcs = new object[4];
                 npcs[1] = invalid[index];
-                sources = ReadPriorityThreatSources(npcs);
-                False(sources[0], "invalid Fishron source " + index);
-                False(sources[1], "invalid Empress source " + index);
+                False(ReadPriorityThreatSource(npcs),
+                    "invalid Fishron source " + index);
             }
 
-            var dead = ThreatSourceNpc(1, 636);
+            var dead = ThreatSourceNpc(1, 370);
             foreach (var life in new[] { 0, -1 })
             {
                 dead.Life = life;
                 npcs = new object[4];
                 npcs[1] = dead;
-                sources = ReadPriorityThreatSources(npcs);
-                False(sources[0]);
-                False(sources[1]);
+                False(ReadPriorityThreatSource(npcs));
             }
-            sources = ReadPriorityThreatSources(null);
-            False(sources[0]);
-            False(sources[1]);
+            False(ReadPriorityThreatSource(null));
         }
 
         private static void TargetThreatCaptureCallsEverySourceBoundGate()
@@ -620,77 +608,13 @@ namespace Chaite.Tests
                 "a neutral hold applied a stale true control value");
         }
 
-        private static void EmpressCaptureReadsTheLatchWithoutCallingTheMutatingMethod()
+        private static void MoonLordMetadataIsCapturedBeforeHostileFiltering()
         {
-            var facadeType = TerrariaFacadeType();
-            var facadeInstance = FormatterServices.GetUninitializedObject(
-                facadeType);
-            Action<string, object> bind = (name, value) =>
-            {
-                var field = facadeType.GetField(name,
-                    BindingFlags.Instance | BindingFlags.NonPublic);
-                True(field != null, "missing Empress capture field " + name);
-                field.SetValue(facadeInstance, value);
-            };
-            bind("_npcTypeId", new Func<object, int>(value =>
-                ((NativeCaptureNpc)value).Type));
-            bind("_positionY", new Func<object, float>(value =>
-                ((NativeCaptureNpc)value).PositionY));
-            bind("_height", new Func<object, int>(value =>
-                ((NativeCaptureNpc)value).Height));
-            var snapshot = new CombatSnapshot
-            {
-                NativeContextKnown = true
-            };
-            snapshot.Difficulty.Remix = true;
-            PopulatePriorityWorld(snapshot.PriorityBoss, 100d, 8400,
-                0, 160, false);
-            var npcs = new object[3];
-            // The original method deliberately scans type only, not active.
-            npcs[0] = new NativeCaptureNpc
-            {
-                Who = 0, Type = 636, Active = false,
-                PositionY = 100f, Height = 80
-            };
-            npcs[1] = new NativeCaptureNpc
-            {
-                Who = 1, Type = 636, Active = true,
-                PositionY = 3000f, Height = 80
-            };
-            var pureRead = facadeType.GetMethod("ReadEmpressRagePredicate",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            True(pureRead != null);
-            pureRead.Invoke(facadeInstance, new object[] { npcs, snapshot });
-            True(snapshot.PriorityBoss.EmpressRagePredicateKnown);
-            True(snapshot.PriorityBoss.EmpressPredicateNpcSlotKnown);
-            Equal(0, snapshot.PriorityBoss.EmpressPredicateNpcSlot);
-            True(snapshot.PriorityBoss.EmpressShouldBeEnraged);
-            False(snapshot.PriorityBoss.EmpressRageMode,
-                "pure read must not latch Remix rage");
-
             using (var assembly = AssemblyDefinition.ReadAssembly(
                 typeof(Chaite.Plugin.Runtime).Assembly.Location))
             {
                 var facade = FindCecilType(assembly,
                     "Chaite.Plugin.TerrariaFacade");
-                var constructor = facade.Methods[0];
-                for (var index = 0; index < facade.Methods.Count; index++)
-                    if (facade.Methods[index].IsConstructor &&
-                        !facade.Methods[index].IsStatic)
-                        constructor = facade.Methods[index];
-                var sawRageFieldLiteral = false;
-                foreach (var instruction in constructor.Body.Instructions)
-                {
-                    var literal = instruction.Operand as string;
-                    if (literal == "empressRageMode")
-                        sawRageFieldLiteral = true;
-                    False(literal == "ShouldEmpressBeEnraged");
-                    var call = instruction.Operand as MethodReference;
-                    False(call != null &&
-                        call.Name == "ShouldEmpressBeEnraged");
-                }
-                True(sawRageFieldLiteral,
-                    "facade must bind the side-effect-free native latch field");
 
                 var read = FindCecilMethod(facade,
                     "ReadTargetsAndThreats");
@@ -716,6 +640,59 @@ namespace Chaite.Tests
                 True(priorityCapture >= 0 &&
                     hostileFilterAfterCapture > priorityCapture,
                     "Moon Lord metadata must be captured before ordinary hostile/damage filtering");
+            }
+        }
+
+        /// <summary>The projectile window's predicate is a PAIR of native flags.
+        ///
+        /// tools/GameProbe.cs CaptureHostileProjectiles keeps a projectile when
+        ///     active &amp;&amp; hostile &amp;&amp; !friendly
+        /// and the facade has to collect the same set, because the policy was
+        /// trained on the probe's window. The facade instead tested `hostile`
+        /// alone and skipped on true, which kept the NON-hostile projectiles and
+        /// dropped every hostile one -- the exact complement of the training
+        /// distribution, so in production the window was full of scenery and
+        /// blind to the Boss's danmaku.
+        ///
+        /// Nothing caught it. The conformance test formats a window the probe
+        /// hands it (ProjectilesFromBridgeRow) rather than collecting one from the
+        /// game, so the collection predicate was never exercised; the field
+        /// simply did not exist. This pins the half that was missing.
+        /// </summary>
+        private static void ProjectileWindowFiltersHostileAndNotFriendly()
+        {
+            using (var assembly = AssemblyDefinition.ReadAssembly(
+                typeof(Chaite.Plugin.Runtime).Assembly.Location))
+            {
+                var facade = FindCecilType(assembly,
+                    "Chaite.Plugin.TerrariaFacade");
+
+                var bindsFriendly = false;
+                foreach (var field in facade.Fields)
+                    if (field.Name == "_projectileFriendly")
+                        bindsFriendly = true;
+                True(bindsFriendly,
+                    "facade must bind a projectile `friendly` getter: the window " +
+                    "predicate is `hostile && !friendly`, the same pair " +
+                    "tools/GameProbe.cs CaptureHostileProjectiles uses");
+
+                // The window is collected in BuildChaiteObservationRow, not in
+                // ReadTargetsAndThreats: that one only records the nearest
+                // projectile for the pre-hit diagnostic.
+                var read = FindCecilMethod(facade, "BuildChaiteObservationRow");
+                var seesHostile = false;
+                var seesFriendly = false;
+                foreach (var instruction in read.Body.Instructions)
+                {
+                    var field = instruction.Operand as FieldReference;
+                    if (field == null) continue;
+                    if (field.Name == "_projectileHostile") seesHostile = true;
+                    if (field.Name == "_projectileFriendly") seesFriendly = true;
+                }
+                True(seesHostile && seesFriendly,
+                    "the projectile window filter must consult BOTH flags; " +
+                    "testing `hostile` alone keeps the complement of the " +
+                    "training distribution");
             }
         }
     }

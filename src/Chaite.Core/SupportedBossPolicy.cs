@@ -7,13 +7,11 @@ namespace Chaite.Core
     /// Production admission scope for the native controller. The strategy
     /// catalog intentionally keeps the other vanilla strategies for offline
     /// research and regression fixtures, but the shipped runtime must fail
-    /// closed unless the active encounter is exactly Duke Fishron or Empress
-    /// of Light.
+    /// closed unless the active encounter is exactly Duke Fishron.
     /// </summary>
     public static class SupportedBossPolicy
     {
         public const int DukeFishronType = 370;
-        public const int EmpressOfLightType = 636;
 
         // The user supplied meme clip is mapped by AudioCuePlayer. Keeping the
         // text here avoids coupling Core to System.Media or the plugin.
@@ -38,7 +36,6 @@ namespace Chaite.Core
                 case 1331: // Bloody Spine
                 case 2673: // Truffle Worm
                 case 3601: // Celestial Sigil
-                case 4961: // Prismatic Lacewing
                 case 4988: // Gelatin Crystal
                 case 5120: // Deer Thing
                 case 5334: // Ocram's Razor
@@ -50,7 +47,7 @@ namespace Chaite.Core
 
         public static bool IsSupportedBossType(int type)
         {
-            return type == DukeFishronType || type == EmpressOfLightType;
+            return type == DukeFishronType;
         }
 
         public static bool IsSupportedExpectedBoss(int type)
@@ -62,7 +59,7 @@ namespace Chaite.Core
         /// Mirrors the production strategy engine's definition of an active
         /// Boss root. Eater of Worlds heads do not normally set NPC.boss, so
         /// type 13 must remain visible to the allowlist on that native edge.
-        /// The two supported roots are also retained if their native boss flag
+        /// The one supported root is also retained if its native boss flag
         /// is stale for one frame.
         /// </summary>
         public static bool IsEncounterBossRoot(int type, bool nativeBossFlag)
@@ -215,9 +212,9 @@ namespace Chaite.Core
         }
 
         /// <summary>
-        /// Checks that a pre-summon plan uses one of the two reviewed native
-        /// summon flows. Matching only ExpectedBossType is not enough: a
-        /// forged DirectItem plan must not bypass special summon handling.
+        /// Checks that a pre-summon plan uses the one reviewed native summon
+        /// flow. Matching only ExpectedBossType is not enough: a forged
+        /// DirectItem plan must not bypass special summon handling.
         /// </summary>
         public static bool TryValidateStartPlan(BossStartPlan plan,
             out string reason)
@@ -250,24 +247,6 @@ namespace Chaite.Core
                     return true;
                 reason = UnsupportedBossMessage +
                     " (Fishron summon route fields are not canonical)";
-                return false;
-            }
-
-            if (plan.ExpectedBossType == EmpressOfLightType &&
-                plan.Kind == BossSummonKind.PrismaticLacewing &&
-                plan.ItemType == 4961 &&
-                string.Equals(plan.Id, "prismatic-lacewing",
-                    StringComparison.Ordinal))
-            {
-                if (IsHotbarSlot(plan.SummonSlot) &&
-                    plan.ActionSlot == plan.SummonSlot &&
-                    plan.TimeoutTicks == 480 &&
-                    plan.InteractionWorld.X == 0f &&
-                    plan.InteractionWorld.Y == 0f &&
-                    IsOptionalHotbarSlot(plan.CombatWeaponSlot))
-                    return true;
-                reason = UnsupportedBossMessage +
-                    " (Empress summon route fields are not canonical)";
                 return false;
             }
 
@@ -306,7 +285,7 @@ namespace Chaite.Core
         /// <summary>
         /// Production snapshots mark themselves with NativeContextKnown. The
         /// helper ignores ordinary hostile NPCs and examines active Boss roots
-        /// (plus exact Fishron/Empress IDs to protect a stale Boss flag edge).
+        /// (plus the exact Fishron ID to protect a stale Boss flag edge).
         /// This method remains permissive for repeated observations; strict
         /// callers should use TryValidateActiveTargets.
         /// </summary>

@@ -45,8 +45,8 @@ namespace Chaite.Core
         MambaOut,
         FailedBossDesign,
         LowLevelChaite,
-        // Production-scope refusal for every Boss outside the two reviewed
-        // native controllers (Duke Fishron and Empress of Light).  Keep this
+        // Production-scope refusal for every Boss outside the one reviewed
+        // native controller (Duke Fishron).  Keep this
         // new cue at the end so the ordinals of the original local audio
         // slots remain stable for existing configs/adapters.
         // The audio slot is user-supplied; Chaite never generates or
@@ -65,9 +65,7 @@ namespace Chaite.Core
     public enum ThreatGeometry
     {
         Body,
-        MoonLordDeathray,
-        EmpressSunDance,
-        EmpressLance
+        MoonLordDeathray
     }
 
     /// <summary>
@@ -79,115 +77,13 @@ namespace Chaite.Core
     public enum ThreatTrajectory
     {
         Linear,
-        EmpressRainbowTrail,
-        EmpressRainbowStreak,
-        EmpressDashContact,
         FallingHostileBolt,
         BouncingFallingHostileBolt,
-        // Explicit fail-closed sentinels for the two production Bosses.  These
-        // values are never an approximate motion model: a native adapter may
-        // publish them only with a same-frame Boss source context, and Core
-        // must either relinquish control or treat their motion as unknown.
-        UnmodeledDukeFishronHazard,
-        UnmodeledEmpressRainbowTrail,
-        UnmodeledEmpressDashContact
-    }
-
-    internal struct RainbowTrailHistoryBlock10
-    {
-        private Vec2 _p0;
-        private Vec2 _p1;
-        private Vec2 _p2;
-        private Vec2 _p3;
-        private Vec2 _p4;
-        private Vec2 _p5;
-        private Vec2 _p6;
-        private Vec2 _p7;
-        private Vec2 _p8;
-        private Vec2 _p9;
-
-        public Vec2 Get(int index)
-        {
-            switch (index)
-            {
-                case 0: return _p0;
-                case 1: return _p1;
-                case 2: return _p2;
-                case 3: return _p3;
-                case 4: return _p4;
-                case 5: return _p5;
-                case 6: return _p6;
-                case 7: return _p7;
-                case 8: return _p8;
-                case 9: return _p9;
-                default: return default(Vec2);
-            }
-        }
-
-        public bool Set(int index, Vec2 value)
-        {
-            switch (index)
-            {
-                case 0: _p0 = value; break;
-                case 1: _p1 = value; break;
-                case 2: _p2 = value; break;
-                case 3: _p3 = value; break;
-                case 4: _p4 = value; break;
-                case 5: _p5 = value; break;
-                case 6: _p6 = value; break;
-                case 7: _p7 = value; break;
-                case 8: _p8 = value; break;
-                case 9: _p9 = value; break;
-                default: return false;
-            }
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// The first 50 native oldPos entries used by projectile 872's collision
-    /// override. Terraria allocates 120 trail entries for this projectile, but
-    /// Colliding reads only even indices 0 through 48. Keeping all first 50 is
-    /// necessary because each native update swaps which captured parity will
-    /// occupy those damaging slots. The value type avoids per-frame arrays.
-    /// </summary>
-    public struct RainbowTrailHistory50
-    {
-        public const int Length = 50;
-
-        private RainbowTrailHistoryBlock10 _b0;
-        private RainbowTrailHistoryBlock10 _b1;
-        private RainbowTrailHistoryBlock10 _b2;
-        private RainbowTrailHistoryBlock10 _b3;
-        private RainbowTrailHistoryBlock10 _b4;
-
-        public Vec2 Get(int index)
-        {
-            if (index < 0 || index >= Length) return default(Vec2);
-            var offset = index % 10;
-            switch (index / 10)
-            {
-                case 0: return _b0.Get(offset);
-                case 1: return _b1.Get(offset);
-                case 2: return _b2.Get(offset);
-                case 3: return _b3.Get(offset);
-                default: return _b4.Get(offset);
-            }
-        }
-
-        public bool Set(int index, Vec2 value)
-        {
-            if (index < 0 || index >= Length) return false;
-            var offset = index % 10;
-            switch (index / 10)
-            {
-                case 0: return _b0.Set(offset, value);
-                case 1: return _b1.Set(offset, value);
-                case 2: return _b2.Set(offset, value);
-                case 3: return _b3.Set(offset, value);
-                default: return _b4.Set(offset, value);
-            }
-        }
+        // Explicit fail-closed sentinel for the one production Boss.  This
+        // value is never an approximate motion model: a native adapter may
+        // publish it only with a same-frame Boss source context, and Core
+        // must either relinquish control or treat its motion as unknown.
+        UnmodeledDukeFishronHazard
     }
 
     public sealed class EncounterObservation
@@ -238,6 +134,10 @@ namespace Chaite.Core
         // original synthetic/third-party adapter model; MaxRunSpeed remains the
         // attainable sprint ceiling used by requirements and broadphase bounds.
         public float BaseRunSpeed;
+        /// <summary>The engine's acceleration-run speed, which is the boundary the
+        /// dense trace draws for an opposing input: at or above it the engine bleeds
+        /// and scales and floors at it, below it the engine bleeds alone.</summary>
+        public float AccRunSpeed;
         public float SprintAcceleration;
         public float RunSlowdown;
         public bool CanSprintInAir;
@@ -614,22 +514,14 @@ namespace Chaite.Core
         public float TrajectoryLocalAi1;
         public bool NativeDirectionKnown;
         public int NativeDirection;
-        // Projectile 872 collision is defined by oldPos rather than its current
-        // body. This fixed value-type copy is populated only by the native
-        // adapter after all first 50 entries were observed as finite values.
-        public bool NativeRainbowHistoryKnown;
-        public RainbowTrailHistory50 NativeRainbowHistory;
-        // NPC 636 states 8/9 need the exact state clock and phase/rage form.
-        // Availability bits prevent default zeroes from becoming native data.
+        // Native ai[1]/ai[3] clock and phase values used by the version-locked
+        // Duke Fishron hazard families.  Availability bits prevent default
+        // zeroes from becoming native data.
         public bool TrajectoryAi1Known;
         public float TrajectoryAi1;
         public bool TrajectoryAi3Known;
         public float TrajectoryAi3;
-        public bool NativeExpertModeKnown;
-        public bool NativeExpertMode;
-        public bool NativeShouldBeEnragedKnown;
-        public bool NativeShouldBeEnraged;
-        // AI_171 stores the hostile rainbow streak's target player in ai[0].
+        // AI_065 stores the Fishron bubble's target player (one-based) in ai[1].
         // Keep the validity bit separate: zero is both a real player slot and
         // the default value of older/synthetic snapshots.
         public bool NativeTargetPlayerKnown;
@@ -717,6 +609,18 @@ namespace Chaite.Core
         // directly. It is raised only to keep the reviewed Inferno ring alive.
         public bool QuickBuff;
         public bool Dash;
+        // Set by ChaitePolicyDriver.ApplyAction when the exported (learned) policy
+        // wrote this plan. The policy decides every tick and its action IS the
+        // control command, not a trajectory scored against a known snapshot, so the
+        // formula route's mobility validation does not describe it. MEASURED
+        // 2026-09-23 14:05 (docs/safety-abort-misclassified-2026-09-21.md section 40):
+        // leaving the flag unset made TerrariaFacade reject the learned dash --
+        // ffw121 229x dash-edge-or-direction-changed (43.6% win), fch121 511x
+        // trusty-chillet-native-dash-state-changed (0.0% win) -- against fsw121d,
+        // which tripped it once and won 97.4%. A rejected pending dash is replaced
+        // by all-controls-neutral, so the policy's learned dash never reached the
+        // game.
+        public bool PolicyOwnsMobility;
         public bool Hook;
         public bool ToggleMount;
         public int GravityControl;
@@ -737,6 +641,13 @@ namespace Chaite.Core
         public string PhaseId;
         public FormulaRoute FormulaRoute;
         public string WeaponIssue;
+        // Which frame of the enumerated route this plan was built from, or -1
+        // when no route is being replayed. The route index used to be inferred
+        // from the engine tick, and that inference was wrong from tick two
+        // hundred fifty-six onward, which silently made every enumerated
+        // candidate produce the same run. Publishing the counter the plugin
+        // actually used turns "was this difference applied" into a measurement.
+        public int ReplayFrame;
         // Exact output-route certificate consumed by the late native input gate.
         // Unspecified is retained only for synthetic adapters and tests.
         public OutputRouteKind OutputRouteKind;
@@ -775,7 +686,6 @@ namespace Chaite.Core
     {
         None,
         DirectItem,
-        PrismaticLacewing,
         LihzahrdAltar,
         TruffleWormFishing,
         GuideVoodooDoll,
@@ -848,7 +758,7 @@ namespace Chaite.Core
         public Vec2 InteractionWorld;
         public string Id;
         // Filled only after pre-summon output admission. Special summon flows
-        // (notably Prismatic Lacewing) must use this slot instead of reranking.
+        // must use this slot instead of reranking.
         public int CombatWeaponSlot = -1;
 
         public bool IsNatural => Kind == BossSummonKind.NaturalEye ||

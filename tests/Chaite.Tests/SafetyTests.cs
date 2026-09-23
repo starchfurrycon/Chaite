@@ -20,7 +20,6 @@ namespace Chaite.Tests
             Run(nameof(HotbarOrderingIgnoresEnumerationOrder), HotbarOrderingIgnoresEnumerationOrder);
             Run(nameof(HotbarSummonPrecedesNaturalSchedule), HotbarSummonPrecedesNaturalSchedule);
             Run(nameof(SpecialSummonsRequireTheirInteractions), SpecialSummonsRequireTheirInteractions);
-            Run(nameof(LacewingHonorsBiomeAndCritterProtectionByDayOrNight), LacewingHonorsBiomeAndCritterProtectionByDayOrNight);
             Run(nameof(EmptyStacksAndNonHotbarSummonsAreIgnored), EmptyStacksAndNonHotbarSummonsAreIgnored);
             Run(nameof(ProjectileOnlyWaitingDoesNotThrowOrFire), ProjectileOnlyWaitingDoesNotThrowOrFire);
             Run(nameof(DeadPlannerNeverAppliesControls), DeadPlannerNeverAppliesControls);
@@ -235,21 +234,6 @@ namespace Chaite.Tests
             Equal(BossSummonKind.GuideVoodooDoll, BossStartPlanner.Select(doll).Kind);
             doll.GuideAlive = false;
             Equal(null, BossStartPlanner.Select(doll));
-        }
-
-        private static void LacewingHonorsBiomeAndCritterProtectionByDayOrNight()
-        {
-            var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true, DayTime = false };
-            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 1, Type = 4961, Stack = 1 });
-            Equal(BossSummonKind.PrismaticLacewing, BossStartPlanner.Select(context).Kind);
-            context.CritterProtection = true;
-            Equal(null, BossStartPlanner.Select(context));
-            context.CritterProtection = false;
-            context.DayTime = true;
-            Equal(BossSummonKind.PrismaticLacewing,
-                BossStartPlanner.Select(context).Kind);
-            context.ZoneHallow = false;
-            Equal(null, BossStartPlanner.Select(context));
         }
 
         private static void EmptyStacksAndNonHotbarSummonsAreIgnored()

@@ -1220,8 +1220,7 @@ namespace Chaite.Tests
             var planner = new CombatPlanner(new PlannerSettings());
             var cases = new[]
             {
-                new { Strategy = "duke-fishron", BossType = 370 },
-                new { Strategy = "empress-of-light", BossType = 636 }
+                new { Strategy = "duke-fishron", BossType = 370 }
             };
             for (var i = 0; i < cases.Length; i++)
             {

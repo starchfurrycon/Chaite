@@ -19,16 +19,10 @@ namespace Chaite.Tests
                 MoonLordSourceAndProjectileRecoveryMatrixIsBounded);
             Run(nameof(MoonLordTerminalTransitionReturnsNeutralControl),
                 MoonLordTerminalTransitionReturnsNeutralControl);
-            Run(nameof(EmpressP1DashDirectionsAndWindowsAdmitActiveRecovery),
-                EmpressP1DashDirectionsAndWindowsAdmitActiveRecovery);
-            Run(nameof(EmpressNightRepositionJoinsItsExplicitMovementLoop),
-                EmpressNightRepositionJoinsItsExplicitMovementLoop);
             Run(nameof(ActiveRecoveryRequiresThreeConsecutiveClosedFrames),
                 ActiveRecoveryRequiresThreeConsecutiveClosedFrames);
             Run(nameof(ActiveRecoveryDoesNotResetForAdvancingNativeClockLabels),
                 ActiveRecoveryDoesNotResetForAdvancingNativeClockLabels);
-            Run(nameof(EmpressStateOneToTwoRebasesRecoveryDuringEmergency),
-                EmpressStateOneToTwoRebasesRecoveryDuringEmergency);
             Run(nameof(BlockedActiveRecoveryReturnsControlInFiniteTime),
                 BlockedActiveRecoveryReturnsControlInFiniteTime);
             Run(nameof(PhaseChurnCannotExtendActiveRecoveryForever),
@@ -163,10 +157,7 @@ namespace Chaite.Tests
                 True(planner.LastCandidateCount > 1 || closesOrAdvances,
                     item.Name + " used the safe early-return gate without a " +
                     "convergence proof");
-                var group = item.BossType == 636 ?
-                    (item.Name.StartsWith("day-", StringComparison.Ordinal) ?
-                        "636-day" : "636-night") :
-                    item.BossType.ToString();
+                var group = item.BossType.ToString();
                 HashSet<string> phases;
                 if (!observedPhases.TryGetValue(group, out phases))
                 {
@@ -180,8 +171,6 @@ namespace Chaite.Tests
             AssertPhaseCount(observedPhases, "222", 8);
             AssertPhaseCount(observedPhases, "113", 5);
             AssertPhaseCount(observedPhases, "370", 17);
-            AssertPhaseCount(observedPhases, "636-day", 10);
-            AssertPhaseCount(observedPhases, "636-night", 10);
             // Intro and the first source-ready observation intentionally
             // share Moon Lord's synchronize-open-eyes loop.  The other five
             // entries must remain distinct source-clock recovery routes.
@@ -410,94 +399,6 @@ namespace Chaite.Tests
             }
         }
 
-        private static void EmpressP1DashDirectionsAndWindowsAdmitActiveRecovery()
-        {
-            // AI_120's P1 table contains dash at post-selection indices
-            // 2/4/7/9. State 9 is not an invented attack: native rewrites a
-            // state-8 dash to 9 when the player is on the opposite side.
-            // Each direction is sampled in its source-defined telegraph,
-            // committed, and brake windows. Reverse horizontal dashes can
-            // legitimately choose the same perpendicular escape, so the
-            // assertion is admission and the native phase contract, not an
-            // artificial requirement that their input vector must differ.
-            var cases = new[]
-            {
-                new EmpressP1DashRecoveryFixture("left-telegraph", 8, 20,
-                    2, 0f, "telegraph"),
-                new EmpressP1DashRecoveryFixture("right-telegraph", 9, 20,
-                    4, 0f, "telegraph"),
-                new EmpressP1DashRecoveryFixture("left-committed", 8, 50,
-                    7, -12f, "committed"),
-                new EmpressP1DashRecoveryFixture("right-committed", 9, 50,
-                    9, 12f, "committed"),
-                new EmpressP1DashRecoveryFixture("left-braking", 8, 100,
-                    4, -3f, "braking"),
-                new EmpressP1DashRecoveryFixture("right-braking", 9, 100,
-                    2, 3f, "braking")
-            };
-            var observedStates = new HashSet<int>();
-            var observedWindows = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var day in new[] { false, true })
-            foreach (var item in cases)
-            {
-                var scene = PriorityRecoveryScene(636);
-                ConfigureEmpressP1Dash(scene, day, item.State, item.Tick,
-                    item.AttackIndex, item.VelocityX);
-                var expected = (day ? "day-lethal-p1-horizontal-dash-" :
-                    "night-p1-horizontal-dash-") + item.Window;
-                var directive = new BossStrategyEngine().Evaluate(scene).
-                    Directive;
-                False(directive.RequestControlReturn,
-                    (day ? "day-" : "night-") + item.Name + ": " +
-                    directive.ControlReturnReason);
-                Equal(BossPattern.PerpendicularDashDodge,
-                    directive.Pattern);
-                True(directive.UseExplicitMovement &&
-                    directive.ForceContinuousMovement,
-                    item.Name + " lost its explicit dash contract");
-                True(directive.PhaseId.IndexOf(expected,
-                    StringComparison.Ordinal) >= 0, item.Name + ": " +
-                    directive.PhaseId);
-
-                var plan = PlanFirstPriorityRecovery(scene,
-                    (day ? "day-" : "night-") + item.Name);
-                True(plan.PhaseId.IndexOf(expected,
-                    StringComparison.Ordinal) >= 0, item.Name + ": " +
-                    plan.PhaseId);
-                observedStates.Add(item.State);
-                observedWindows.Add(item.Window);
-            }
-            Equal(2, observedStates.Count);
-            Equal(3, observedWindows.Count);
-        }
-
-        private static void EmpressNightRepositionJoinsItsExplicitMovementLoop()
-        {
-            var scene = PriorityRecoveryScene(636);
-            ConfigureEmpressPhase(scene, false, "p1-reposition");
-            scene.Player.Velocity = default(Vec2);
-            RefreshRecoveryClearance(scene);
-            var directive = new BossStrategyEngine().Evaluate(scene).Directive;
-            True(directive.UseExplicitMovement,
-                "night Empress recovery fell back to a moving target-relative ring");
-
-            var planner = new CombatPlanner(new PlannerSettings
-            {
-                StuckTicksBeforeRecovery = 10000,
-                EmergencyRiskThreshold = float.MaxValue,
-                PatternSafeRiskThreshold = float.MaxValue
-            });
-            string reason;
-            True(planner.PrepareForActiveEncounter(scene, out reason), reason);
-            for (var frame = 1; frame <= 3; frame++)
-            {
-                var plan = planner.Plan(scene);
-                False(plan.RequestControlReturn, plan.ControlReturnReason);
-                Equal(frame < 3 ? TacticalMode.RecoverToPattern :
-                    TacticalMode.EstablishPattern, plan.TacticalMode);
-            }
-        }
-
         private static ControlPlan PlanFirstPriorityRecovery(
             CombatSnapshot scene, string name)
         {
@@ -622,62 +523,6 @@ namespace Chaite.Tests
             AssertNeutralRecoveryReturn(returned);
         }
 
-        private static void EmpressStateOneToTwoRebasesRecoveryDuringEmergency()
-        {
-            var scene = PriorityRecoveryScene(636);
-            ConfigureEmpressPhase(scene, false, "p1-reposition");
-            scene.Player.Velocity = new Vec2(-8f, 0f);
-            RefreshRecoveryClearance(scene);
-            var planner = new CombatPlanner(new PlannerSettings
-            {
-                HorizonTicks = 12,
-                SimulationStepTicks = 1,
-                RecoveryTicks = 1,
-                StuckTicksBeforeRecovery = 10000,
-                EmergencyRiskThreshold = 0f,
-                PatternSafeRiskThreshold = float.MaxValue
-            });
-            string reason;
-            True(planner.PrepareForActiveEncounter(scene, out reason), reason);
-
-            var plan = planner.Plan(scene);
-            False(plan.RequestControlReturn, plan.ControlReturnReason);
-            Equal(TacticalMode.EmergencyEvade, plan.TacticalMode);
-            var oldRouteDeadline = (int)GetPrivateField(planner,
-                "_activeRecoveryDeadlineTicks");
-            var absoluteDeadline = (int)GetPrivateField(planner,
-                "_activeRecoveryAbsoluteDeadlineTicks");
-            True(oldRouteDeadline > 1 && oldRouteDeadline <
-                absoluteDeadline,
-                "fixture did not create a finite pre-cap Empress route deadline");
-
-            for (var tick = 2; tick < oldRouteDeadline; tick++)
-            {
-                plan = planner.Plan(scene);
-                False(plan.RequestControlReturn,
-                    "continuous emergency consumed the current route early: " +
-                    plan.ControlReturnReason);
-                Equal(TacticalMode.EmergencyEvade, plan.TacticalMode);
-            }
-            Equal(oldRouteDeadline - 1, (int)GetPrivateField(planner,
-                "_activeRecoveryElapsedTicks"));
-
-            // AI_120 moves from native reposition state 1 into its selected
-            // prismatic-bolt state 2. The first state-2 frame is a new stable
-            // route and must receive a fresh interval even though the old one
-            // would expire on this exact total-recovery frame.
-            ConfigureEmpressPhase(scene, false, "p1-bolts");
-            plan = planner.Plan(scene);
-            False(plan.RequestControlReturn,
-                "state 2 inherited state 1's exhausted route deadline: " +
-                plan.ControlReturnReason);
-            Equal(TacticalMode.EmergencyEvade, plan.TacticalMode);
-            Equal(1, (int)GetPrivateField(planner,
-                "_activeRecoveryElapsedTicks"));
-            Equal(oldRouteDeadline, (int)GetPrivateField(planner,
-                "_activeRecoveryTotalElapsedTicks"));
-        }
-
         private static void PhaseChurnCannotExtendActiveRecoveryForever()
         {
             var scene = PriorityRecoveryScene(113);
@@ -717,8 +562,8 @@ namespace Chaite.Tests
 
         private static void EmergencyRouteChurnReturnsNeutralAtAbsoluteDeadline()
         {
-            var scene = PriorityRecoveryScene(636);
-            ConfigureEmpressPhase(scene, false, "p1-reposition");
+            var scene = PriorityRecoveryScene(370);
+            ConfigureFishron(scene, 0, 0, 0, .8f, false);
             scene.Player.Velocity = new Vec2(-8f, 0f);
             RefreshRecoveryClearance(scene);
             var planner = new CombatPlanner(new PlannerSettings
@@ -740,8 +585,8 @@ namespace Chaite.Tests
             for (var tick = 1; tick <= absoluteDeadline + 1;
                 tick++)
             {
-                ConfigureEmpressPhase(scene, false,
-                    tick % 2 == 0 ? "p1-reposition" : "p1-bolts");
+                ConfigureFishron(scene, tick % 2 == 0 ? 0 : 1, 0, 0, .8f,
+                    false);
                 returned = planner.Plan(scene);
                 if (returned.RequestControlReturn)
                 {
@@ -949,36 +794,6 @@ namespace Chaite.Tests
                     scene.PriorityBoss.DukeFishrons[0] = native;
                 });
 
-            yield return ActiveFailure("empress-inconsistent-attack-clock",
-                () =>
-                {
-                    var scene = PriorityRecoveryScene(636);
-                    ConfigureEmpressPhase(scene, false, "p1-bolts");
-                    return scene;
-                }, scene =>
-                {
-                    var native = scene.PriorityBoss.Empresses[0];
-                    native.Ai1AttackTimer += 1f;
-                    scene.PriorityBoss.Empresses[0] = native;
-                });
-
-            // Daytime uses AI_120's lethal/expert schedule even when the
-            // world's ordinary difficulty is Classic. Keep it separate from
-            // the night row so an adapter cannot accidentally validate only
-            // the nonlethal schedule before active takeover.
-            yield return ActiveFailure("day-empress-inconsistent-attack-clock",
-                () =>
-                {
-                    var scene = PriorityRecoveryScene(636);
-                    ConfigureEmpressPhase(scene, true, "p1-bolts");
-                    return scene;
-                }, scene =>
-                {
-                    var native = scene.PriorityBoss.Empresses[0];
-                    native.Ai1AttackTimer += 1f;
-                    scene.PriorityBoss.Empresses[0] = native;
-                });
-
             yield return ActiveFailure("moon-lord-inconsistent-head-clock",
                 () =>
                 {
@@ -1140,27 +955,6 @@ namespace Chaite.Tests
             yield return Case("fishron-p3-teleport", 370,
                 s => ConfigureFishron(s, 12, 10, 1, .1f, true));
 
-            foreach (var day in new[] { false, true })
-            {
-                var prefix = day ? "day-empress-" : "night-empress-";
-                // The day and night variants get their own rows because
-                // day-time AI_120 is lethal and uses the expert schedule even
-                // in a Classic world.  P2 predictive lances additionally
-                // require the real expert table, not a generic P2 alias.
-                foreach (var phase in new[]
-                {
-                    "p1-reposition", "p1-bolts", "p1-rainbow",
-                    "p1-sun-dance", "p1-dash", "transition",
-                    "p2-reposition", "p2-lance-wall",
-                    "p2-predictive-lances", "p2-spiral"
-                })
-                {
-                    var capturedPhase = phase;
-                    yield return Case(prefix + capturedPhase, 636,
-                        s => ConfigureEmpressPhase(s, day, capturedPhase));
-                }
-            }
-
             // Moon Lord: exact source clocks are required for each component;
             // a generic projectile only supplements those clocks after the
             // native source is present.  This mirrors every staged mid-fight
@@ -1225,65 +1019,6 @@ namespace Chaite.Tests
             target.Invulnerable = false;
             scene.Targets[0] = target;
             RefreshPriorityNativeContext(scene);
-        }
-
-        private static void ConfigureEmpressPhase(CombatSnapshot scene,
-            bool day, string phase)
-        {
-            // These tuples are selected from AI_120's actual tables rather
-            // than simply naming the desired state.  In particular, ai[2]
-            // is the post-selection index and the daytime lethal schedule is
-            // the expert P2 table even in a Classic world.
-            var state = 1;
-            var tick = 0;
-            var index = 0;
-            var second = phase == "transition" || phase.StartsWith("p2-",
-                StringComparison.Ordinal);
-            switch (phase)
-            {
-                case "p1-reposition": break;
-                case "p1-bolts": state = 2; tick = 1; index = 1; break;
-                case "p1-rainbow": state = 5; tick = 5; index = 5; break;
-                case "p1-sun-dance": state = 6; tick = 3; index = 3; break;
-                case "p1-dash": state = 8; tick = 50; index = 2; break;
-                case "transition": state = 10; tick = 20; index = 1; break;
-                case "p2-reposition": break;
-                case "p2-lance-wall": state = 7; tick = 80; index = 1; break;
-                case "p2-predictive-lances":
-                    state = 11; tick = 40; index = 4;
-                    // At night this attack only exists in Expert/Master.  By
-                    // day AI_120 selects the same table from its lethal rage
-                    // predicate, so retain Classic difficulty for that half.
-                    scene.Difficulty.Expert = !day;
-                    break;
-                case "p2-spiral":
-                    state = 12;
-                    tick = 70;
-                    // The classic P2 table has nine entries; the lethal
-                    // daytime table has ten and ends in spiral bolts.
-                    index = day ? 10 : 9;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(phase),
-                        phase, "Unreviewed Empress active-recovery phase");
-            }
-
-            scene.Difficulty.DayTime = day;
-            var form = (day ? 2 : 0) +
-                (second && phase != "transition" ? 1 : 0);
-            SetTarget(scene, second && phase != "transition" ? .4f : .8f,
-                state == 8 ? -12f : 0f, state, tick, index, form);
-        }
-
-        private static void ConfigureEmpressP1Dash(CombatSnapshot scene,
-            bool day, int state, int tick, int attackIndex, float velocityX)
-        {
-            scene.Difficulty.DayTime = day;
-            // P1 is form zero. The supplied state/index pairs are the real
-            // post-selection dash entries from PhaseOneAttacks; SetTarget also
-            // refreshes the independent native observation from this same
-            // snapshot, as Runtime does.
-            SetTarget(scene, .8f, velocityX, state, tick, attackIndex, 0f);
         }
 
         private static void ConfigureMoonLordPhase(CombatSnapshot scene,
@@ -1784,27 +1519,6 @@ namespace Chaite.Tests
             public string Name;
             public Action<CombatSnapshot> Configure;
             public bool SimulateMovement;
-        }
-
-        private sealed class EmpressP1DashRecoveryFixture
-        {
-            public readonly string Name;
-            public readonly int State;
-            public readonly int Tick;
-            public readonly int AttackIndex;
-            public readonly float VelocityX;
-            public readonly string Window;
-
-            public EmpressP1DashRecoveryFixture(string name, int state,
-                int tick, int attackIndex, float velocityX, string window)
-            {
-                Name = name;
-                State = state;
-                Tick = tick;
-                AttackIndex = attackIndex;
-                VelocityX = velocityX;
-                Window = window;
-            }
         }
 
         private sealed class PriorityRecoveryCase

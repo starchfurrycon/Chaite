@@ -7,6 +7,11 @@ namespace Chaite.Core
         public int NativeState;
         public int NativeTimer;
         public int NativeSequence;
+        // Duke Fishron has no native form, so this is always the known zero
+        // form. The field is retained because the exported policy's 40-entry
+        // feature vector carries four one-hot form slots in the middle of its
+        // layout (see LearnedPolicy.FillFeatures); dropping them here would
+        // misalign every trained Fishron weight.
         public int NativeForm;
         public bool NativeFormKnown;
         public bool PlayerBelowBoss;
@@ -28,6 +33,7 @@ namespace Chaite.Core
     /// <summary>
     /// Deterministic formula-script layer. It never scores candidates, scans
     /// threats, or changes route; the native state selects one fixed branch.
+    /// Duke Fishron is the only admitted Boss.
     /// </summary>
     public static class FormulaScriptController
     {
@@ -36,54 +42,85 @@ namespace Chaite.Core
             out FormulaScriptInput input)
         {
             input = default(FormulaScriptInput);
-            if (player == null || !FormulaRouteCatalog.BelongsToBoss(route, target.Type) ||
-                !target.Ai0Known || !target.Ai2Known ||
-                (target.Type == 370 ? !target.Ai3Known : !target.Ai1Known))
+            if (player == null ||
+                !FormulaRouteCatalog.BelongsToBoss(route, target.Type) ||
+                !target.Ai0Known || !target.Ai2Known || !target.Ai3Known)
                 return false;
-            var timer = target.Type == 370 ? target.Ai2 : target.Ai1;
-            var sequence = target.Type == 370 ? target.Ai3 : target.Ai2;
+            // Fishron AI_069 exposes the state in ai[0], the state clock in
+            // ai[2] and the sequence index in ai[3].
+            var timer = target.Ai2;
+            var sequence = target.Ai3;
             if (!Integer(target.Ai0, -1, 13) || !Integer(timer, 0, int.MaxValue) ||
                 !Integer(sequence, 0, int.MaxValue)) return false;
-            var form = target.Type == 636 ? target.Ai3 : 0f;
-            var formKnown = target.Type != 636 || target.Ai3Known;
-            if (formKnown && !Integer(form, 0, 3)) return false;
             input = new FormulaScriptInput
             {
-                BossType = target.Type, Route = route,
-                NativeState = (int)target.Ai0, NativeTimer = (int)timer,
+                BossType = target.Type,
+                Route = route,
+                NativeState = (int)target.Ai0,
+                NativeTimer = (int)timer,
                 NativeSequence = (int)sequence,
-                NativeForm = formKnown ? (int)form : 0,
-                NativeFormKnown = formKnown,
+                NativeForm = 0,
+                NativeFormKnown = true,
                 PlayerBelowBoss = player.Center.Y >= target.Center.Y,
                 PlayerRightOfBoss = player.Center.X >= target.Center.X
             };
             return true;
         }
 
-        private static bool Integer(float value, int min, int max) =>
-            !float.IsNaN(value) && !float.IsInfinity(value) &&
-            (double)value >= min && (double)value <= max &&
-            value == System.Math.Floor(value);
+        private static bool Integer(float value, int minimum, int maximum)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value) &&
+                value >= minimum && value <= maximum &&
+                value == System.Math.Floor(value);
+        }
 
+        /// <summary>
+        /// The pure scripted plan, with no learned residual. Kept because the
+        /// probe and the offline fixtures call it directly, and because the
+        /// residual network is defined as a correction to exactly this output.
+        /// </summary>
         public static FormulaScriptOutput Tick(in FormulaScriptInput input)
         {
             var output = new FormulaScriptOutput { Accepted = false };
             if (!FormulaRouteCatalog.BelongsToBoss(input.Route, input.BossType) ||
                 input.NativeTimer < 0 || input.NativeSequence < 0 ||
-                (input.BossType == 370 ? input.NativeState < -1 || input.NativeState > 12 :
-                    input.NativeState < 0 || input.NativeState > 12 || input.NativeState == 3))
-                return output;
-            if (input.BossType == 636 &&
-                (!input.NativeFormKnown || input.NativeForm < 0 ||
-                 input.NativeForm > 3 || input.NativeState == 13))
+                input.NativeState < -1 || input.NativeState > 12)
                 return output;
             output.Accepted = true;
             output.Fire = true;
-            if (input.BossType == 370)
-                Fishron(in input, ref output);
-            else
-                Empress(in input, ref output);
+            Fishron(in input, ref output);
             return output;
+        }
+
+        /// <summary>
+        /// The learned-residual entry point. The scripted decision is the base
+        /// and the network may only correct it.
+        /// </summary>
+        public static FormulaScriptOutput Tick(in FormulaScriptInput input,
+            PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
+            MobilitySnapshot mobility)
+        {
+            var result = Tick(in input);
+            if (!result.Accepted) return result;
+            var learned = LearnedPolicy.ForRoute(input.Route);
+            if (learned == null) return result;
+            var phase = result.Phase;
+            int horizontal;
+            int vertical;
+            bool jump;
+            bool dash;
+            if (!learned.Adjust(in input, player, in boss, arena, mobility,
+                    result.Horizontal, result.Vertical, result.Jump,
+                    result.Dash, out horizontal, out vertical, out jump,
+                    out dash))
+                return result;
+            result.Horizontal = horizontal;
+            result.Vertical = vertical;
+            result.Jump = jump;
+            result.Dash = dash;
+            result.Phase = LearnedPolicy.ComposeLearnedPhase(phase,
+                "formula-learned");
+            return result;
         }
 
         private static void Fishron(in FormulaScriptInput input,
@@ -92,76 +129,29 @@ namespace Chaite.Core
             output.Phase = "fishron-state-" + input.NativeState;
             switch (input.NativeState)
             {
-                case 1: case 6: case 11:
-                    // Leave the charge line with the perpendicular axis. The
-                    // fixed route keeps this side until the native state ends.
-                    output.Horizontal = input.PlayerBelowBoss ? 0 :
-                        (input.PlayerRightOfBoss ? 1 : -1);
+                case 1:
+                case 6:
+                case 11:
+                    output.Horizontal = !input.PlayerBelowBoss ?
+                        input.PlayerRightOfBoss ? 1 : -1 : 0;
                     output.Vertical = input.PlayerBelowBoss ? 1 : -1;
-                    output.Dash = input.Route == FormulaRoute.FishronFairyWingsDash ||
+                    output.Dash = input.Route ==
+                            FormulaRoute.FishronFairyWingsDash ||
                         input.Route == FormulaRoute.FishronStrongWingsDash;
                     output.Jump = true;
                     break;
-                case 2: case 3: case 7: case 8:
-                    output.Horizontal = input.PlayerRightOfBoss ? -1 : 1;
+                case 2:
+                case 3:
+                case 7:
+                case 8:
+                    output.Horizontal = !input.PlayerRightOfBoss ? 1 : -1;
                     output.Vertical = 1;
                     output.Jump = true;
                     break;
                 default:
-                    output.Horizontal = input.PlayerRightOfBoss ? -1 : 1;
-                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
+                    output.Horizontal = !input.PlayerRightOfBoss ? 1 : -1;
+                    output.Vertical = !input.PlayerBelowBoss ? 1 : -1;
                     output.Jump = true;
-                    break;
-            }
-        }
-
-        private static void Empress(in FormulaScriptInput input,
-            ref FormulaScriptOutput output)
-        {
-            output.Phase = "empress-state-" + input.NativeState;
-            switch (input.NativeState)
-            {
-                case 8: case 9:
-                    output.Horizontal = 0;
-                    output.Vertical = input.PlayerBelowBoss ? -1 : 1;
-                    output.Dash = input.Route == FormulaRoute.EmpressStrongWingsDash;
-                    output.Jump = output.Vertical < 0;
-                    break;
-                case 6:
-                    output.Horizontal = 0;
-                    output.Vertical = input.PlayerBelowBoss ? 1 : -1;
-                    output.Jump = output.Vertical < 0;
-                    break;
-                default:
-                    EmpressQuadrant(in input, 1, out var horizontal,
-                        out var vertical);
-                    output.Horizontal = horizontal;
-                    output.Vertical = vertical;
-                    output.Jump = vertical < 0;
-                    break;
-            }
-        }
-
-        private static void EmpressQuadrant(in FormulaScriptInput input,
-            int loop, out int horizontal, out int vertical)
-        {
-            switch ((input.NativeTimer / 16) & 3)
-            {
-                case 1:
-                    horizontal = -loop;
-                    vertical = loop;
-                    break;
-                case 2:
-                    horizontal = -loop;
-                    vertical = -loop;
-                    break;
-                case 3:
-                    horizontal = loop;
-                    vertical = -loop;
-                    break;
-                default:
-                    horizontal = loop;
-                    vertical = loop;
                     break;
             }
         }

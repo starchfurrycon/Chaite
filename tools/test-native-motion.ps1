@@ -12,7 +12,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $artifactPrefix = (Join-Path $projectRoot 'artifacts') + [IO.Path]::DirectorySeparatorChar
-$motionCases = @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press')
+$motionCases = @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press',
+    'lilith-balloon-hold', 'lilith-balloon-multijump', 'lilith-plain-hold', 'lilith-plain-multijump')
 
 function Assert-NoMotionReparse([string]$Path) {
     $candidate = [IO.Path]::GetFullPath($Path)
@@ -43,14 +44,18 @@ function Assert-MotionEvidence($Result, [object[]]$Frames, [string]$Case, [int]$
         (Motion-Field $Result 'scenario') -cne 'motion-jump' -or (Motion-Field $Result 'motionCase') -cne $Case -or
         (Motion-Field $Result 'status') -cne 'complete' -or (Motion-Field $Result 'difficulty') -cne 'classic' -or
         (Motion-Field $Result 'frameFile') -cne 'motion-frames.jsonl') { throw 'Motion result identity/status mismatch.' }
-    if ($Case -cnotin @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press')) { throw 'Unreviewed motion evidence case.' }
+    if ($Case -cnotin @('no-cloud-hold', 'no-cloud-tap', 'no-cloud-release-press', 'cloud-hold', 'cloud-tap', 'cloud-release-press',
+    'lilith-balloon-hold', 'lilith-balloon-multijump', 'lilith-plain-hold', 'lilith-plain-multijump')) { throw 'Unreviewed motion evidence case.' }
     Motion-Integer (Motion-Field $Result 'seed') $ExpectedSeed 'seed'
     Motion-Integer (Motion-Field $Result 'difficultyCode') 0 'difficultyCode'
     Motion-Integer (Motion-Field $Result 'processExitCode') 0 'processExitCode'
     foreach ($key in @('ticks', 'nativeFrames', 'recordedFrames', 'totalFrames')) { Motion-Integer (Motion-Field $Result $key) 180 $key }
     Motion-Integer (Motion-Field $Result 'warmupFrames') 20 'warmupFrames'
     foreach ($key in @('validMotion', 'nativeDifficultyVerified', 'sawAirborne', 'returnedGroundAfterRelease')) { Motion-Boolean (Motion-Field $Result $key) $true $key }
-    Motion-Boolean (Motion-Field $Result 'cloudConsumed') ($Case -ceq 'cloud-release-press') 'cloudConsumed'
+    # Whether the Bundle of Balloons spends the cloud option is exactly what the
+    # Lilith multijump trace is being collected to measure, so it is asserted
+    # only where the answer is already known from the pre-existing cases.
+    if ($Case -notlike 'lilith-balloon-*') { Motion-Boolean (Motion-Field $Result 'cloudConsumed') ($Case -ceq 'cloud-release-press') 'cloudConsumed' }
     $native = Motion-Field $Result 'nativeDifficulty'
     foreach ($key in @('gameMode', 'worldFileGameMode')) { Motion-Integer (Motion-Field $native $key) 0 $key }
     Motion-Integer (Motion-Field $native 'difficulty') 1 'native difficulty'
@@ -75,8 +80,24 @@ function Assert-MotionEvidence($Result, [object[]]$Frames, [string]$Case, [int]$
     if ((Motion-Field $arena 'groundTile') -cne 'GrayBrick' -or @(Motion-Field $arena 'platformRows').Count -ne 0) { throw 'Wrong motion terrain profile.' }
     $equipment = Motion-Field $Result 'equipment'
     $hasCloud = $Case.StartsWith('cloud-', [StringComparison]::Ordinal)
+    $hasMount = $Case.StartsWith('lilith-', [StringComparison]::Ordinal)
+    $hasBalloons = $Case.StartsWith('lilith-balloon-', [StringComparison]::Ordinal)
+    # The Bundle of Balloons is Cloud in a Bottle plus Blizzard, Sandstorm and
+    # Fart in a Jar, so equipping it grants the cloud jump option even though the
+    # case name does not start with cloud-. Treating the name as the only source
+    # of the capability is what failed this case the first time it ran.
+    $hasCloudOption = $hasCloud -or $hasBalloons
     Motion-Boolean (Motion-Field $equipment 'cloudEquipped') $hasCloud 'cloud equipment'
-    Motion-Boolean (Motion-Field $equipment 'noWeaponsAmmoConsumablesOrMount') $true 'no other equipment'
+    # The Lilith cases stage a mount, so the blanket claim is asserted only for
+    # the pre-existing cases and the mount is pinned explicitly instead. If the
+    # fixture silently failed to equip, mountItemType would be zero and this
+    # would fail rather than passing on a stale label.
+    Motion-Boolean (Motion-Field $equipment 'noWeaponsAmmoConsumablesOrMount') (-not $hasMount) 'no other equipment'
+    Motion-Integer (Motion-Field $equipment 'mountItemType') $(if ($hasMount) { 5130 } else { 0 }) 'mount item ID'
+    Motion-Integer (Motion-Field $equipment 'mountExpectedType') $(if ($hasMount) { 52 } else { 0 }) 'expected mount type'
+    Motion-Integer (Motion-Field $equipment 'bundleOfBalloonsItemType') $(if ($hasBalloons) { 1164 } else { 0 }) 'bundle of balloons item ID'
+    $hasFeatherfall = $Case.IndexOf('featherfall', [StringComparison]::Ordinal) -ge 0
+    Motion-Boolean (Motion-Field $equipment 'featherfallActive') $hasFeatherfall 'featherfall active'
     Motion-Boolean (Motion-Field $equipment 'noDirectJumpStateOverrides') $true 'no jump state overrides'
     Motion-Integer (Motion-Field $equipment 'cloudItemType') $(if ($hasCloud) { 53 } else { 0 }) 'cloud item ID'
     Motion-Integer (Motion-Field $equipment 'cloudPrefix') 0 'cloud prefix'
@@ -120,7 +141,7 @@ function Assert-MotionEvidence($Result, [object[]]$Frames, [string]$Case, [int]$
             foreach ($key in @('left', 'right', 'up', 'down', 'useItem', 'useTile', 'hook', 'mount', 'dash')) { Motion-Boolean (Motion-Field $controls $key) $false "unrequested control $key" }
         }
         Motion-Boolean (Motion-Field (Motion-Field $frame.preJump 'controls') 'jump') $expectedJump 'effective preJump control'
-        if ($tick -gt 20) { Motion-Boolean (Motion-Field $frame.preJump 'hasJumpOption_Cloud') $hasCloud 'native cloud capability' }
+        if ($tick -gt 20) { Motion-Boolean (Motion-Field $frame.preJump 'hasJumpOption_Cloud') $hasCloudOption 'native cloud capability' }
         if ($tick -le 20 -and ([Math]::Abs([double]$frame.postPlayer.bottomY - 8000) -gt 0.01 -or [double]$frame.postPlayer.velocity.y -ne 0)) { throw 'Warmup failed to stabilize on real ground.' }
         if ($tick -eq 27 -and $Case.EndsWith('-release-press', [StringComparison]::Ordinal)) {
             Motion-Boolean (Motion-Field $frame.preJump 'releaseJump') $true 'native airborne release edge'
@@ -133,7 +154,7 @@ if ($FunctionsOnly) {
     if ($Run) { throw '-FunctionsOnly cannot execute native processes.' }
     return
 }
-Write-Output 'Native motion plan: classic; 20 released warmup + 160 measured frames per case; fixed naked/Cloud-only equipment.'
+Write-Output 'Native motion plan: classic; 20 released warmup + 160 measured frames per case; per-case equipment (naked, Cloud in a Bottle, or Lilith''s Necklace with or without Bundle of Balloons and featherfall).'
 $motionCases | ForEach-Object { Write-Output "  $_; seed=$Seed; no Boss, no F8, no OS input" }
 if (-not $Run) { Write-Output 'PLAN ONLY: no files, builds, preparation, games or desktop windows created. Use -Run after freezing the intended production build.'; return }
 

@@ -21,6 +21,7 @@
   <ItemGroup>
     <Compile Include="AudioCuePlayer.cs" />
     <Compile Include="ChaiteConfig.cs" />
+    <Compile Include="ChaitePolicyDriver.cs" />
     <Compile Include="DestroyerObservation.cs" />
     <Compile Include="HotkeyPoller.cs" />
     <Compile Include="Log.cs" />

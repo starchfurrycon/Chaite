@@ -13,6 +13,7 @@ namespace Chaite.Plugin
         private readonly ChaiteConfig _config;
         private readonly Type _mainType;
         private readonly Func<int> _myPlayer;
+        private readonly Func<uint> _gameTick;
         private readonly Func<int> _netMode;
         private readonly Func<object> _activeWorldFileData;
         private readonly Func<object, Guid> _worldUniqueId;
@@ -57,11 +58,14 @@ namespace Chaite.Plugin
         private readonly Func<bool> _towerVortex;
         private readonly Func<bool> _towerNebula;
         private readonly Func<bool> _towerStardust;
-        private readonly Func<bool> _empressRageMode;
 
         private readonly Func<object, bool> _npcActive;
         private readonly Func<object, bool> _npcBoss;
         private readonly Func<object, bool> _npcFriendly;
+        // The two other classes of non-threat the probe's NPC-threat scan
+        // excludes, alongside friendly (which covers the player's own minions).
+        private readonly Func<object, bool> _npcTownNpc;
+        private readonly Func<object, bool> _npcCountsAsACritter;
         private readonly Func<object, bool> _npcChaseable;
         private readonly Func<object, bool> _npcInvulnerable;
         private readonly Func<object, bool> _npcImmortal;
@@ -91,6 +95,16 @@ namespace Chaite.Plugin
 
         private readonly Func<object, bool> _projectileActive;
         private readonly Func<object, bool> _projectileHostile;
+        // The window is defined by a PAIR of flags, and the probe is the
+        // authority: it keeps a projectile when active && hostile && !friendly
+        // (tools/GameProbe.cs, CaptureHostileProjectiles). The facade used to
+        // test `hostile` alone and skip on true, which kept the NON-hostile
+        // projectiles and dropped every hostile one -- the exact complement of
+        // what the policy was trained on, so production was blind to the Boss's
+        // danmaku and full of scenery. The offline conformance test
+        // could not catch it: that test formats a window handed to it by the
+        // probe instead of collecting one from the game.
+        private readonly Func<object, bool> _projectileFriendly;
         private readonly Func<object, int> _projectileDamage;
         private readonly Func<object, int> _projectileTimeLeft;
         private readonly Func<object, int> _projectileExtraUpdates;
@@ -104,9 +118,6 @@ namespace Chaite.Plugin
         private readonly Func<object, bool> _projectileBobber;
         private readonly Func<object, float[]> _projectileAi;
         private readonly Func<object, float[]> _projectileLocalAi;
-        private readonly Func<object, int, float> _projectileOldPosX;
-        private readonly Func<object, int, float> _projectileOldPosY;
-        private readonly Func<object, int> _projectileOldPosLength;
         private readonly Func<object, float> _projectileScale;
         private readonly Func<object, float> _projectileRotation;
 
@@ -356,6 +367,12 @@ namespace Chaite.Plugin
 
             _myPlayer = ReflectionAccess.StaticGetter<int>(_mainType, "myPlayer");
             _netMode = ReflectionAccess.StaticGetter<int>(_mainType, "netMode");
+            // The absolute game tick, used to index a tick-keyed replay route.
+            // It is the same counter the probe publishes and the trainer writes
+            // into its action file, which is what makes a recorded route
+            // reproducible; the plugin's applied-frame counter is not it.
+            _gameTick = ReflectionAccess.StaticPropertyGetter<uint>(
+                _mainType, "GameUpdateCount");
             _activeWorldFileData = ReflectionAccess.StaticGetter<object>(_mainType, "ActiveWorldFileData");
             _worldUniqueId = ReflectionAccess.Getter<Guid>(worldFileDataType, "UniqueId");
             _worldFileId = ReflectionAccess.Getter<int>(worldFileDataType, "WorldId");
@@ -400,14 +417,18 @@ namespace Chaite.Plugin
             _towerVortex = ReflectionAccess.StaticGetter<bool>(npcType, "TowerActiveVortex");
             _towerNebula = ReflectionAccess.StaticGetter<bool>(npcType, "TowerActiveNebula");
             _towerStardust = ReflectionAccess.StaticGetter<bool>(npcType, "TowerActiveStardust");
-            // Reading this field is side-effect free. Never call
-            // NPC.ShouldEmpressBeEnraged(), which mutates the Remix rage latch.
-            _empressRageMode = ReflectionAccess.StaticGetter<bool>(npcType,
-                "empressRageMode");
 
             _npcActive = ReflectionAccess.Getter<bool>(npcType, "active");
             _npcBoss = ReflectionAccess.Getter<bool>(npcType, "boss");
             _npcFriendly = ReflectionAccess.Getter<bool>(npcType, "friendly");
+            _npcTownNpc = ReflectionAccess.Getter<bool>(npcType, "townNPC");
+            // CountsAsACritter is a PROPERTY in the pinned 1.4.5.8 build
+            // (get_CountsAsACritter); there is no field of that name. Reading it
+            // with the field-only Getter<T> threw MissingFieldException at facade
+            // construction, which faulted the runtime and failed every probe run
+            // closed. Verified against the pinned assembly's metadata.
+            _npcCountsAsACritter = ReflectionAccess.PropertyGetter<bool>(npcType,
+                "CountsAsACritter");
             _npcChaseable = ReflectionAccess.Getter<bool>(npcType, "chaseable");
             _npcInvulnerable = ReflectionAccess.Getter<bool>(npcType, "dontTakeDamage");
             _npcImmortal = ReflectionAccess.Getter<bool>(npcType, "immortal");
@@ -434,6 +455,7 @@ namespace Chaite.Plugin
 
             _projectileActive = ReflectionAccess.Getter<bool>(projectileType, "active");
             _projectileHostile = ReflectionAccess.Getter<bool>(projectileType, "hostile");
+            _projectileFriendly = ReflectionAccess.Getter<bool>(projectileType, "friendly");
             _projectileDamage = ReflectionAccess.Getter<int>(projectileType, "damage");
             _projectileTimeLeft = ReflectionAccess.Getter<int>(projectileType, "timeLeft");
             _projectileExtraUpdates = ReflectionAccess.Getter<int>(projectileType, "extraUpdates");
@@ -449,12 +471,6 @@ namespace Chaite.Plugin
             _projectileBobber = ReflectionAccess.Getter<bool>(projectileType, "bobber");
             _projectileAi = ReflectionAccess.Getter<float[]>(projectileType, "ai");
             _projectileLocalAi = ReflectionAccess.Getter<float[]>(projectileType, "localAI");
-            _projectileOldPosX = ReflectionAccess.VectorArrayComponentGetter(
-                projectileType, "oldPos", "X");
-            _projectileOldPosY = ReflectionAccess.VectorArrayComponentGetter(
-                projectileType, "oldPos", "Y");
-            _projectileOldPosLength = ReflectionAccess.ArrayLengthGetter(
-                projectileType, "oldPos");
             _projectileScale = ReflectionAccess.Getter<float>(projectileType, "scale");
             _projectileRotation = ReflectionAccess.Getter<float>(projectileType, "rotation");
 
@@ -701,6 +717,11 @@ namespace Chaite.Plugin
         }
 
         public bool IsLocalPlayer(object player, int index) => index == _myPlayer() && _playerActive(player) && !_gameMenu();
+        /// <summary>Absolute game tick, i.e. <c>Main.GameUpdateCount</c>. A
+        /// tick-keyed replay route is indexed by this, never by the plugin's
+        /// applied-frame counter, which only advances on ticks a plan was
+        /// applied for and was measured drifting 240 -> 96965 against it.</summary>
+        public long GameTick() => _gameTick();
         public bool IsDead(object player) => _playerDead(player);
         public bool IsInputBlocked => _blockInput();
         public int GetNpcType(object npc) => _npcTypeId(npc);
@@ -905,8 +926,7 @@ namespace Chaite.Plugin
             var priorityBoss = snapshot.PriorityBoss;
             priorityBoss.Clear();
             PopulatePriorityWorldContext(priorityBoss, _worldSurface(),
-                _maxTilesX(), _wofDrawAreaTop(), _wofDrawAreaBottom(),
-                _empressRageMode());
+                _maxTilesX(), _wofDrawAreaTop(), _wofDrawAreaBottom());
             var underworldLayer = _underworldLayer();
             priorityBoss.UnderworldLayerTiles = underworldLayer;
             priorityBoss.UnderworldLayerKnown = underworldLayer > 0 &&
@@ -1093,6 +1113,177 @@ namespace Chaite.Plugin
             }
             snapshot.LineOfSightToPrimary = true;
             return snapshot;
+        }
+
+        /// <summary>
+        /// Scratch for <see cref="BuildChaiteObservationRow"/>, so the exported
+        /// policy's per-tick observation does not allocate a list of every
+        /// hostile projectile on every frame.
+        /// </summary>
+        private readonly List<ChaiteProjectileObservation>
+            _chaiteProjectileCandidates =
+                new List<ChaiteProjectileObservation>(64);
+
+        /// <summary>
+        /// The observation row the exported policy is driven by, read from the
+        /// same live state the probe's bridge stream records.
+        ///
+        /// The policy was trained on <c>obs_vector</c> of the probe's per-tick
+        /// JSON row, so this has to reproduce that row's fields, not merely
+        /// something equivalent. Two details are load bearing:
+        ///
+        /// <list type="bullet">
+        /// <item>Every position is the entity's top-left <c>position</c>, as
+        /// the probe writes it; the trainer subtracts two of them directly.</item>
+        /// <item>The projectile window is the nearest <c>CHAITE_PROJ_SLOTS</c>
+        /// hostile projectiles by Manhattan distance between the player's
+        /// centre and the projectile's centre. That selection lives in
+        /// <see cref="ChaiteObservation.SelectProjectiles"/> so it is pinned by
+        /// the same conformance fixture as the feature vector; the recorded
+        /// streams are what identify the key, and ordering the fixture's own
+        /// windows by top-left distance instead leaves 48 of 200 rows out of
+        /// order.</item>
+        /// <item>The NPC-class threat block is the nearest non-boss enemy NPC
+        /// within the same 200/400/800 px rings the counts use, because the
+        /// Fishron bubbles and the Sharknado column are NPCs and never appear in
+        /// the projectile window at all.</item>
+        /// </list>
+        ///
+        /// <paramref name="target"/> is the Boss the planner already selected.
+        /// Its position, velocity and life are the expected root's, because
+        /// that is the entity the probe picks as its Boss; its native clocks
+        /// are read straight through. <paramref name="hits"/> is the session's
+        /// own hit count -- see <see cref="ChaitePolicyDriver"/> for why the
+        /// plugin has to count it rather than read it.
+        /// </summary>
+        public ChaiteObservationRow BuildChaiteObservationRow(object player,
+            in TargetSnapshot target, ChaiteObservation observation, float hits)
+        {
+            if (player == null)
+                throw new ArgumentNullException("player");
+            if (observation == null)
+                throw new ArgumentNullException("observation");
+
+            var row = new ChaiteObservationRow
+            {
+                PlayerX = _positionX(player),
+                PlayerY = _positionY(player),
+                PlayerVelocityX = _velocityX(player),
+                PlayerVelocityY = _velocityY(player),
+                PlayerLife = _playerLife(player),
+                PlayerLifeMax = _playerMaxLife(player),
+                WingTime = _playerWingTime(player),
+                WingTimeMax = _playerWingTimeMax(player),
+                DashDelay = _playerDashDelay(player),
+                EocDash = _playerEocDash(player),
+                JumpTicks = _playerJumpTicks(player),
+                Dead = _playerDead(player),
+                Hits = hits,
+                BossX = target.Position.X,
+                BossY = target.Position.Y,
+                BossVelocityX = target.Velocity.X,
+                BossVelocityY = target.Velocity.Y,
+                BossLife = target.Life,
+                BossLifeMax = target.LifeMax,
+                BossAi0 = target.Ai0Known ? target.Ai0 : -1f,
+                BossAi1 = target.Ai1Known ? target.Ai1 : 0f
+            };
+
+            var candidates = _chaiteProjectileCandidates;
+            candidates.Clear();
+            var projectiles = _projectiles();
+            if (projectiles != null)
+            {
+                for (var index = 0; index < projectiles.Length; index++)
+                {
+                    var projectile = projectiles[index];
+                    if (projectile == null || !_projectileActive(projectile))
+                        continue;
+                    // Same predicate as the probe's CaptureHostileProjectiles, so
+                    // the production window is the same set the policy trained on:
+                    // keep a projectile only when it is hostile AND not friendly.
+                    // Testing `hostile` alone and skipping on true kept the
+                    // complement (non-hostile scenery) and dropped the danmaku.
+                    if (!_projectileHostile(projectile) ||
+                        _projectileFriendly(projectile))
+                        continue;
+                    candidates.Add(new ChaiteProjectileObservation
+                    {
+                        X = _positionX(projectile),
+                        Y = _positionY(projectile),
+                        VelocityX = _velocityX(projectile),
+                        VelocityY = _velocityY(projectile),
+                        Width = _width(projectile),
+                        Height = _height(projectile),
+                        Type = _projectileTypeId(projectile)
+                    });
+                }
+            }
+            observation.SelectProjectiles(candidates, row, _width(player),
+                _height(player), observation.ProjectileBuffer);
+
+            // NPC-class threats: Fishron's Detonating Bubbles (NPC 371), the
+            // Sharknado-generating bubbles (372/373) and the Sharknado column
+            // (384) are NPCs, not projectiles, so the window above never
+            // contained them and the observation was blind to Fishron's primary
+            // threat. This mirrors the probe's own scan, classification
+            // included: an enemy is neither friendly (which covers the player's
+            // own minions), nor a town NPC, nor a critter, and the Boss is
+            // already carried by the target snapshot above.
+            //
+            // The nearest threat is the one the probe would have written, so the
+            // live vector matches the rows the policy was trained on rather than
+            // merely being the right width. With no such threat alive the type
+            // stays -1, which is the trainer's own "nothing there" value: zero
+            // would report NPC 0, a real enemy type, at distance zero.
+            var playerCenterX = row.PlayerX + _width(player) * .5f;
+            var playerCenterY = row.PlayerY + _height(player) * .5f;
+            var npcNear200 = 0;
+            var npcNear400 = 0;
+            var npcNear800 = 0;
+            var npcNearest = float.MaxValue;
+            var npcs = _npcs();
+            for (var index = 0; index < npcs.Length; index++)
+            {
+                var npc = npcs[index];
+                if (npc == null || !_npcActive(npc) || _npcBoss(npc))
+                    continue;
+                if (_npcFriendly(npc) || _npcTownNpc(npc) ||
+                    _npcCountsAsACritter(npc))
+                    continue;
+                var separationX = _positionX(npc) + _width(npc) * .5f -
+                    playerCenterX;
+                var separationY = _positionY(npc) + _height(npc) * .5f -
+                    playerCenterY;
+                var distance = (float)Math.Sqrt(separationX * separationX +
+                    separationY * separationY);
+                if (distance < 200f) npcNear200++;
+                if (distance < 400f) npcNear400++;
+                if (distance < 800f) npcNear800++;
+                if (distance >= npcNearest) continue;
+                npcNearest = distance;
+                row.NpcThreatRelativeX = separationX;
+                row.NpcThreatRelativeY = separationY;
+                row.NpcThreatVelocityX = _velocityX(npc);
+                row.NpcThreatVelocityY = _velocityY(npc);
+                row.NpcThreatType = _npcTypeId(npc);
+                row.NpcThreatLife = _npcLife(npc);
+                row.NpcThreatWidth = _width(npc);
+                row.NpcThreatHeight = _height(npc);
+            }
+            row.NpcThreatsWithin200 = npcNear200;
+            row.NpcThreatsWithin400 = npcNear400;
+            row.NpcThreatsWithin800 = npcNear800;
+            if (npcNearest == float.MaxValue) row.NpcThreatType = -1f;
+            return row;
+        }
+
+        /// <summary>The player's life, for the exported policy's hit counter.
+        /// Exposed because the counter has to watch the same field the probe
+        /// watches, and the raw player object is the only place it lives.</summary>
+        public float PlayerLife(object player)
+        {
+            return player == null ? 0f : _playerLife(player);
         }
 
         private SummonWhipOutputObservation ReadSummonWhipOutput(
@@ -1535,10 +1726,7 @@ namespace Chaite.Plugin
             var maxTargetDistanceSquared = _config.MaximumTargetDistancePixels * (float)_config.MaximumTargetDistancePixels;
             var npcs = _npcs();
             bool dukeFishronThreatSource;
-            bool empressThreatSource;
-            ReadSupportedThreatSources(npcs, out dukeFishronThreatSource,
-                out empressThreatSource);
-            ReadEmpressRagePredicate(npcs, snapshot);
+            ReadSupportedThreatSources(npcs, out dukeFishronThreatSource);
             for (var i = 0; i < npcs.Length; i++)
             {
                 var npc = npcs[i];
@@ -1689,9 +1877,7 @@ namespace Chaite.Plugin
                 var contactAi3Known = false;
                 var contactLocalAi0Known = false;
                 var contactLocalAi1Known = false;
-                if ((dukeFishronThreatSource && type >= 371 && type <= 373) ||
-                    (empressThreatSource && type ==
-                        PriorityBossThreatGate.EmpressType))
+                if (dukeFishronThreatSource && type >= 371 && type <= 373)
                 {
                     if (ai == null) ai = _npcAi(npc);
                     contactAi0Known = TryReadNativeFloat(ai, 0,
@@ -1710,8 +1896,7 @@ namespace Chaite.Plugin
                 }
                 var contactTrajectory =
                     PriorityBossThreatGate.SourceBoundNpcTrajectory(type,
-                        contactAi0, contactAi0Known, dukeFishronThreatSource,
-                        empressThreatSource);
+                        dukeFishronThreatSource);
                 var contactSourceBoss =
                     PriorityBossThreatGate.RequiredSourceBossType(
                         contactTrajectory);
@@ -1754,16 +1939,7 @@ namespace Chaite.Plugin
                         NativeDirection = _playerDirection(npc),
                         NativeTargetPlayerKnown = contactNativeTarget >= 0 &&
                             contactNativeTarget < 255,
-                        NativeTargetPlayerIndex = contactNativeTarget,
-                        NativeExpertModeKnown = contactTrajectory ==
-                            ThreatTrajectory.EmpressDashContact &&
-                            snapshot.NativeContextKnown,
-                        NativeExpertMode = snapshot.Difficulty.Expert ||
-                            snapshot.Difficulty.Master,
-                        NativeShouldBeEnragedKnown = contactTrajectory ==
-                            ThreatTrajectory.EmpressDashContact &&
-                            snapshot.PriorityBoss.EmpressRagePredicateKnown,
-                        NativeShouldBeEnraged = snapshot.PriorityBoss.EmpressShouldBeEnraged
+                        NativeTargetPlayerIndex = contactNativeTarget
                     });
                 }
             }
@@ -1803,8 +1979,7 @@ namespace Chaite.Plugin
                         projectile, projectileType, snapshot.PriorityBoss);
                 var trajectory =
                     PriorityBossThreatGate.SourceBoundProjectileTrajectory(
-                        projectileType, dukeFishronThreatSource,
-                        empressThreatSource);
+                        projectileType, dukeFishronThreatSource);
                 var projectileDamage = _projectileDamage(projectile);
                 // Important Moon Lord telegraphs above were captured before
                 // this filter. Fishron type 385 is also retained, but only
@@ -1817,8 +1992,7 @@ namespace Chaite.Plugin
                 var position = new Vec2(_positionX(projectile), _positionY(projectile));
                 var center = new Vec2(position.X + _width(projectile) * .5f, position.Y + _height(projectile) * .5f);
                 var velocity = new Vec2(_velocityX(projectile), _velocityY(projectile));
-                bool isBeam = projectileType == 455 || projectileType == 919 ||
-                    projectileType == 923;
+                bool isBeam = projectileType == 455;
                 var ai = isBeam || trajectory != ThreatTrajectory.Linear
                     ? _projectileAi(projectile) : null;
                 int updates = isBeam ? 1 : Math.Max(1, _projectileExtraUpdates(projectile) + 1);
@@ -1853,47 +2027,14 @@ namespace Chaite.Plugin
                           PriorityBossThreatGate.RequiredSourceBossType(
                               trajectory)
                   };
-                // Projectile 872's native Colliding override does not use its
-                // current body position.  It reads the first 50 entries of
-                // oldPos (even indices only), so a linear snapshot would leave
-                // the planner blind to the rainbow trail.  Capture the fixed
-                // history in the same pass; a short/null/non-finite array stays
-                // unknown and the Core gate will keep the neutral hold active.
-                if (projectileType == 872)
-                {
-                    RainbowTrailHistory50 history;
-                    if (TryReadRainbowTrailHistory(projectile, out history))
-                    {
-                        // Promote the source-bound unknown only after the
-                        // complete native collision history has been proven.
-                        // This keeps malformed/short oldPos arrays on the
-                        // neutral-hold path while allowing the exact 872
-                        // model to participate immediately in this frame.
-                        threat.Trajectory = ThreatTrajectory.EmpressRainbowTrail;
-                        threat.NativeIdentity = _whoAmI(projectile);
-                        threat.TrajectoryAi0 = Ai(ai, 0);
-                        threat.SourceBossContextKnown = true;
-                        threat.SourceBossType =
-                            PriorityBossThreatGate.EmpressType;
-                        threat.NativeRainbowHistoryKnown = true;
-                        threat.NativeRainbowHistory = history;
-                    }
-                }
                 PopulateProjectileNativeTarget(ref threat, ai);
                 if (isBeam)
                 {
                     var localAi = _projectileLocalAi(projectile);
-                    threat.Geometry = projectileType == 455
-                        ? ThreatGeometry.MoonLordDeathray
-                        : projectileType == 919
-                            ? ThreatGeometry.EmpressLance
-                            : ThreatGeometry.EmpressSunDance;
+                    threat.Geometry = ThreatGeometry.MoonLordDeathray;
                     threat.BeamOrigin = center;
                     var nativeAngle = Ai(ai, 0);
-                    threat.BeamDirection = projectileType == 919
-                        ? new Vec2((float)Math.Cos(nativeAngle),
-                            (float)Math.Sin(nativeAngle))
-                        : velocity;
+                    threat.BeamDirection = velocity;
                     threat.BeamAngularVelocity = Ai(ai,0);
                     threat.BeamBaseAngle = Ai(ai,0);
                     threat.BeamAngle = _projectileRotation(projectile);
@@ -1902,20 +2043,12 @@ namespace Chaite.Plugin
                     threat.BeamScale = _projectileScale(projectile);
                     threat.BeamScaleLimit = 1f;
                     int owner = (int)Ai(ai,1);
-                    if (projectileType != 919 && owner >= 0 &&
+                    if (owner >= 0 &&
                         owner < npcs.Length && npcs[owner] != null &&
                         _npcActive(npcs[owner]))
                     {
-                        if (projectileType == 923)
-                        {
-                            threat.BeamOrigin = new Vec2(
-                                _positionX(npcs[owner]),
-                                _positionY(npcs[owner])) +
-                                new Vec2(_width(npcs[owner]) * .5f,
-                                    _height(npcs[owner]) * .5f);
-                        }
                         threat.BeamSourceVelocity = new Vec2(_velocityX(npcs[owner]),_velocityY(npcs[owner]));
-                        if (projectileType == 455 && _npcTypeId(npcs[owner]) == 400) threat.BeamScaleLimit = .4f;
+                        if (_npcTypeId(npcs[owner]) == 400) threat.BeamScaleLimit = .4f;
                     }
                 }
                 else
@@ -2127,22 +2260,20 @@ namespace Chaite.Plugin
                 type == 370 || type == 396 || type == 397 || type == 398 ||
                 type == 400 || type == 439 || type == 440 ||
                 type >= 454 && type <= 459 || type == 521 || type == 522 ||
-                type == 523 || type == 636 || type == 668;
+                type == 523 || type == 668;
         }
 
         private void ReadSupportedThreatSources(object[] npcs,
-            out bool dukeFishron, out bool empress)
+            out bool dukeFishron)
         {
             dukeFishron = false;
-            empress = false;
             if (npcs == null) return;
             for (var slot = 0; slot < npcs.Length; slot++)
             {
                 var npc = npcs[slot];
                 if (npc == null || !_npcActive(npc)) continue;
                 var type = _npcTypeId(npc);
-                if (type != PriorityBossThreatGate.DukeFishronType &&
-                    type != PriorityBossThreatGate.EmpressType)
+                if (type != PriorityBossThreatGate.DukeFishronType)
                     continue;
                 // Only a live hostile Boss in its canonical native array slot
                 // can authorize a family tag. Minions, stale objects, and a
@@ -2150,17 +2281,15 @@ namespace Chaite.Plugin
                 if (_whoAmI(npc) != slot || !_npcBoss(npc) ||
                     _npcFriendly(npc) || _npcLife(npc) <= 0)
                     continue;
-                if (type == PriorityBossThreatGate.DukeFishronType)
-                    dukeFishron = true;
-                else empress = true;
-                if (dukeFishron && empress) return;
+                dukeFishron = true;
+                return;
             }
         }
 
         private static void PopulatePriorityWorldContext(
             PriorityBossNativeContext context, double worldSurfaceTiles,
             int worldWidthTiles, int wallDrawTopPixels,
-            int wallDrawBottomPixels, bool empressRageMode)
+            int wallDrawBottomPixels)
         {
             context.WorldSurfaceTiles = worldSurfaceTiles;
             context.WorldWidthTiles = worldWidthTiles;
@@ -2172,8 +2301,6 @@ namespace Chaite.Plugin
             // Wall's scan. Zero remains a legitimate observed pixel boundary.
             context.WallOfFleshDrawAreaKnown = wallDrawTopPixels >= 0 &&
                 wallDrawBottomPixels >= 0;
-            context.EmpressRageMode = empressRageMode;
-            context.EmpressRageModeKnown = true;
         }
 
         private static void PopulateNativeTargetFields(ref TargetSnapshot target,
@@ -2202,56 +2329,6 @@ namespace Chaite.Plugin
                 target.LocalAi2Known;
         }
 
-        private void ReadEmpressRagePredicate(object[] npcs,
-            CombatSnapshot snapshot)
-        {
-            var context = snapshot.PriorityBoss;
-            context.EmpressRagePredicateKnown = false;
-            context.EmpressPredicateNpcSlotKnown = false;
-            context.EmpressPredicateNpcSlot = -1;
-            context.EmpressFirstBossAboveWorldSurface = false;
-            context.EmpressShouldBeEnraged = false;
-            if (!snapshot.NativeContextKnown ||
-                !context.EmpressRageModeKnown)
-                return;
-            if (!snapshot.Difficulty.Remix)
-            {
-                context.EmpressRagePredicateKnown = true;
-                context.EmpressShouldBeEnraged =
-                    snapshot.Difficulty.DayTime;
-                return;
-            }
-            if (context.EmpressRageMode)
-            {
-                context.EmpressRagePredicateKnown = true;
-                context.EmpressShouldBeEnraged = true;
-                return;
-            }
-            if (!context.WorldGeometryKnown || npcs == null) return;
-
-            // Exact read-only equivalent of ShouldEmpressBeEnraged's Remix
-            // scan: vanilla uses the first type-636 array entry and does not
-            // test active. Do not call the original method because it writes
-            // NPC.empressRageMode.
-            for (var slot = 0; slot < npcs.Length; slot++)
-            {
-                var npc = npcs[slot];
-                if (npc == null || _npcTypeId(npc) != 636) continue;
-                var centerY = _positionY(npc) + _height(npc) * .5f;
-                if (!IsFinite(centerY)) return;
-                context.EmpressPredicateNpcSlotKnown = true;
-                context.EmpressPredicateNpcSlot = slot;
-                context.EmpressFirstBossAboveWorldSurface =
-                    centerY < context.WorldSurfaceTiles * 16d;
-                context.EmpressShouldBeEnraged =
-                    context.EmpressFirstBossAboveWorldSurface;
-                context.EmpressRagePredicateKnown = true;
-                return;
-            }
-            // No type-636 entry is a known false result in the native method.
-            context.EmpressRagePredicateKnown = true;
-        }
-
         private static bool TryReadNativeFloat(float[] values, int index,
             out float value)
         {
@@ -2260,52 +2337,6 @@ namespace Chaite.Plugin
                 return false;
             value = values[index];
             return IsFinite(value);
-        }
-
-        /// <summary>
-        /// Reads the portion of Projectile.oldPos used by type 872's native
-        /// collision routine.  This helper intentionally performs no array
-        /// allocation and accepts zero entries (vanilla's uninitialised trail
-        /// sentinel); only missing or non-finite coordinates make the history
-        /// unavailable.  Reflection delegates are optional in synthetic
-        /// fixtures, so a missing delegate/field fails closed instead of
-        /// throwing from the per-frame capture loop.
-        /// </summary>
-        private bool TryReadRainbowTrailHistory(object projectile,
-            out RainbowTrailHistory50 history)
-        {
-            history = default(RainbowTrailHistory50);
-            if (projectile == null || _projectileOldPosLength == null ||
-                _projectileOldPosX == null || _projectileOldPosY == null)
-                return false;
-            try
-            {
-                var length = _projectileOldPosLength(projectile);
-                if (length < RainbowTrailHistory50.Length) return false;
-                for (var index = 0; index < RainbowTrailHistory50.Length;
-                    index++)
-                {
-                    var x = _projectileOldPosX(projectile, index);
-                    var y = _projectileOldPosY(projectile, index);
-                    if (!IsFinite(x) || !IsFinite(y))
-                    {
-                        history = default(RainbowTrailHistory50);
-                        return false;
-                    }
-                    history.Set(index, new Vec2(x, y));
-                }
-                return true;
-            }
-            catch (Exception)
-            {
-                // A modded/older Terraria build may expose a different field
-                // shape.  The strict native trajectory must then remain
-                // unknown; swallowing the adapter exception preserves the
-                // plugin's fail-closed contract and keeps the game thread
-                // alive.
-                history = default(RainbowTrailHistory50);
-                return false;
-            }
         }
 
         private static void PopulateProjectileNativeTarget(
@@ -2331,17 +2362,6 @@ namespace Chaite.Plugin
                 }
                 return;
             }
-            if (threat.Trajectory !=
-                    ThreatTrajectory.EmpressRainbowStreak)
-                return;
-
-            float encodedTarget;
-            if (!TryReadNativeFloat(ai, 0, out encodedTarget) ||
-                encodedTarget < 0f || encodedTarget >= 255f ||
-                encodedTarget != (int)encodedTarget)
-                return;
-            threat.NativeTargetPlayerKnown = true;
-            threat.NativeTargetPlayerIndex = (int)encodedTarget;
         }
 
         private static void ReadPriorityBossNpcContext(
@@ -2438,30 +2458,6 @@ namespace Chaite.Plugin
                     context.DukeFishrons.Add(fishron);
                     break;
 
-                case 636:
-                    var empress = new EmpressNativeCombatObservation
-                    {
-                        Known = snapshot.NativeContextKnown &&
-                            context.EmpressRagePredicateKnown && target.Key >= 0 &&
-                            target.Ai0Known && target.Ai1Known && target.Ai2Known &&
-                            target.Ai3Known && IsFinite(target.Center.Y),
-                        NpcKey = target.Key,
-                        DayTime = snapshot.Difficulty.DayTime,
-                        RemixWorld = snapshot.Difficulty.Remix,
-                        RemixRageMode = context.EmpressRageMode,
-                        BossAboveWorldSurface =
-                            context.EmpressFirstBossAboveWorldSurface,
-                        Ai0AttackState = target.Ai0,
-                        Ai1AttackTimer = target.Ai1,
-                        Ai2AttackIndex = target.Ai2,
-                        Ai3PhaseAndRage = target.Ai3
-                    };
-                    empress.NativeShouldBeEnraged =
-                        context.EmpressShouldBeEnraged;
-                    CloseInvalid(ref empress);
-                    context.Empresses.Add(empress);
-                    break;
-
                 case 668:
                     var deer = new DeerclopsNativeTimerObservation
                     {
@@ -2514,13 +2510,6 @@ namespace Chaite.Plugin
 
         private static void CloseInvalid(
             ref DukeFishronNativeEnrageObservation value)
-        {
-            string ignored;
-            if (!PriorityBossNativeContextContract.TryValidate(in value,
-                out ignored)) value.Known = false;
-        }
-
-        private static void CloseInvalid(ref EmpressNativeCombatObservation value)
         {
             string ignored;
             if (!PriorityBossNativeContextContract.TryValidate(in value,
@@ -2927,8 +2916,6 @@ namespace Chaite.Plugin
 
                 case BossSummonKind.TruffleWormFishing:
                     return ExecuteFishronStart(player, plan, tick, alreadyIssued);
-                case BossSummonKind.PrismaticLacewing:
-                    return ExecuteLacewingStart(player, plan, tick, alreadyIssued);
                 case BossSummonKind.GuideVoodooDoll:
                     return ExecuteWallStart(player, plan, tick, alreadyIssued);
                 default:
@@ -3049,58 +3036,6 @@ namespace Chaite.Plugin
                 }
             }
             return false;
-        }
-
-        private BossStartTick ExecuteLacewingStart(object player, BossStartPlan plan, int tick, bool alreadyIssued)
-        {
-            var lacewing = FindNpc(661);
-            if (lacewing == null)
-            {
-                return ExecuteSummonPulse(player, plan, tick, alreadyIssued, false,
-                    new Vec2(_positionX(player) + _width(player) * .5f + 72f,
-                        _positionY(player) + _height(player) * .5f - 24f));
-            }
-
-            var weaponSlot = plan.CombatWeaponSlot >= 0 &&
-                plan.CombatWeaponSlot < 10 ? plan.CombatWeaponSlot : -1;
-            if (weaponSlot < 0)
-                return Invalid("the admitted combat output slot is unavailable for the lacewing start");
-            SetSelectedItem(player, weaponSlot);
-            var items = _inventory(player);
-            var weapon = _weaponSelectionSnapshot;
-            ReadWeaponInto(player, items, weaponSlot, weapon);
-            var target = new TargetSnapshot
-            {
-                Position = new Vec2(_positionX(lacewing), _positionY(lacewing)),
-                Velocity = new Vec2(_velocityX(lacewing), _velocityY(lacewing)),
-                Width = _width(lacewing),
-                Height = _height(lacewing)
-            };
-            var playerCenter = new Vec2(_positionX(player) + _width(player) * .5f, _positionY(player) + _height(player) * .5f);
-            ClearCombatControls(player);
-            var shot = WeaponAimSolver.Solve(weapon.Profile, playerCenter, target.Center, target.Velocity);
-            AimAt(player, shot.AimWorld);
-            var firingItem = weaponSlot >= 0 && weaponSlot < items.Length ? items[weaponSlot] : null;
-            var readyToEmit = shot.CanFire && firingItem != null &&
-                _canHitLine(player, lacewing) && SummonActionGate.ShouldFire(
-                weapon.IsUsable, weapon.HasAmmo, GetSelectedItem(player) == weaponSlot,
-                _itemAutoReuse(firingItem), _itemChannel(firingItem),
-                _releaseUseItem(player));
-            var unholyTridentDryRouteAdmitted = !readyToEmit ||
-                !UnholyTridentCatalog.RequiresDryTrajectoryGate(
-                    _itemTypeId(firingItem), _itemShoot(firingItem)) ||
-                IsUnholyTridentDryTrajectory(player, shot.AimWorld);
-            var reviewedDryRouteAdmitted = !readyToEmit ||
-                IsReviewedDryTrajectory(player, shot.AimWorld,
-                    _itemTypeId(firingItem), _itemShoot(firingItem));
-            var nativeWindRouteAdmitted = !readyToEmit ||
-                AllowsNativeWindEmission(weapon.Profile.Profile == null ?
-                    OutputRouteKind.Unspecified :
-                    weapon.Profile.Profile.OutputKind);
-            SetControl(player, "controlUseItem", readyToEmit &&
-                unholyTridentDryRouteAdmitted && reviewedDryRouteAdmitted &&
-                nativeWindRouteAdmitted);
-            return new BossStartTick { Issued = true, StillValid = tick <= plan.TimeoutTicks, ControlsApplied = true };
         }
 
         private BossStartTick ExecuteWallStart(object player, BossStartPlan plan, int tick, bool alreadyIssued)
@@ -3706,6 +3641,18 @@ namespace Chaite.Plugin
         {
             ClearPendingMobilityValidation();
             _pendingMobilityFrame = _sightFrame;
+            // The exported policy wrote this plan, so its dash is a direct control
+            // command rather than a trajectory scored against a known snapshot.
+            // Every check below is a post-condition of the FORMULA route's dash
+            // contract -- "the left/right/dash edges and the dash phase must be
+            // exactly what the plan predicted" -- and a policy that decides every
+            // tick cannot satisfy it. Arming it anyway rejected the learned dash and
+            // replaced it with all-controls-neutral (section 40). ApplyPlan already
+            // set controlDash from plan.Dash, so returning here leaves the policy's
+            // command in place; vanilla ignores a dash that is not ready, which is
+            // the only safety the check was providing for a per-tick policy.
+            if (plan.PolicyOwnsMobility)
+                return;
             PrepareLateMobilityFallback(player, in plan.LateMobilityFallback);
             if (plan.GravityControl != 0)
             {

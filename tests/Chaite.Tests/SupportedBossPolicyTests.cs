@@ -38,8 +38,10 @@ namespace Chaite.Tests
         {
             True(SupportedBossPolicy.IsSupportedBossType(
                 SupportedBossPolicy.DukeFishronType));
-            True(SupportedBossPolicy.IsSupportedBossType(
-                SupportedBossPolicy.EmpressOfLightType));
+            // The Empress of Light left the production scope, so her NPC id is
+            // refused exactly like every other unreviewed Boss.
+            False(SupportedBossPolicy.IsSupportedBossType(636));
+            False(SupportedBossPolicy.IsKnownBossSummonItem(4961));
             False(SupportedBossPolicy.IsSupportedBossType(222));
             False(SupportedBossPolicy.IsSupportedBossType(4));
             False(SupportedBossPolicy.IsSupportedBossType(113));
@@ -57,9 +59,8 @@ namespace Chaite.Tests
             True(SupportedBossPolicy.TryValidateActiveBossTypes(
                 new List<int> { 370 }, out type, out reason));
             Equal(370, type);
-            True(SupportedBossPolicy.TryValidateActiveBossTypes(
+            False(SupportedBossPolicy.TryValidateActiveBossTypes(
                 new List<int> { 636 }, out type, out reason));
-            Equal(636, type);
             False(SupportedBossPolicy.TryValidateActiveBossTypes(
                 new List<int>(), out type, out reason));
             False(SupportedBossPolicy.TryValidateActiveBossTypes(
@@ -375,9 +376,9 @@ namespace Chaite.Tests
             // Native Eater heads are Boss roots despite NPC.boss=false.
             npcs[12] = new ScopeNpc { Active = true, Boss = false, Type = 13,
                 Who = 12, RealLife = -1, Generation = 4 };
-            npcs[13] = new ScopeNpc { Active = true, Boss = true, Type = 636,
+            npcs[13] = new ScopeNpc { Active = true, Boss = true, Type = 439,
                 Who = 13, RealLife = 13, Generation = 5 };
-            npcs[14] = new ScopeNpc { Active = true, Boss = true, Type = 636,
+            npcs[14] = new ScopeNpc { Active = true, Boss = true, Type = 439,
                 Who = 4, RealLife = -1, Generation = 6 };
             // A supported single-root type with a forwarded realLife identity
             // must remain visible as an invalid extra root, not collapse into 4.
@@ -425,11 +426,15 @@ namespace Chaite.Tests
             Equal(370, observation.ActiveBossTypes[1]);
             Equal(13, observation.ActiveBossTypes[2]);
             Equal(13, observation.ActiveBossKeys[3]);
-            Equal(-1, observation.ActiveBossGenerations[3]);
-            Equal(636, observation.ActiveBossTypes[3]);
+            // An unsupported root in its own array slot keeps its own
+            // generation: the canonical-identity test only demands the
+            // realLife/whoAmI agreement for supported types, precisely so that
+            // an unsupported multi-part family is never collapsed.
+            Equal(5, observation.ActiveBossGenerations[3]);
+            Equal(439, observation.ActiveBossTypes[3]);
             Equal(14, observation.ActiveBossKeys[4]);
             Equal(-1, observation.ActiveBossGenerations[4]);
-            Equal(636, observation.ActiveBossTypes[4]);
+            Equal(439, observation.ActiveBossTypes[4]);
             Equal(15, observation.ActiveBossKeys[5]);
             Equal(-1, observation.ActiveBossGenerations[5]);
             Equal(370, observation.ActiveBossTypes[5]);
@@ -656,11 +661,8 @@ namespace Chaite.Tests
         {
             string reason;
             var fishron = ProductionFishronStartPlan();
-            var empress = ProductionEmpressStartPlan();
-            True(fishron != null && empress != null);
+            True(fishron != null);
             True(SupportedBossPolicy.TryValidateStartPlan(fishron,
-                out reason), reason);
-            True(SupportedBossPolicy.TryValidateStartPlan(empress,
                 out reason), reason);
 
             True(fishron.TrySetAdmittedCombatWeaponSlot(0));
@@ -668,12 +670,6 @@ namespace Chaite.Tests
                 out reason), reason);
             fishron.CombatWeaponSlot = 1;
             RejectedStartPlan(fishron);
-
-            True(empress.TrySetAdmittedCombatWeaponSlot(2));
-            True(SupportedBossPolicy.TryValidateStartPlan(empress,
-                out reason), reason);
-            empress.CombatWeaponSlot = 3;
-            RejectedStartPlan(empress);
 
             var forged = ProductionFishronStartPlan();
             forged.SummonSlot = 2;
@@ -688,22 +684,6 @@ namespace Chaite.Tests
             forged.InteractionWorld = new Vec2(120f, 220f);
             RejectedStartPlan(forged);
             forged = ProductionFishronStartPlan();
-            forged.CombatWeaponSlot = 2;
-            RejectedStartPlan(forged);
-
-            forged = ProductionEmpressStartPlan();
-            forged.SummonSlot = forged.ActionSlot = 5;
-            RejectedStartPlan(forged);
-            forged = ProductionEmpressStartPlan();
-            forged.ActionSlot = 4;
-            RejectedStartPlan(forged);
-            forged = ProductionEmpressStartPlan();
-            forged.TimeoutTicks = 481;
-            RejectedStartPlan(forged);
-            forged = ProductionEmpressStartPlan();
-            forged.InteractionWorld = new Vec2(1f, 0f);
-            RejectedStartPlan(forged);
-            forged = ProductionEmpressStartPlan();
             forged.CombatWeaponSlot = 2;
             RejectedStartPlan(forged);
 
@@ -738,20 +718,6 @@ namespace Chaite.Tests
                 { Slot = 1, Type = 2673, Stack = 1 });
             context.Hotbar.Add(new HotbarItemSnapshot
                 { Slot = 4, Type = 2291, Stack = 1 });
-            return BossStartPlanner.SelectProduction(context);
-        }
-
-        private static BossStartPlan ProductionEmpressStartPlan()
-        {
-            var context = new BossStartContext
-            {
-                DayTime = false,
-                Time = 0d,
-                ZoneHallow = true,
-                ZoneOverworld = true
-            };
-            context.Hotbar.Add(new HotbarItemSnapshot
-                { Slot = 3, Type = 4961, Stack = 1 });
             return BossStartPlanner.SelectProduction(context);
         }
 

@@ -1,5 +1,246 @@
 # 更新记录
 
+## v0.7 进行中 · 范围收窄为只针对猪鲨：光女与武器接管移除（2026-09-23）
+
+**范围变更（使用者定案）**：光之女皇（NPC type 636）**整体退出范围**——不再接管、
+不再准入、不再有逻辑与前端；生产接管白名单只剩猪鲨公爵（NPC type 370）。
+同时移除的还有明胶女士鞍（MountID 50）路线与光女的扫帚（MountID 23）路线。
+
+程序**只接管走位，不再接管武器与攻击**：不再自动开火、瞄准或切换输出武器。
+
+验收口径随之改为按**每套配装**判定：猪鲨 4 套（strong-wing / fairy-wing /
+trusty-chillet / lilith-wolf）各自胜率 **≥ 90%**；**不再考核无伤率**。
+
+以下历史条目按当时的事实保留，不再改写。
+
+### 验收结果：strong-wing 达标，另外三套未达标（2026-09-23 挂载彩排）
+
+判定用 `training/mount-policy.ps1`，它走的是生产路径（`ExportedPolicy` 经
+`LearnedPolicy.ForRoute`），每场 40 局。测量组：
+`InputCoreSha256 = 99A6D71274E1532FC88614383CC2A5C0…`、
+`InputPluginSha256 = 75D443A41D4D0D6AFFC7478367432751…`。
+
+| 配装 | 挂载胜率 | 判定 |
+|---|---|---|
+| **strong-wing**（fsw121d） | **97.4%（38/39）** | **达标** |
+| fairy-wing（ffw121） | 43.6% | 未达标 |
+| trusty-chillet（fch121） | 0.0% | 未达标 |
+| lilith-wolf（flw121） | 0.0% | 未达标 |
+
+strong-wing 三选一取 `fsw121d`（`fsw121q` 89.7%、`fsw121p` 引擎侧不读
+`CHAITE_OBS_BOSS_PROX`，不可挂载）。它的导出策略随本仓库发布在
+`policies/fishron-strong-wing.policy.bin`，
+sha256 `40C41D7542DD544AC3221B826FFC8BEC27429014B72FEFA4A03DEEDC1A853287`。
+
+另外三套的失败**不是接管链路缺陷**。本轮把候选原因逐个查过并修掉，没有一个能解释
+它们：场地分层（平台占用仍是 0.0%）、`frameSkip` 训练/生产不一致（已统一为 1）、
+验收门槛过期、挂载闸门查错日志字符串（假阴性）、公式路线的后置条件驳回策略 dash
+（已修，驳回数 236/511 降到 0，`fch121` 存活时间 +72%，但胜率不动）。
+剩下的解释是策略能力：两套坐骑路线在两层平台上的占用率是 0.0%，而观测里没有地形
+特征，策略无法学会使用平台；补地形特征会改变 121 维观测布局，需要全部重训。
+
+**挂载方式**（程序只从环境变量读策略，`config.json` 里没有策略字段）：
+
+```powershell
+$env:CHAITE_POLICY_FILE      = '<仓库>\policies\fishron-strong-wing.policy.bin'
+$env:CHAITE_POLICY_FORMAT    = 'exported'   # 必须；否则 residual 加载器会抢这个变量
+$env:CHAITE_PROJ_SLOTS       = '12'
+$env:CHAITE_PROJ_SORT        = 'threat'
+$env:CHAITE_PROJ_COLLAPSE    = '1'
+$env:CHAITE_OBS_WORLD_BOUND  = '18'
+```
+
+`CHAITE_POLICY_ROUTES` **不需要**：`LearnedPolicy.EnsureConfigured` 在
+`CHAITE_POLICY_FORMAT=exported` 时主动让位（`LearnedPolicy.cs:216`）。
+`CHAITE_BRIDGE_FILE`、`CHAITE_ROUTE_FILE`、`CHAITE_OBS_AGG`、`CHAITE_PROBE_OUT`、
+`CHAITE_EPISODES`、`CHAITE_RUN_MAX_TICKS` 都是训练/彩排用的，生产环境应保持未设置。
+
+### 本轮同时修掉的接管链路缺陷
+
+- `ControlPlan.PolicyOwnsMobility`（`Models.cs`）：导出策略写 plan 时置位，
+  `TerrariaFacade.PreparePendingMobilityValidation` 随即提前返回，不再用**公式路线**的
+  dash 前置/后置条件去校验一个每 tick 现决策的策略。此前被驳回的 dash 会被替换成
+  `all-controls-neutral`，策略学到的 dash 根本没到游戏里。
+- `publish-github.ps1`：`policies/` 此前**不在**发行白名单里（白名单是显式枚举，
+  根文件 + `src`/`tests` 按扩展名 + `tools`/`docs` 按名字），所以策略文件与
+  `policies/README.md` 从来不会随发行出去。现已显式加入三个文件。
+- `publish-github.ps1` 的私有路径审计此前**一直失败**：`tools/train-policy.ps1`
+  内嵌三处本机绝对路径、`tests/Chaite.Tests/fixtures/obsb1.json` 的 `checkpoint`
+  字段内嵌一处。前者改为环境变量默认（`CHAITE_SEARCH_POLICY_DIR` / `CHAITE_SEARCH_LOG`
+  / `CHAITE_RUNWAVE`），后者改为仓库相对路径。
+
+## v0.7 进行中 · 建枚举器本体，并量出它的评估器还差多远（2026-09-18 第五轮）
+
+**方法更正**：此前几轮我一直在**手写策略权重**（`hold-dash-probe.txt`、`hold-while-far.txt`、
+`hold-then-issue-3way.txt` 里的 `w[4]=1.5`、`hw[9]=2.5` 都是我手工挑的）。这违反了
+"交给暴力枚举、只优化枚举逻辑"的要求。**这三个文件已删除**，本轮起不再手工构造策略。
+
+### 现状：所谓"训练"其实是随机爬山，不是枚举
+
+`tools/train-policy.ps1:504` 用 `-Mode perturb -Base $bestFile -Scale $scale -Seed ...`，
+即**对当前最优做高斯随机扰动**。它没有覆盖性，也无法回答"搜过哪些、还剩哪些"。
+
+### 新增：路线枚举器 `src/Chaite.Core/RouteEnumerator.cs`
+
+在闭环内枚举路线，动作字母表固定为 **12**（3 个方向 × 跳跃 × 冲刺）——正是目标里
+"不是 12^N 逐 tick 穷举"的那个 12。三个机制让它不必展开 12^N：
+
+1. **支配剪枝**：同一 bucket 的偏路线只保留受击更少的那条；
+2. **beam**：每 tick 只留前沿最好的 N 条；
+3. **启发式排序**：先按受击数、再按到目标的估计距离、最后按深度。
+
+**排序给出一条可依赖的性质**：受击数优先 ⇒ 只要前沿里还有零受击的节点，就绝不会去展开
+带受击的节点。因此**第一个被弹出的目标就是受击最少的目标**；若它不是零受击，
+那是"该边界内不存在无伤路线"的证据，而不是"搜早了"。报告里 `Clean` 与 `Found` 分开，
+`Truncated`／`PrunedByDominance`／`PrunedByBeam`／`RefusalsByReason` 全部计数——
+**任何放弃完备性的边界都不许静默**。
+
+### 枚举器自己的两个 bug，由测试抓出
+
+- **目标 bucket 被当成"已到达"**：原先把起始 bucket 预置为"0 次受击已到达"，
+  而"闭合回路"恰恰是回到这个 bucket ⇒ **目标本身被支配剪枝删掉了**，搜索永远返回空。
+- **bucket 塌掉了时间维**：测试世界里目标是 `(位置, 时间)` 的区域，若 bucket 只按位置，
+  目标会在早一 tick 就被记成已到达，同样剪掉目标。真实世界的 bucket 必须包含
+  一切与"是否满足目标"有关的维度。
+
+两个都是"搜索空间把答案删掉了"这一类错误，和 §52 的教训同源。
+
+### 量出来的关键数字：评估器只覆盖 0.5%
+
+新增 `PlayerForwardModel`（组合已验证的 `HorizontalMotion`／`JumpMotion`，不引入新常量）
+与 `--forward-model-trace` 复算工具，对**引擎实测的 4633 帧密集轨迹**逐帧复算：
+
+```
+pairs=4632  modeled=22 (0.5%)   maxPositionError=4.40 px
+GROUND contacts=15  maxPositionError=0.37 px
+REFUSED  Wings=1275  Dashing=1220  Jumping=1129  RocketBoots=985
+```
+
+地面接触精度 **0.37 px**（可用），但覆盖率只有 **0.5%**——翅膀／冲刺／跳跃／火箭靴
+占掉几乎全部 tick。**这就是枚举跑不动的真正原因**：没有便宜的评估器，每个候选都要
+花 20–200 秒探针，枚举几千个候选要几十小时，枚举不完。
+
+⇒ **下一步不是继续调参，而是把评估器的覆盖面补上**（翅膀／冲刺／跳跃／火箭靴），
+让枚举能真正跑起来。枚举器本体已经就位且可离线测试。
+
+- 验证：`Chaite.Tests.exe` **762 项通过 0 失败**（新增 4 项枚举器契约测试）。
+
+## v0.7 进行中 · 让「冲刺择时」第一次变得可搜索（2026-09-18 第四轮）
+
+上一轮把 latch 移到"真正发出"，但结论是**光移动 latch 不够**：残差结构表达不了
+"按住 N tick 再放"。本轮补上那两个前提。
+
+- **冲刺就绪度进特征**：向量 38 → **40 维**，最后两项是 `MobilitySnapshot.DashReady`
+  与 `CanDash`。这是策略能区分"冲刺被按住了"与"冲刺已经花掉了"的前提。
+  缺失的 mobility 快照读作不可用（fail-closed），不谎报可用。
+- **冲刺头 2 路 → 3 路**（`HeadCount` 10 → 11）：class 0 不动、class 1 **只按住**、
+  class 2 **只强行打开**。旧的两路翻转把"按住"和"在脚本没提议的 tick 上打开"
+  合成同一个动作，所以"想推迟一次冲刺"必然先在巡航期浪费掉它。
+- **引擎内对照证明分支确实被执行**（同一用例、同一场地、同种子、同一组权重与阈值，
+  **唯一变量是头的路数**）：
+
+  | 采样 tick 240–420（巡航期） | `plan.dash` | 观察到的 `eocDash` |
+  |---|---|---|
+  | 旧 2 路·距离门控 | 几乎每一行 `True` | 反复 `15`（**在巡航期强行开冲刺**） |
+  | 新 3 路·距离门控 | **每一行 `False`** | `0`（只压不推） |
+
+  而 495／540／600 等 tick 仍出现 `eocDash=15`，说明近了照样会发出。
+  三场完整结果：
+
+  | 运行 | status | hits | deaths | ticks | bossDamage | minLife |
+  |---|---|---|---|---|---|---|
+  | 基线（无策略） | win | 3 | 0 | 4632 | 78000 | 214 |
+  | 旧 2 路·距离门控 | loss | 12 | 1 | 2749 | 43573 | 0 |
+  | 新 3 路·距离门控 | loss | 13 | 1 | 2157 | 30366 | 0 |
+
+- **基线没有被改动**：改特征后不带策略跑同一用例仍是
+  `win, hits=3, deaths=0, ticks=4632, bossDamage=78000, minLife=214, SuccessNoDeath`，
+  与改前**逐位一致**（无策略时残差提前返回，特征与头数都与它无关）。
+- **诚实结论**：这三场里手工策略仍然没有赢。本轮证明的是**择时第一次可以被表达**，
+  不是"已经找到好时机"。`hold-then-issue-3way.txt` 是手工假设，不是搜索结果；
+  真正的搜索是下一步。
+- **维度同时写在两处，属于本仓库反复踩到的漂移类**，因此新增契约测试
+  `PolicyLayoutMatchesTheToolThatWritesIt`：钉住 `InputCount == 40`、`HeadCount == 11`、
+  断言 `tools/new-policy.ps1` 的 `$input_`/`$heads` 与 C# 一致，并断言最后两项特征
+  确实是冲刺标志、缺失快照不谎报可用。
+- **新增 `DashHeadSeparatesHoldingFromForcing`**：hold 类在脚本没提议时**不得**打开冲刺，
+  force 类可以；两者在有提议时都按各自语义生效。
+- **变异验证**（四个变异都编译通过，且对应测试确实失败）：latch 还原到"提议时置位"
+  ⇒ `HeldDashIsNotSpentUntilItIsIssued` 失败；删掉 `&& dashProposed` 守卫
+  ⇒ `ForcedDashDoesNotBurnTheChargesDash` 失败；冲刺头改回 2 路
+  ⇒ `DashHeadSeparatesHoldingFromForcing` 失败；工具回退到 38/10
+  ⇒ `PolicyLayoutMatchesTheToolThatWritesIt` 失败。
+- **旧策略文件一律被拒绝**（表头声明 38 输入而本构建期望 40）。这是 fail-closed，
+  不是回归；上一轮已因场地更正判定所有已训练策略作废，本轮不额外损失。
+- 验证：`Chaite.Tests.exe` **758 项通过 0 失败**（新增 2 项）。
+
+## v0.7 进行中 · 让冲刺时机进入搜索空间（2026-09-18 第三轮）
+
+- **找到"枚举再久也出不了无伤"的结构性原因**。三个带冲刺的脚本
+  （`FishronWingScript`、`EmpressWingScript`、`FishronChilletScript`）都在
+  **冲刺一就绪的瞬间**无条件把"本回合已用掉冲刺"的 latch 置位，而训练策略的残差
+  `LearnedPolicy.Adjust` 是在那之后才运行的。于是策略**只能取消**一次冲刺，
+  **不能推迟**它——一取消，这个充能回合的冲刺就被烧掉。可达集合只有
+  「一就绪就放」和「本回合不放」两个点，"晚几 tick 再放"根本不在里面。
+  而实测的剩余受击恰恰需要后者：猪鲨二阶段那次本体接触，冲刺在**距离 270 px**
+  时就按下，无敌帧在最近距离（26 px）之前就耗尽了。
+- **修正**：latch 改为在**真正发出**时置位，并加守卫——策略在"未就绪"的 tick 上强行
+  打开冲刺位（引擎会忽略）**不得**烧掉本回合的合法冲刺。无策略时、以及零权重策略时，
+  发出时机与 phase 标签**逐位不变**，所以固定状态机没有被改动，只有可达集合变大。
+- **两个新契约测试，都已用变异证明在改动前的代码上失败**：
+  `HeldDashIsNotSpentUntilItIsIssued`（按住不消耗，且单次冲刺仍只发一次）与
+  `ForcedDashDoesNotBurnTheChargesDash`（强行打开不烧掉合法冲刺）。
+- **探针证明这条路径确实到达引擎**（同一用例、同一场地、同一颗种子，唯一变量是策略）：
+  无策略 → `win, hits=3, deaths=0, ticks=4632, bossDamage=78000`；
+  恒翻转策略 → `loss, hits=7, deaths=1, ticks=4062, bossDamage=66745`；
+  距离门控策略 → `loss, hits=12, deaths=1, ticks=2749, bossDamage=43573`。
+  三种策略三种结果，说明冲刺位由策略决定且真的影响战斗。
+- **同时证明基线没有被改动**：改动后不带策略跑同一用例，得到
+  `win, hits=3, deaths=0, ticks=4632, bossDamage=78000, minLife=214, SuccessNoDeath`，
+  与改动前**逐位一致**。这正是要的性质——固定状态机不变，只有可达集合变大。
+- **诚实的负面结果：光移动 latch 还不够，两个手工策略都没有改善战斗**。原因是残差结构本身：
+  冲刺头是一个**无记忆的翻转位**（`ArgMax(8,2)` 把脚本的位取反），所以它只能
+  「按住每一次提议」或「在脚本没提议的 tick 上强行打开」，表达不了"按住 N tick 再放"。
+  实测中恒翻转策略就是这样：它在**巡航期**把冲刺强行打开（抽样行反复出现 `eocDash=15`），
+  冲刺进入冷却，真正的充能回合反而用不上。
+- **下一个必需的前提**：38 个特征里**没有冲刺就绪/冷却状态**，策略无法知道"现在能不能放"。
+  要让择时真正可搜索，需要（a）把冲刺就绪度加进特征，以及（b）一个能表达"按住"
+  而不会在无关 tick 上强行打开的输出结构。这两条是下一轮的工作。
+- **另发现一个探针字段与其名字不符**：`charge-observations.jsonl` 的
+  `dashUsedDuringCharge` 在距离门控那一场对全部 34 个回合都报 `false`，
+  但同一场的逐 tick 抽样行显示 `eocDash=15`（冲刺确实发出过）。该字段读的是
+  `p.controlDash`，与"本回合是否真的用掉冲刺"不是一回事，**在查清语义前不得再用作证据**。
+- 验证：`Chaite.Tests.exe` 756 项通过 0 失败（新增 2 项）。
+
+## v0.7 进行中 · 修掉训练目标、更正战斗场地、按定案收窄范围（2026-09-18 第二轮）
+
+- **训练目标修掉了（本轮最重要）**。旧排序的第一项是「干净闭环的**数量**」，而 `win` 在整条排序里**根本不存在**，只在最后的 damage tie-break 里间接体现。拿已记录的 9 个组合喂给旧排序，它把 `nh08`（光女夜/高级翅膀：胜场 0、5 场全死、受击 68）排第 1，把 `nh03`（猪鲨/高级翅膀：9 个组合里**唯一赢过**的一条，胜 2）排第 5。新排序为验收口径优先：`noHitWins 高 → wins 高 → deaths 低 → hits 低 → cleanLoopShare 高 → playerDamagePerK 容差内 → damage 高`。改前后排序不同，即"分支确实被执行"的对照证据。
+- **同时订正了自相矛盾的注释**：`tools/train-policy.ps1` 文件头一直写着 `hitsPerThousandTicks → cleanLoopShare → damage`，而代码跑的是 `Clean → Hits → PlayerDamagePerK → Damage`。注释与代码不一致的时间和 bug 存在的时间一样长。
+- 新增门禁 `tools/test-training-objective.ps1`（19 项，不启动游戏、不跑探针，已接进 `build.ps1 -Package`）：把排序**从源码里读出来**钉死，要求文件头按同样顺序声明每一项，并回放历史缺陷（赢 2 场的路线必须压过干净闭环 87 个却 0 胜的路线）。已验证它**在改动前的版本上失败**并报出旧排序 `Clean > Hits > PlayerDamagePerK > Damage`。
+- **日志不再让闭环数字冒充战斗结论**：稳定性门现在**先**打 `fight verdict: no-hit wins N/M (wins W, deaths D, hits H)`，**再**打明确标注为代理量的 `loop verdict`，并把 `NoHitWins/Wins/Deaths/Hits` 写进 `chaite-loop-stability/v1` 记录。此前那一行 `STABLE clean closed loops on 5 of 5 gate seeds` 单独看就会被读成战斗结论——这正是本项目三次在闭环口径上出错的机制。
+- **战斗场地是错的，已更正（使用者指出真实场地）**。真实战斗是一条**长直平地**：光女约 1200 格、起点在正中；猪鲨约 300 余格、**起点贴近左端或右端**（战斗时识别后镜像）。旧夹具三处都不符：猪鲨出生点在 400 格跑道**正中**（真实是贴边）、光女平地 2600 格、并在平地上方加了两条**贯穿全场的木平台**（真实场地没有）。旧夹具还把 `platformLeft/platformRightExclusive` 公布成 50/550 而实际造在 1–399——**公布值与实际值不一致**。现在场地边界由 `ArenaGroundLeft`/`ArenaGroundRightExclusive` 单一来源同时供建造与公布，并新增 `startSide`、`playerStartTileX` 与 `arenaShape` 公布字段。
+- 新增探针参数 `-startside left|right`（含参数白名单、`start-isolated-test.ps1` 校验、`run-boss-validation.ps1` 用例字段 `startSide` 与传参），猪鲨左起与右起都成为合法开局，对应使用者"战斗时识别后镜像"。
+- **同参数对照证明场地改动确实生效**（seed 2、expert、`fishron-strong-wing`、takeoverTick 120、ticks 12000 / wallSeconds 600；两边同 `config.json` 哈希、都不加载策略文件，唯一变量是夹具）：结局 `loss → win`、受击 **8 → 4**、死亡 **1 → 0**、BOSS 伤害 35,593 → **78,000（满血击杀）**、ticks 2,226 → 4,393。**hits=4 且零死亡是本项目至今最好的单场结果**（此前最好为 hits=5、零死亡）。⇒ 此前所有基于旧夹具的路线结论都要重测。
+- **虾松露移出范围（使用者定案）**：`FormulaRoute.EmpressRainFishron` 及其全部接线**整体删除**——枚举、`FormulaRouteCatalog.Select`/`IsAcceptableMount`/`BelongsToBoss`、`CombatPlanner` 的脚本分支与 `Reset`、`EmpressFlightScript` 的路线守卫与雨天身份检查、`FormulaMobilityContract` 的雨天检查与坐骑映射、探针的雨天置位与坐骑物品、三份工具门禁、以及四处契约测试。坐骑 12 现在选中 `None`，即该配装被**拒绝**而不是被驱动。`EmpressFlightScript.ShrimpyTruffleMountType` 一并删除。
+- **冲刺无敌帧定案为合法资源（使用者定案，推翻此前前提）**：此前记录的前提"除猪鲨三阶段外，冲刺只用于集合走位、不会利用无敌帧穿过 BOSS 的射弹与本体"**已作废**。验收口径仍是 `hits`（生命下降帧），因此无敌帧生效的那一帧不算受击，靠它穿过射弹或本体是合法操作，不得再标记为违规。相关记录在 `docs/approach-2026-09-16-closed-loop-training.md` §11.4 与 `docs/route-equipment-matrix.md` C1 两处更正。**注意这不改变白天光女的结论**：她的接触与即死弹幕属无敌帧 Group 2，而冲刺类无敌帧只给 Group 5，物理上挡不住——那是引擎行为，不是策略限制。
+- 修正 `tools/formula-validation-plan.sample.json`（仍引用已删路线）与 `docs/route-equipment-matrix.md`（把已删路线写成"待确认舍弃"）。
+- 验证：`Chaite.Tests.exe` 754 项通过 0 失败；离线门禁 `test-priority-phase-fixture-contract` / `test-priority-organic-fixture-contract` / `test-priority-boss-probe-schema`（8 场景 86 元组 8 反例）/ `test-training-objective`（19 项）全部 exit 0。
+
+## v0.7 进行中 · 战斗级无伤实测与前端玩梗改造（2026-09-18）
+
+- **口径修正（本轮最重要）**：训练器的目标量是「单个玩家闭环内无伤且回到初始状态的数量」（`cleanLoops`），验收要求的量是「整场战斗 `win` 且 `hits=0`」。两者不是同一个量。此前把「STABLE clean closed loops on 5 of 5 gate seeds」当成「战斗已能稳定无伤」是本项目第三次在闭环口径上出错，现在 README、前端与验证记录都写死必须分开报告。
+- **实测结论：0/9 组合达成战斗级无伤**。9 个生产组合（猪鲨 5 种配装 + 光女昼/夜各 2 种）在隔离原版探针上按门禁种子 2–6 逐场实测，45 场中仅 2 场获胜且都挨过打。猪鲨五条路线 `hits` 5–10 且全部死亡；光女昼间 `hits=1`（昼间一击必杀）；光女夜间 `hits` 6–15。报告 `CHAITE-NOHIT-VERIFY.txt`。
+- 新增战斗级实测脚本 `verify-nohit.ps1`（仓库外开发辅助，沿用 `train-policy.ps1` 的外部依赖约定），按 `result.json` 的 `status/win/hits/deaths/minLife` 出逐组合结论，不与闭环读数混算。
+- 前端重做为面向用户的三段式：标题、猪鲨／光女两栏（每栏 5／2 条已审核配装，可选中查看所需装备与召唤方式）、底部按键说明。**移除全部开发者信息**：哈希与文件指纹、"EXPERIMENTAL 实验版"标签、版本白名单长文、安装状态说明、验收口径与原理叙述。冒烟测试新增反向契约，出现 `SHA-256`/`哈希`/`白名单`/`闭环稳定` 等字样即判失败。
+- **改用本体贴图，并修正此前的错误判断**：控制台原先的骷髅王／猪鲨／光女／饰品图形是自绘示意图。现在全部改为本体贴图，由管理器运行时用 XNA 的 `ContentManager` 从玩家自己的 `Content/Images/*.xnb` 读出并缓存到 `Chaite/Sprites/`。此前"XNB 是 LZX 压缩所以读不出来"的判断只对了一半：`flags=0x80` 确实是 LZX 压缩位，但 XNA 自带解压，**不需要自己实现 LZX 解码器**。Boss 头像索引（370→4、636→37、35→19）读自 Terraria.exe 内嵌的 `NPCID.Sets.BossHeadTextures` 表；物品与 Boss 的中文名读自 Terraria.exe 内嵌的 `zh-Hans` 本地化资源，不再自行编名。
+- 代价如实记录：提取需要活动 `GraphicsDevice`，管理器因此固定 x86；没有显示设备的机器无法提取，界面显示中性占位框，不影响安装。仓库与安装包仍不含任何 Re-Logic 美术。
+- 删除自绘素材 `MemeArt.cs` 与其字形徽章；梗语登记 `MemeVoice` 保留（按安装状态轮换，不用计时器）。
+- 冒烟测试新增 `PASS sprite-store`（缓存路径、缺 Content 时拒绝而不抛异常、残缺清单不算就绪）与 `PASS vanilla-art`（对**真实游戏 Content** 完整解码 17 张贴图，校验尺寸、非空白与两两互异；机器上没有 Terraria 时记为 SKIP），并断言"缓存就绪时每个贴图槽位都必须真的持有本体美术"。
+- 新增梗图槽位 `Terraria/Chaite/Memes/`：安装器创建目录并每次刷新 README，用户图片永不覆盖；管理器显示缩略图，坏文件跳过不报错。安装载荷契约新增 `Memes/README.txt`，`PatcherTests` 两个夹具同步更新并新增「用户梗图升级后仍保留」断言。
+- 新增文档：[工作流与状态机](docs/workflow-and-state-machine.md)（全链路、`SessionState` 全表、音频触发表、闭环与验收的区别）、[玩梗登记表](docs/meme-register.md)（EzFic／老庄的「桑百颗」「星星炮大战骷髅王」与科比梗的单一事实来源）。
+- 修正 README 中已过时的声明：女巫扫帚 `item 4444 / mount 23 / buff 230` 已是光女的生产公式路线之一（`FormulaRoute.EmpressBroom`），不再是「尚未接入生产 Boss 控制器」；音频触发表补齐 F8 武装（`man.wav`）与配装不匹配（`never_tried_this_loadout.wav`）。
+- 验证：`Chaite.Tests.exe` 752 项通过 0 失败；`--ui-smoke` 六种尺寸/缩放 `Failures: 0`，新增 `PASS meme-slot` 与字形覆盖度／两两互异检查，预览窗口未抢前台。本轮**没有**在真实客户端里听音频或看前端，不宣称梗音频实播成功。
+
 ## v0.7 进行中 · 猪鲨／光女生产白名单与原生战中恢复
 
 - 生产接管范围收拢为猪鲨公爵（NPC type 370）和光之女皇（NPC type 636，昼／夜形态均由原生状态决定）。松露虫钓鱼与七彩草蛉是唯一可自动发起的召唤链；其他 Boss、混合 Boss、自然排程和旧召唤链在物品消耗或控制输入前拒绝，并播放用户自备的 `boss_too_hard_for_me.wav`（“这个波斯可是超囊的对我来说”）。旧 Boss 策略继续保留作离线研究，不代表生产授权。

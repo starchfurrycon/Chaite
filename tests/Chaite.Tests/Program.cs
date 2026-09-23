@@ -13,6 +13,13 @@ namespace Chaite.Tests
         private static int Main(string[] args)
         {
             if (args.Length == 2 && args[0] == "--native-motion-trace") return VerifyNativeMotionTrace(args[1]);
+            if (args.Length == 2 && args[0] == "--forward-model-trace") return VerifyForwardModelTrace(args[1]);
+            if (args.Length == 2 && args[0] == "--loop-search-trace") return VerifyLoopSearchTrace(args[1]);
+            if (args.Length >= 2 && args[0] == "--loop-decomposition-trace")
+                return VerifyLoopDecompositionTrace(args[1],
+                    args.Length > 2 ? int.Parse(args[2]) : 30);
+            if (args.Length >= 3 && args[0] == "--route-model-audit") return AuditRouteModel(args[1], args[2], args.Length > 3 ? args[3] : null);
+            if (args.Length >= 2 && args[0] == "--exhaustive-loop") return ExhaustiveLoop(args[1], args.Length > 2 ? args[2] : null, args.Length > 3 ? args[3] : null, args.Length > 4 ? args[4] : null, args.Length > 5 ? args[5] : null, args.Length > 6 ? args[6] : null);
             if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length != 0) return 2;
             Run(nameof(BossMonitoringDoesNotOwnControls), BossMonitoringDoesNotOwnControls);
@@ -26,12 +33,36 @@ namespace Chaite.Tests
             Run(nameof(FishronChilletUsesReviewedNativeDashCadence), FishronChilletUsesReviewedNativeDashCadence);
             Run(nameof(FishronChilletRejectsWrongMountAndShortRunway), FishronChilletRejectsWrongMountAndShortRunway);
             Run(nameof(FishronAdmissionRequiresInfernoStock), FishronAdmissionRequiresInfernoStock);
-            Run(nameof(FishronChilletLockedRouteAcceptsOnlyItsActiveMount), FishronChilletLockedRouteAcceptsOnlyItsActiveMount);
+            Run(nameof(FishronChilletLockedRouteAcceptsBothReskinMounts), FishronChilletLockedRouteAcceptsBothReskinMounts);
             Run(nameof(FormulaAdmissionSeparatesMobilityAndOutputRefusal), FormulaAdmissionSeparatesMobilityAndOutputRefusal);
-            Run(nameof(FishronQueenSlimeUsesMountAndFixedRunway), FishronQueenSlimeUsesMountAndFixedRunway);
-            Run(nameof(EmpressFlightUsesReviewedMountAndRainGate), EmpressFlightUsesReviewedMountAndRainGate);
-            Run(nameof(EmpressWingUsesOneRepositionDashEdge), EmpressWingUsesOneRepositionDashEdge);
-            Run(nameof(EmpressFormulaKeepsLoopAcrossAttackBoundaries), EmpressFormulaKeepsLoopAcrossAttackBoundaries);
+            Run(nameof(PolicyKeepsTheBranchLabelItAdjusted), PolicyKeepsTheBranchLabelItAdjusted);
+            Run(nameof(HeldDashIsNotSpentUntilItIsIssued), HeldDashIsNotSpentUntilItIsIssued);
+            Run(nameof(ForcedDashDoesNotBurnTheChargesDash), ForcedDashDoesNotBurnTheChargesDash);
+            Run(nameof(PolicyLayoutMatchesTheToolThatWritesIt), PolicyLayoutMatchesTheToolThatWritesIt);
+            Run(nameof(DashHeadSeparatesHoldingFromForcing), DashHeadSeparatesHoldingFromForcing);
+            Run(nameof(RouteEnumeratorAlphabetIsTwelve), RouteEnumeratorAlphabetIsTwelve);
+            Run(nameof(RouteEnumeratorAgreesWithBruteForce), RouteEnumeratorAgreesWithBruteForce);
+            Run(nameof(RouteEnumeratorNeverCallsADirtyRouteClean), RouteEnumeratorNeverCallsADirtyRouteClean);
+            Run(nameof(LoopDecompositionFindsTheScriptPeriod), LoopDecompositionFindsTheScriptPeriod);
+            Run(nameof(LoopDecompositionToleratesVariableAttacks), LoopDecompositionToleratesVariableAttacks);
+            Run(nameof(LoopDecompositionAttributesHitsToTheRightLoop), LoopDecompositionAttributesHitsToTheRightLoop);
+            Run(nameof(LoopDecompositionSeparatesBoundaryFromClosure), LoopDecompositionSeparatesBoundaryFromClosure);
+            Run(nameof(LoopDecompositionGroupsIdenticalThreats), LoopDecompositionGroupsIdenticalThreats);
+            Run(nameof(LoopDecompositionSeparatesStartCells), LoopDecompositionSeparatesStartCells);
+            Run(nameof(LoopDecompositionSeparatesDifferentRelativeGeometry), LoopDecompositionSeparatesDifferentRelativeGeometry);
+            Run(nameof(LoopDecompositionKeepsTheFinalStretch), LoopDecompositionKeepsTheFinalStretch);
+            Run(nameof(LoopDecompositionDoesNotCutConstantRuns), LoopDecompositionDoesNotCutConstantRuns);
+            Run(nameof(RouteEnumeratorReportsEveryBound), RouteEnumeratorReportsEveryBound);
+            Run(nameof(CompositionAcceptsAChainOfCleanRoutes), CompositionAcceptsAChainOfCleanRoutes);
+            Run(nameof(CompositionReusesOneRoutePerGroup), CompositionReusesOneRoutePerGroup);
+            Run(nameof(CompositionRejectsAMissingRoute), CompositionRejectsAMissingRoute);
+            Run(nameof(CompositionRejectsADirtyRoute), CompositionRejectsADirtyRoute);
+            Run(nameof(CompositionDetectsABrokenBoundary), CompositionDetectsABrokenBoundary);
+            Run(nameof(CompositionUsesTheNextLoopsRealStartNotTheBucket), CompositionUsesTheNextLoopsRealStartNotTheBucket);
+            Run(nameof(CompositionRequiresAnEndPosition), CompositionRequiresAnEndPosition);
+            Run(nameof(CompositionReportsTheReduction), CompositionReportsTheReduction);
+            Run(nameof(CompositionAcceptsASingleLoop), CompositionAcceptsASingleLoop);
+            Run(nameof(EveryScriptStaysWellFormedAcrossStatesAndGeometry), EveryScriptStaysWellFormedAcrossStatesAndGeometry);
             Run(nameof(BossMonitoringRejectsMidFightAndDeadArming), BossMonitoringRejectsMidFightAndDeadArming);
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);
@@ -64,7 +95,6 @@ namespace Chaite.Tests
             Run(nameof(NaturalSchedulesHonorNightWindowBoundary), NaturalSchedulesHonorNightWindowBoundary);
             Run(nameof(NaturalMechanicalScheduleMapsOnlyKnownCodes), NaturalMechanicalScheduleMapsOnlyKnownCodes);
             Run(nameof(NaturalMechanicalScheduleWaitsForEveryOtherBoss), NaturalMechanicalScheduleWaitsForEveryOtherBoss);
-            Run(nameof(ZenithLacewingIsConservativelyRejectedByDayAndNight), ZenithLacewingIsConservativelyRejectedByDayAndNight);
             Run(nameof(OcramsRazorWorksByDayButSigilHonorsBlockers), OcramsRazorWorksByDayButSigilHonorsBlockers);
             Run(nameof(InterceptLeadsMovingTarget), InterceptLeadsMovingTarget);
             Run(nameof(EveryVanillaBossHasDedicatedStrategy), EveryVanillaBossHasDedicatedStrategy);
@@ -107,7 +137,6 @@ namespace Chaite.Tests
             RunPriorityBossActiveRecoveryRegressions();
             RunPriorityBossNativeStrategyRegressions();
             RunQueenBeeContactRegressions();
-            RunPriorityEmpressMoonStrategyRegressions();
             RunPriorityGroundFishronTrajectoryRegressions();
             RunWallOfFleshRegressions();
             RunPriorityBossNativeContextRegressions();
@@ -121,8 +150,11 @@ namespace Chaite.Tests
             RunPatcherRegressions();
             Run(nameof(SpecialRangedContracts), SpecialRangedContracts);
             Run(nameof(RocketProductionContracts), RocketProductionContracts);
+            Run(nameof(ReviewedRouteCatalogsAgree), ReviewedRouteCatalogsAgree);
             RunAudioCueRegressions();
             RunSupportedBossPolicyRegressions();
+            RunExportedPolicyRegressions();
+            RunChaiteObservationConformanceRegressions();
             RunMeleeProjectileRegressions();
 
             Console.WriteLine($"通过 {_passed}，失败 {_failed}");
@@ -342,7 +374,7 @@ namespace Chaite.Tests
         {
             // These are Chaite's conservative world-time admission limits, not
             // vanilla's item usability rules or a guaranteed wall-clock budget.
-            foreach (var item in new[] { 43, 544, 556, 557, 4961 })
+            foreach (var item in new[] { 43, 544, 556, 557 })
             {
                 var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true };
                 context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = item, Stack = 1 });
@@ -358,11 +390,7 @@ namespace Chaite.Tests
                 }
                 context.Time = 0d;
                 context.DayTime = true;
-                if (item == 4961)
-                    Equal(BossSummonKind.PrismaticLacewing,
-                        BossStartPlanner.Select(context).Kind);
-                else
-                    True(BossStartPlanner.Select(context) == null);
+                True(BossStartPlanner.Select(context) == null);
             }
         }
 
@@ -449,23 +477,6 @@ namespace Chaite.Tests
             True(BossStartPlanner.Select(eye) == null);
         }
 
-        private static void ZenithLacewingIsConservativelyRejectedByDayAndNight()
-        {
-            var context = new BossStartContext { ZoneHallow = true, ZoneOverworld = true, Time = 1000d };
-            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 0, Type = 4961, Stack = 1 });
-            Equal(BossSummonKind.PrismaticLacewing, BossStartPlanner.Select(context).Kind);
-            context.DayTime = true;
-            Equal(BossSummonKind.PrismaticLacewing,
-                BossStartPlanner.Select(context).Kind);
-            context.ZenithWorld = true;
-            True(BossStartPlanner.Select(context) == null);
-            context.DayTime = false;
-            True(BossStartPlanner.Select(context) == null);
-            // Keep the separate, valid Zenith daytime Mechdusa workflow intact.
-            context.Hotbar.Add(new HotbarItemSnapshot { Slot = 4, Type = 5334, Stack = 1 });
-            Equal("mechdusa-summon", BossStartPlanner.Select(context).Id);
-        }
-
         private static void OcramsRazorWorksByDayButSigilHonorsBlockers()
         {
             var context = new BossStartContext { ZenithWorld = true, DayTime = true };
@@ -493,7 +504,7 @@ namespace Chaite.Tests
                 [668] = "deerclops", [113] = "wall-of-flesh", [657] = "queen-slime",
                 [125] = "twins", [134] = "destroyer", [127] = "skeletron-prime",
                 [262] = "plantera", [245] = "golem", [370] = "duke-fishron",
-                [636] = "empress-of-light", [439] = "lunatic-cultist", [398] = "moon-lord"
+                [439] = "lunatic-cultist", [398] = "moon-lord"
             };
             foreach (var pair in cases)
             {
@@ -681,7 +692,7 @@ namespace Chaite.Tests
             }
             if (bossTypes.Length > 1 || Array.Exists(bossTypes, type =>
                 type == 657 || type == 125 || type == 127 || type == 134 || type == 262 ||
-                type == 370 || type == 636 || type == 439 || type == 398))
+                type == 370 || type == 439 || type == 398))
                 ConfigureReviewedFlight(snapshot, 1f);
             RefreshPriorityNativeContext(snapshot);
             return snapshot;
@@ -750,23 +761,6 @@ namespace Chaite.Tests
                                 Known = true,
                                 NpcKey = target.Key,
                                 NativeEnraged = false
-                            });
-                        break;
-                    case 636:
-                        var empressEnraged = snapshot.Difficulty.Remix ?
-                            false : snapshot.Difficulty.DayTime;
-                        context.Empresses.Add(
-                            new EmpressNativeCombatObservation
-                            {
-                                Known = true,
-                                NpcKey = target.Key,
-                                DayTime = snapshot.Difficulty.DayTime,
-                                RemixWorld = snapshot.Difficulty.Remix,
-                                NativeShouldBeEnraged = empressEnraged,
-                                Ai0AttackState = target.Ai0,
-                                Ai1AttackTimer = target.Ai1,
-                                Ai2AttackIndex = target.Ai2,
-                                Ai3PhaseAndRage = target.Ai3
                             });
                         break;
                     case 668:

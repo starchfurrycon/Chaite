@@ -45,9 +45,9 @@ foreach ($functionName in @('Assert-NoReparse', 'Read-Field', 'Require-Integer',
 # running outside the full runner script scope. Keep the offline contract test
 # aligned with the production priority set.
 $priorityScenarios = @('deerclops','skeletron','queen-bee','wall-of-flesh',
-    'duke-fishron','empress-night','empress-day','moon-lord')
+    'duke-fishron','moon-lord')
 $hardModeScenarios = @('queen-slime','destroyer','twins','prime',
-    'duke-fishron','empress-night','empress-day','moon-lord')
+    'duke-fishron','moon-lord')
 # Read-ValidatedResultEnvelope is intentionally extracted and invoked in an
 # isolated test scope. Mirror the production's fixed native type catalog here
 # so valid fixtures exercise the same identity check instead of a missing
@@ -55,7 +55,7 @@ $hardModeScenarios = @('queen-slime','destroyer','twins','prime',
 $expectedBossTypes = @{
     'eye'=@(4); 'king-slime'=@(50); 'queen-slime'=@(657); 'destroyer'=@(134); 'twins'=@(125,126); 'prime'=@(127)
     'deerclops'=@(668); 'skeletron'=@(35); 'queen-bee'=@(222); 'wall-of-flesh'=@(113,114)
-    'duke-fishron'=@(370); 'empress-night'=@(636); 'empress-day'=@(636); 'moon-lord'=@(396,397,398)
+    'duke-fishron'=@(370); 'moon-lord'=@(396,397,398)
 }
 $expectedSummonTypes = @{
     'eye'=43; 'king-slime'=560; 'queen-slime'=4988; 'destroyer'=556; 'twins'=544; 'prime'=557
@@ -64,7 +64,7 @@ $expectedSummonTypes = @{
 $scenarioVariants = @{
     'eye'='standard'; 'king-slime'='standard'; 'queen-slime'='standard'; 'destroyer'='standard'; 'twins'='standard'; 'prime'='standard'
     'deerclops'='standard'; 'skeletron'='standard'; 'queen-bee'='standard'; 'wall-of-flesh'='standard'; 'duke-fishron'='standard'; 'moon-lord'='standard'
-    'empress-night'='night'; 'empress-day'='day'; 'mechanical-mayhem'='simultaneous-mechanical-trio'; 'mechdusa'='getfixedboi-mechdusa'
+    'mechanical-mayhem'='simultaneous-mechanical-trio'; 'mechdusa'='getfixedboi-mechdusa'
 }
 $knownResultVariants = @('standard','night','day','simultaneous-mechanical-trio','getfixedboi-mechdusa')
 $preparePath = Join-Path $PSScriptRoot 'prepare-game-probe.ps1'
@@ -1015,11 +1015,8 @@ foreach ($difficulty in @('classic', 'expert', 'master')) {
     }
 }
 Test-VariantEvidenceContract 'accept-standard-variant-native-flags' 'eye' 'standard' $false $false $false $true
-Test-VariantEvidenceContract 'accept-night-empress-variant-native-flags' 'empress-night' 'night' $false $false $false $true
-Test-VariantEvidenceContract 'accept-day-empress-variant-native-flags' 'empress-day' 'day' $true $false $false $true
 Test-VariantEvidenceContract 'accept-mechanical-trio-variant-native-topology' 'mechanical-mayhem' 'simultaneous-mechanical-trio' $false $false $true $true
 Test-VariantEvidenceContract 'accept-mechdusa-variant-zenith-native-topology' 'mechdusa' 'getfixedboi-mechdusa' $false $true $true $true
-Test-VariantEvidenceContract 'reject-day-empress-with-native-night' 'empress-day' 'day' $false $false $false $false
 Test-VariantEvidenceContract 'reject-mechdusa-without-native-zenith' 'mechdusa' 'getfixedboi-mechdusa' $false $false $true $false
 Test-VariantEvidenceContract 'reject-mechanical-trio-without-native-topology' 'mechanical-mayhem' 'simultaneous-mechanical-trio' $false $false $false $false
 

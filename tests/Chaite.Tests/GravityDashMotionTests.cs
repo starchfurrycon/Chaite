@@ -237,13 +237,20 @@ namespace Chaite.Tests
             var high = StartedShield();
             Equal(EyeShieldDashPhase.ActiveHighSpeed,
                 EyeShieldDashMotion.TryAdvanceCollisionFreeTick(ref high));
-            Near(14.5f * .985f, high.VelocityX);
+            // The decay is an engine measurement, and its form is the point: the
+            // engine removes a tenth of a pixel of speed and then scales what is
+            // left, so the ratio drifts with speed and a bare ratio is only
+            // right at the speed it was read off. Re-measured per tick from the
+            // replay dense trace, high speed is exactly (14.5 - .1) * .985 and
+            // low speed is exactly (11.8208 - .1) * .94, both matching across
+            // their whole runs.
+            Near((14.5f - .1f) * .985f, high.VelocityX);
 
             var low = StartedShield();
             low.VelocityX = 10f;
             Equal(EyeShieldDashPhase.ActiveLowSpeed,
                 EyeShieldDashMotion.TryAdvanceCollisionFreeTick(ref low));
-            Near(9.4f, low.VelocityX);
+            Near((10f - .1f) * .94f, low.VelocityX);
 
             low.VelocityX = 6f;
             Equal(EyeShieldDashPhase.EnteredCooldown,

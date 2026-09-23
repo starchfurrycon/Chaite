@@ -146,21 +146,30 @@ namespace Chaite.Tests
                 "patcher-payload-fixture-" + Guid.NewGuid().ToString("N"));
             var payload = Path.Combine(root, "payload");
             var payloadAudio = Path.Combine(payload, "Audio");
+            var payloadMemes = Path.Combine(payload, "Memes");
             var data = Path.Combine(root, "game-data");
             var dataAudio = Path.Combine(data, "Audio");
+            var dataMemes = Path.Combine(data, "Memes");
             Directory.CreateDirectory(payloadAudio);
+            Directory.CreateDirectory(payloadMemes);
             Directory.CreateDirectory(dataAudio);
+            Directory.CreateDirectory(dataMemes);
             var payloadConfig = Path.Combine(payload, "config.json");
             var installedConfig = Path.Combine(data, "config.json");
             var payloadReadme = Path.Combine(payloadAudio, "README.txt");
             var installedReadme = Path.Combine(dataAudio, "README.txt");
+            var payloadMemesReadme = Path.Combine(payloadMemes, "README.txt");
+            var installedMemesReadme = Path.Combine(dataMemes, "README.txt");
             var existingWave = Path.Combine(dataAudio, "custom.wav");
             var extraWave = Path.Combine(dataAudio, "keep.wav");
             var payloadWave = Path.Combine(payloadAudio, "custom.wav");
+            // The owner's own meme image must survive an upgrade exactly like a WAV.
+            var userMeme = Path.Combine(dataMemes, "10-ezfic.png");
             var createdFiles = new[]
             {
                 payloadConfig, installedConfig, payloadReadme,
-                installedReadme, existingWave, extraWave, payloadWave
+                installedReadme, payloadMemesReadme, installedMemesReadme,
+                existingWave, extraWave, payloadWave, userMeme
             };
             try
             {
@@ -168,9 +177,12 @@ namespace Chaite.Tests
                 File.WriteAllText(installedConfig, "user-config");
                 File.WriteAllText(payloadReadme, "new-slot-contract");
                 File.WriteAllText(installedReadme, "old-slot-contract");
+                File.WriteAllText(payloadMemesReadme, "new-meme-contract");
+                File.WriteAllText(installedMemesReadme, "old-meme-contract");
                 File.WriteAllBytes(existingWave, new byte[] { 1, 2, 3 });
                 File.WriteAllBytes(extraWave, new byte[] { 4, 5, 6 });
                 File.WriteAllBytes(payloadWave, new byte[] { 7, 8, 9 });
+                File.WriteAllBytes(userMeme, new byte[] { 11, 12, 13 });
 
                 var copy = typeof(InstallationService).GetMethod(
                     "CopyUserDataPayload", System.Reflection.BindingFlags.Static |
@@ -179,12 +191,16 @@ namespace Chaite.Tests
                 copy.Invoke(null, new object[] { payload, data });
 
                 Equal("new-slot-contract", File.ReadAllText(installedReadme));
+                Equal("new-meme-contract", File.ReadAllText(installedMemesReadme));
                 Equal("user-config", File.ReadAllText(installedConfig));
                 Equal("01-02-03", BitConverter.ToString(
                     File.ReadAllBytes(existingWave)));
                 Equal("04-05-06", BitConverter.ToString(
                     File.ReadAllBytes(extraWave)));
+                Equal("0B-0C-0D", BitConverter.ToString(
+                    File.ReadAllBytes(userMeme)));
                 Equal(2, Directory.GetFiles(dataAudio, "*.wav").Length);
+                Equal(1, Directory.GetFiles(dataMemes, "*.png").Length);
             }
             finally
             {
@@ -192,8 +208,11 @@ namespace Chaite.Tests
                     if (File.Exists(file)) File.Delete(file);
                 if (Directory.Exists(payloadAudio))
                     Directory.Delete(payloadAudio, false);
+                if (Directory.Exists(payloadMemes))
+                    Directory.Delete(payloadMemes, false);
                 if (Directory.Exists(payload)) Directory.Delete(payload, false);
                 if (Directory.Exists(dataAudio)) Directory.Delete(dataAudio, false);
+                if (Directory.Exists(dataMemes)) Directory.Delete(dataMemes, false);
                 if (Directory.Exists(data)) Directory.Delete(data, false);
                 if (Directory.Exists(root)) Directory.Delete(root, false);
             }
@@ -206,10 +225,13 @@ namespace Chaite.Tests
             var game = Path.Combine(root, "game");
             var payload = Path.Combine(root, "payload");
             var payloadAudio = Path.Combine(payload, "Audio");
+            var payloadMemes = Path.Combine(payload, "Memes");
             var data = Path.Combine(game, "Chaite");
             var installedAudio = Path.Combine(data, "Audio");
+            var installedMemes = Path.Combine(data, "Memes");
             Directory.CreateDirectory(game);
             Directory.CreateDirectory(payloadAudio);
+            Directory.CreateDirectory(payloadMemes);
             Directory.CreateDirectory(installedAudio);
 
             var original = Path.Combine(root, "Terraria.original.exe");
@@ -235,6 +257,14 @@ namespace Chaite.Tests
                     "package-config");
                 File.WriteAllText(Path.Combine(payloadAudio, "README.txt"),
                     "new-scope-slots");
+                // The meme slot README is part of the payload contract now: an
+                // upgrade must refresh it exactly like the audio one, without
+                // touching the owner's images.
+                Directory.CreateDirectory(installedMemes);
+                File.WriteAllText(Path.Combine(payloadMemes, "README.txt"),
+                    "new-meme-slots");
+                File.WriteAllText(Path.Combine(installedMemes, "README.txt"),
+                    "old-meme-slots");
                 File.WriteAllText(userConfig, "user-config");
                 File.WriteAllText(readme, "old-scope-slots");
                 File.WriteAllBytes(userWave, new byte[] { 9, 8, 7, 6 });
@@ -280,6 +310,8 @@ namespace Chaite.Tests
                 Equal(TestHash(pluginSource), TestHash(installedPlugin));
                 Equal(TestHash(coreSource), TestHash(installedCore));
                 Equal("new-scope-slots", File.ReadAllText(readme));
+                Equal("new-meme-slots", File.ReadAllText(
+                    Path.Combine(installedMemes, "README.txt")));
                 Equal("user-config", File.ReadAllText(userConfig));
                 Equal("09-08-07-06", BitConverter.ToString(
                     File.ReadAllBytes(userWave)));

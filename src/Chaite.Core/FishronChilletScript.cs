@@ -37,8 +37,6 @@ namespace Chaite.Core
                 input.Route != FormulaRoute.FishronTrustyChilletIgnis)
                 return output;
 
-            var expectedMount = input.Route ==
-                FormulaRoute.FishronTrustyChillet ? 64 : 65;
             if (!_initialized)
             {
                 var support = arena.FloorSupport;
@@ -53,10 +51,21 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
+            // Membership, not equality against one id derived from the route.
+            // Mounts 64 and 65 are one route: Select collapses mount 65 onto
+            // FishronTrustyChillet, so by the time the script runs the route no
+            // longer says which of the two skins the player has, and an equality
+            // check against 64 rejected every mount 65 player. That is what
+            // happened on the Ignis combination: the battle was cancelled on the
+            // very tick the boss spawned, every run ended at exactly 240 ticks
+            // with the boss at full life, and the search saw seventy four no-op
+            // trials in a row because nothing was ever being controlled. The
+            // catalog decides membership in one place for exactly this reason.
             if (!mobility.MountActive)
             {
                 if (!mobility.SelectedMountIdentityKnown ||
-                    mobility.SelectedMountType != expectedMount)
+                    !FormulaRouteCatalog.IsAcceptableMount(input.Route,
+                        mobility.SelectedMountType))
                     return Rejected();
                 output.Horizontal = 0;
                 output.Fire = false;
@@ -67,7 +76,8 @@ namespace Chaite.Core
                 return output;
             }
             if (!mobility.ActiveMountIdentityKnown ||
-                mobility.ActiveMountType != expectedMount ||
+                !FormulaRouteCatalog.IsAcceptableMount(input.Route,
+                    mobility.ActiveMountType) ||
                 mobility.Grappling || mobility.GravityInverted)
                 return Rejected();
 
@@ -81,14 +91,19 @@ namespace Chaite.Core
             else if (player.Center.X >= _right) _runDirection = -1;
 
             var counter = ShouldCounterDash(in input);
+            var dashProposed = false;
             if (counter && !_dashIssued)
             {
                 _runDirection = boss.Center.X < player.Center.X ? -1 : 1;
                 if (mobility.DashType == 6 && mobility.DashReady &&
                     mobility.EyeShieldDash.ReleaseDash)
                 {
+                    // Proposed, not issued. The charge's single dash is spent
+                    // when the residual lets it through, so a policy can hold
+                    // the counter-dash for a few ticks instead of only being
+                    // able to drop it.
                     output.Dash = true;
-                    _dashIssued = true;
+                    dashProposed = true;
                 }
             }
             // A trained policy for this route sits after the mount release and mount
@@ -97,7 +112,9 @@ namespace Chaite.Core
             // summoned.
             output.Horizontal = _runDirection;
             output.Phase = Phase(in input, counter, output.Dash);
-            DecideMovement(in input, player, in boss, arena, output);
+            DecideMovement(in input, player, in boss, arena, mobility, ref output);
+            // A forced dash the script never proposed cannot spend the charge.
+            if (output.Dash && dashProposed) _dashIssued = true;
             return output;
         }
 
@@ -113,13 +130,14 @@ namespace Chaite.Core
         /// </summary>
         private static void DecideMovement(in FormulaScriptInput input,
             PlayerSnapshot player, in TargetSnapshot boss, ArenaSnapshot arena,
-            FormulaScriptOutput output)
+            MobilitySnapshot mobility, ref FormulaScriptOutput output)
         {
             var learned = LearnedPolicy.ForRoute(input.Route);
             if (learned == null) return;
+            var scriptedPhase = output.Phase;
             int horizontal, vertical;
             bool jump, dash;
-            if (!learned.Adjust(in input, player, in boss, arena,
+            if (!learned.Adjust(in input, player, in boss, arena, mobility,
                     output.Horizontal, output.Vertical, output.Jump,
                     output.Dash, out horizontal, out vertical, out jump,
                     out dash))
@@ -128,7 +146,8 @@ namespace Chaite.Core
             output.Vertical = vertical;
             output.Jump = jump;
             output.Dash = dash;
-            output.Phase = "fishron-chillet-learned";
+            output.Phase = LearnedPolicy.ComposeLearnedPhase(
+                scriptedPhase, "fishron-chillet-learned");
         }
 
         private static bool ShouldCounterDash(in FormulaScriptInput input)

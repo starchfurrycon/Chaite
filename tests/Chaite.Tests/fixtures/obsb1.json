@@ -1,0 +1,126 @@
+{
+  "schema": "chaite-policy-export/v1",
+  "checkpoint": "artifacts/ppo-obsb1/ppo_latest.zip",
+  "binary": "obsb1.bin",
+  "obs_dim": 98,
+  "action_count": 12,
+  "layer_shapes": [
+    [
+      128,
+      98
+    ],
+    [
+      128,
+      128
+    ],
+    [
+      12,
+      128
+    ]
+  ],
+  "activation": "tanh between layers, argmax over the last layer's output",
+  "obs_normalize": null,
+  "obs_layout": [
+    {
+      "name": "px",
+      "meaning": "player x, world pixels"
+    },
+    {
+      "name": "py",
+      "meaning": "player y, world pixels"
+    },
+    {
+      "name": "vx",
+      "meaning": "player velocity x"
+    },
+    {
+      "name": "vy",
+      "meaning": "player velocity y"
+    },
+    {
+      "name": "wt",
+      "meaning": "wing time remaining"
+    },
+    {
+      "name": "wm",
+      "meaning": "wing time max"
+    },
+    {
+      "name": "dd",
+      "meaning": "dash delay"
+    },
+    {
+      "name": "eo",
+      "meaning": "extra flag"
+    },
+    {
+      "name": "jt",
+      "meaning": "jump time"
+    },
+    {
+      "name": "dead",
+      "meaning": "dead flag"
+    },
+    {
+      "name": "ma",
+      "meaning": "mount active"
+    },
+    {
+      "name": "mt",
+      "meaning": "mount type"
+    },
+    {
+      "name": "bx",
+      "meaning": "boss x, world pixels"
+    },
+    {
+      "name": "by",
+      "meaning": "boss y, world pixels"
+    },
+    {
+      "name": "bvx",
+      "meaning": "boss velocity x"
+    },
+    {
+      "name": "bvy",
+      "meaning": "boss velocity y"
+    },
+    {
+      "name": "bs",
+      "meaning": "boss ai[0] (native state)"
+    },
+    {
+      "name": "bi",
+      "meaning": "boss ai[1] (sequence timer)"
+    },
+    {
+      "name": "pr",
+      "meaning": "12 projectile slots x 6 fields (x, y, vx, vy, w, h)"
+    }
+  ],
+  "action_encoding": {
+    "direction": "(-1, 0, 1)[action // 4]",
+    "jump": "bool((action % 4) // 2)",
+    "dash": "bool(action % 2)"
+  },
+  "verified": {
+    "random_samples": 2000,
+    "real_samples": 3000,
+    "mismatches": {
+      "random": 0,
+      "real": 0
+    },
+    "real_action_histogram": {
+      "0": 154,
+      "2": 64,
+      "3": 637,
+      "4": 721,
+      "6": 30,
+      "7": 147,
+      "8": 17,
+      "9": 115,
+      "10": 689,
+      "11": 426
+    }
+  }
+}

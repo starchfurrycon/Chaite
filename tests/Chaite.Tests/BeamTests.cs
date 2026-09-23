@@ -10,7 +10,6 @@ namespace Chaite.Tests
             Run(nameof(MoonLordBeamUsesLongFiniteSegment), MoonLordBeamUsesLongFiniteSegment);
             Run(nameof(DeathrayIncludesNativeUnscaledSourceBody), DeathrayIncludesNativeUnscaledSourceBody);
             Run(nameof(BeamWarmupAndExpiryMatchNativeThresholds), BeamWarmupAndExpiryMatchNativeThresholds);
-            Run(nameof(SunDanceKeepsItsThreeTaperedWidths), SunDanceKeepsItsThreeTaperedWidths);
             Run(nameof(BeamVelocityIsDirectionNotTranslation), BeamVelocityIsDirectionNotTranslation);
             Run(nameof(RotatingBeamSweepCatchesBetweenSamples), RotatingBeamSweepCatchesBetweenSamples);
             Run(nameof(BeamSweepsContainMovingRotatingAndTaperedSamples), BeamSweepsContainMovingRotatingAndTaperedSamples);
@@ -27,16 +26,6 @@ namespace Chaite.Tests
                 Kind = ThreatKind.Projectile, Geometry = ThreatGeometry.MoonLordDeathray, Type = 455,
                 Width = 36, Height = 36, BeamOrigin = new Vec2(0, 0), BeamDirection = new Vec2(1, 0),
                 BeamAge = 90, BeamLength = 2400, BeamScale = 1, BeamScaleLimit = 1, TimeLeft = 500, Damage = 150
-            };
-        }
-
-        private static ThreatSnapshot SunDance()
-        {
-            return new ThreatSnapshot
-            {
-                Kind = ThreatKind.Projectile, Geometry = ThreatGeometry.EmpressSunDance, Type = 923,
-                Width = 30, Height = 30, BeamAge = 90, BeamScale = 1, BeamAngle = 0,
-                BeamBaseAngle = -.3490659f * (40f / 130f), TimeLeft = 90, Damage = 150
             };
         }
 
@@ -63,12 +52,6 @@ namespace Chaite.Tests
             ray.BeamAge = 179;
             True(BeamGeometry.AtTime(ray, 0).Active);
             False(BeamGeometry.AtTime(ray, 1).Active);
-            var sun = SunDance();
-            sun.BeamAge = 60;
-            False(BeamGeometry.AtTime(sun, 0).Active);
-            True(BeamGeometry.AtTime(sun, 1).Active);
-            sun.BeamAge = 179;
-            False(BeamGeometry.AtTime(sun, 1).Active);
         }
 
         private static void DeathrayIncludesNativeUnscaledSourceBody()
@@ -87,22 +70,6 @@ namespace Chaite.Tests
             True(BeamGeometry.Intersects(new RectF(5035, 5001, 2, 2), BeamGeometry.Sweep(ray, 0, 3)));
             ray.BeamAge = 180;
             False(BeamGeometry.AtTime(ray, 0).Active);
-            var sun = SunDance();
-            sun.BeamOrigin = new Vec2(5000, 5000);
-            False(BeamGeometry.Intersects(behindOrigin, BeamGeometry.AtTime(sun, 0)));
-        }
-
-        private static void SunDanceKeepsItsThreeTaperedWidths()
-        {
-            var sample = BeamGeometry.AtTime(SunDance(), 0);
-            Equal(3, sample.Count);
-            True(BeamGeometry.Intersects(new RectF(400, 30, 2, 2), sample));
-            True(BeamGeometry.Intersects(new RectF(620, 17, 2, 2), sample));
-            True(BeamGeometry.Intersects(new RectF(750, -1, 2, 2), sample));
-            False(BeamGeometry.Intersects(new RectF(750, 17, 2, 2), sample));
-            Equal(35f, sample.First.HalfWidth);
-            Equal(21f, sample.Second.HalfWidth);
-            Equal(3.5f, sample.Third.HalfWidth);
         }
 
         private static void BeamVelocityIsDirectionNotTranslation()
@@ -141,7 +108,7 @@ namespace Chaite.Tests
             var random = new Random(455923);
             for (var scene = 0; scene < 160; scene++)
             {
-                var beam = scene % 2 == 0 ? Deathray() : SunDance();
+                var beam = Deathray();
                 beam.BeamAge = random.Next(19, 177);
                 beam.BeamOrigin = new Vec2(random.Next(1000, 5000), random.Next(1000, 5000));
                 beam.BeamSourceVelocity = new Vec2(random.Next(-18, 19), random.Next(-18, 19));
@@ -152,9 +119,7 @@ namespace Chaite.Tests
                 beam.BeamBaseAngle = angle;
                 beam.BeamAngle = angle + .3490659f * Math.Max(0f, Math.Min(1f, (beam.BeamAge - 50f) / 130f));
                 beam.BeamScaleLimit = scene % 4 == 0 ? .4f : 1f;
-                beam.BeamScale = beam.Geometry == ThreatGeometry.MoonLordDeathray
-                    ? Math.Max(0f, Math.Min(beam.BeamScaleLimit, (float)Math.Sin(beam.BeamAge * 3.141593f / 180f) * 10f * beam.BeamScaleLimit))
-                    : Math.Min(1f, beam.BeamAge / 20f) * Math.Min(1f, (180f - beam.BeamAge) / 60f);
+                beam.BeamScale = Math.Max(0f, Math.Min(beam.BeamScaleLimit, (float)Math.Sin(beam.BeamAge * 3.141593f / 180f) * 10f * beam.BeamScaleLimit));
                 for (var start = 0; start < 12; start += 3)
                 {
                     var sweep = BeamGeometry.Sweep(beam, start, start + 3);
@@ -200,11 +165,11 @@ namespace Chaite.Tests
             var random = new Random(9123);
             for (var sceneIndex = 0; sceneIndex < 24; sceneIndex++)
             {
-                var scene = CombatScenario(398, 636);
+                var scene = CombatScenario(398);
                 scene.Player.OnGround = false;
                 for (var i = 0; i < 8; i++)
                 {
-                    var beam = i % 2 == 0 ? Deathray() : SunDance();
+                    var beam = Deathray();
                     var angle = (float)(random.NextDouble() * Math.PI * 2);
                     beam.BeamOrigin = scene.Player.Center + new Vec2(random.Next(-900, 901), random.Next(-600, 601));
                     beam.BeamDirection = new Vec2((float)Math.Cos(angle), (float)Math.Sin(angle));
@@ -226,10 +191,10 @@ namespace Chaite.Tests
 
         private static void BeamRichWorkloadBenchmark()
         {
-            var scene = RichScenario(398, 636);
+            var scene = RichScenario(398);
             for (var i = 0; i < 18; i++)
             {
-                var beam = i < 3 ? Deathray() : SunDance();
+                var beam = Deathray();
                 var angle = i * .3490659f;
                 beam.BeamOrigin = new Vec2(2100, 650);
                 beam.BeamDirection = new Vec2((float)Math.Cos(angle), (float)Math.Sin(angle));

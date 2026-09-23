@@ -25,7 +25,13 @@ function New-MotionEvidence([string]$Case = 'no-cloud-hold') {
         nativeDifficulty = [pscustomobject]@{ gameMode = 0; worldFileGameMode = 0; difficulty = 1; worldFileSeed = 20260910; expertMode = $false; masterMode = $false; hardMode = $false; forTheWorthy = $false }
         nativeRandom = [pscustomobject]@{ seed = 20260910; unpausedUpdateSeedInitial = 20260910; unpausedUpdateSeedAdvances = 180; referenceChecks = 360; installedAfterSetup = $true; actualAndNativeNamedColdStateVerified = $true; actualStreamConsumedForFingerprint = $false; independentTwinFingerprint = @(1, 2, 3, 4, 5, 6, 7, 8); unpausedUpdateSeedFinal = [long]$lcg }
         arena = [pscustomobject]@{ nativeSceneMetricRefreshes = 180; groundTop = 500; groundTile = 'GrayBrick'; platformRows = @() }
-        equipment = [pscustomobject]@{ cloudEquipped = $cloud; noWeaponsAmmoConsumablesOrMount = $true; noDirectJumpStateOverrides = $true; cloudItemType = $(if ($cloud) { 53 } else { 0 }); cloudPrefix = 0 }
+        # Every field the gate asserts has to be present here too, or the gate
+        # fails on the synthetic fixture rather than on the evidence. The four
+        # mount/balloon/featherfall fields arrived with the Lilith cases and
+        # were never added back to this fixture, so the gate could not pass.
+        # These synthetic cases are all no-cloud/cloud, so every one of them is
+        # zero or false by construction.
+        equipment = [pscustomobject]@{ cloudEquipped = $cloud; noWeaponsAmmoConsumablesOrMount = $true; noDirectJumpStateOverrides = $true; cloudItemType = $(if ($cloud) { 53 } else { 0 }); cloudPrefix = 0; mountItemType = 0; mountExpectedType = 0; bundleOfBalloonsItemType = 0; featherfallActive = $false }
     }
     $frames = @(for ($tick = 1; $tick -le 180; $tick++) {
         $jump = $tick -ge 21 -and $tick -le 80

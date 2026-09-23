@@ -136,11 +136,11 @@ function Add-BrVariantEvidenceErrors($Record, $Result, $Errors) {
             if ($hasSpecialRule -or $mechanicalExpected -or $mechanicalObserved) { $Errors.Add('standard-variant-native-mismatch') }
         }
         'night' {
-            if ((Get-BrField $Record 'Scenario') -cne 'empress-night' -or (Test-BrTrue (Get-BrField $native 'dayTime')) -or
+            if ((Test-BrTrue (Get-BrField $native 'dayTime')) -or
                 $hasSpecialRule -or $mechanicalExpected -or $mechanicalObserved) { $Errors.Add('night-variant-native-mismatch') }
         }
         'day' {
-            if ((Get-BrField $Record 'Scenario') -cne 'empress-day' -or -not (Test-BrTrue (Get-BrField $native 'dayTime')) -or
+            if (-not (Test-BrTrue (Get-BrField $native 'dayTime')) -or
                 $hasSpecialRule -or $mechanicalExpected -or $mechanicalObserved) { $Errors.Add('day-variant-native-mismatch') }
         }
         'simultaneous-mechanical-trio' {
@@ -423,8 +423,6 @@ function Get-BrOfficialCoverageCells() {
         [pscustomobject]@{ boss = 'plantera'; variant = 'standard'; goal = 'secondary-majority' },
         [pscustomobject]@{ boss = 'golem'; variant = 'standard'; goal = 'secondary-majority' },
         [pscustomobject]@{ boss = 'duke-fishron'; variant = 'standard'; goal = 'priority-near-certain' },
-        [pscustomobject]@{ boss = 'empress-night'; variant = 'night'; goal = 'priority-near-certain' },
-        [pscustomobject]@{ boss = 'empress-day'; variant = 'day'; goal = 'priority-near-certain' },
         [pscustomobject]@{ boss = 'lunatic-cultist'; variant = 'standard'; goal = 'secondary-majority' },
         [pscustomobject]@{ boss = 'moon-lord'; variant = 'standard'; goal = 'priority-near-certain' },
         [pscustomobject]@{ boss = 'mechanical-mayhem'; variant = 'simultaneous-mechanical-trio'; goal = 'secondary-majority' },

@@ -23,13 +23,6 @@ namespace Chaite.Core
         public bool WallOfFleshDrawAreaKnown;
         public int WallOfFleshDrawAreaTopPixels;
         public int WallOfFleshDrawAreaBottomPixels;
-        public bool EmpressRageModeKnown;
-        public bool EmpressRageMode;
-        public bool EmpressRagePredicateKnown;
-        public bool EmpressPredicateNpcSlotKnown;
-        public int EmpressPredicateNpcSlot;
-        public bool EmpressFirstBossAboveWorldSurface;
-        public bool EmpressShouldBeEnraged;
 
         public readonly List<QueenBeeNativeEnrageObservation> QueenBees =
             new List<QueenBeeNativeEnrageObservation>(2);
@@ -39,8 +32,6 @@ namespace Chaite.Core
             new List<WallOfFleshEyeLaserObservation>(2);
         public readonly List<DukeFishronNativeEnrageObservation> DukeFishrons =
             new List<DukeFishronNativeEnrageObservation>(2);
-        public readonly List<EmpressNativeCombatObservation> Empresses =
-            new List<EmpressNativeCombatObservation>(2);
         public readonly List<DeerclopsNativeTimerObservation> Deerclopses =
             new List<DeerclopsNativeTimerObservation>(2);
         public readonly List<MoonLordProjectile454Observation> MoonLordProjectiles454 =
@@ -59,18 +50,10 @@ namespace Chaite.Core
             WallOfFleshDrawAreaKnown = false;
             WallOfFleshDrawAreaTopPixels = 0;
             WallOfFleshDrawAreaBottomPixels = 0;
-            EmpressRageModeKnown = false;
-            EmpressRageMode = false;
-            EmpressRagePredicateKnown = false;
-            EmpressPredicateNpcSlotKnown = false;
-            EmpressPredicateNpcSlot = -1;
-            EmpressFirstBossAboveWorldSurface = false;
-            EmpressShouldBeEnraged = false;
             QueenBees.Clear();
             WallOfFleshTunnels.Clear();
             WallOfFleshEyes.Clear();
             DukeFishrons.Clear();
-            Empresses.Clear();
             Deerclopses.Clear();
             MoonLordProjectiles454.Clear();
             MoonLordProjectiles456.Clear();
@@ -151,35 +134,6 @@ namespace Chaite.Core
 
         public bool ExpectedEnraged => PlayerAboveY800Band ||
             PlayerBelowWorldSurface || PlayerInsideCentralHorizontalBand;
-    }
-
-    /// <summary>
-    /// Vanilla Empress rage inputs plus the authoritative NPC attack state.
-    /// Ai1 is deliberately represented as a value even when it is zero.
-    /// </summary>
-    public struct EmpressNativeCombatObservation
-    {
-        public bool Known;
-        public int NpcKey;
-        public bool DayTime;
-        public bool RemixWorld;
-        public bool RemixRageMode;
-        public bool BossAboveWorldSurface;
-        public bool NativeShouldBeEnraged;
-        public float Ai0AttackState;
-        public float Ai1AttackTimer;
-        public float Ai2AttackIndex;
-        public float Ai3PhaseAndRage;
-
-        public bool ExpectedShouldBeEnraged => RemixWorld
-            ? RemixRageMode || BossAboveWorldSurface
-            : DayTime;
-
-        public bool PhaseTwo => Known &&
-            (Ai3PhaseAndRage == 1f || Ai3PhaseAndRage == 3f);
-
-        public bool GenuinelyEnraged => Known &&
-            (Ai3PhaseAndRage == 2f || Ai3PhaseAndRage == 3f);
     }
 
     /// <summary>Vanilla AI_123 state and local timers for one Deerclops NPC.</summary>
@@ -350,25 +304,6 @@ namespace Chaite.Core
             if (value.NpcKey < 0 ||
                 value.NativeEnraged != value.ExpectedEnraged)
                 return Invalid("Duke Fishron native enrage result does not match AI_069", out reason);
-            reason = null;
-            return true;
-        }
-
-        public static bool TryValidate(
-            in EmpressNativeCombatObservation value, out string reason)
-        {
-            if (!value.Known)
-                return Invalid("Empress native rage and attack state is unavailable", out reason);
-            if (value.NpcKey < 0 ||
-                value.NativeShouldBeEnraged != value.ExpectedShouldBeEnraged ||
-                 !Finite(value.Ai0AttackState) ||
-                 !Finite(value.Ai1AttackTimer) ||
-                 !Finite(value.Ai2AttackIndex) ||
-                 (value.Ai3PhaseAndRage != 0f &&
-                 value.Ai3PhaseAndRage != 1f &&
-                 value.Ai3PhaseAndRage != 2f &&
-                 value.Ai3PhaseAndRage != 3f))
-                return Invalid("Empress native rage predicate or AI state is malformed", out reason);
             reason = null;
             return true;
         }

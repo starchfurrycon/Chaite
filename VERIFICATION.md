@@ -1,6 +1,140 @@
 # 验证记录
 
-## v0.7 进行中：猪鲨／光女生产白名单、原生机动与战中恢复
+## v0.7 进行中 · 范围收窄为只针对猪鲨（2026-09-23）
+
+生产接管范围收窄为**只有猪鲨公爵（NPC type 370）**：光之女皇（NPC type 636）整体
+退出范围，不再接管、不再准入、不再有逻辑与前端；明胶女士鞍（MountID 50）与光女的
+扫帚（MountID 23）两条路线一并移除。程序只接管走位，不再接管武器与攻击。验收口径
+改为按每套配装判定猪鲨 4 套配装的胜率（≥ 90%），不再考核无伤率。
+
+**以下各节是按当时构建与当时范围写下的验证记录，保留原样**：其中提到的光女、
+扫帚、明胶女士鞍与武器输出准入都属于那些构建，已被本节的范围变更取代，不代表
+当前程序支持这些 Boss、路线或接管武器。
+
+## v0.7 进行中：让「冲刺择时」第一次变得可搜索（2026-09-18 第四轮）
+
+### 改动内容
+
+向量 38 → 40 维（最后两项 = `DashReady`、`CanDash`）；冲刺头 2 路 → 3 路
+（`HeadCount` 10 → 11，logit 8..10 = 不动／只按住／只强行打开）。
+
+### 分支确实被执行：同一用例下唯一变量是头的路数
+
+用例 `fishron/strong-wing`、右起、seed 2、专家、takeover 120、上限 12000 tick／600 s。
+**同一组权重与同一阈值**（`w[4]=1.5`、`hw[9]=2.5`，即"距离 > 约 254 px 就按住"），
+只有头的路数不同：
+
+| 采样 tick 240–420（巡航期） | `plan.dash` | 观察到的 `eocDash` |
+|---|---|---|
+| 旧 2 路 | 几乎每行 `True` | 反复 `15`（在巡航期强行开冲刺） |
+| 新 3 路 | **每行 `False`** | `0` |
+
+而 495／540／600 等 tick 仍出现 `eocDash=15`，说明近了照样会发出。
+
+| 运行 | status | hits | deaths | ticks | bossDamage | minLife | outcome |
+|---|---|---|---|---|---|---|---|
+| 基线（无策略） | win | 3 | 0 | 4632 | 78000 | 214 | SuccessNoDeath |
+| 旧 2 路·距离门控 | loss | 12 | 1 | 2749 | 43573 | 0 | FailedAfterDeath |
+| 新 3 路·距离门控 | loss | 13 | 1 | 2157 | 30366 | 0 | FailedAfterDeath |
+
+**这三场里手工策略都没有赢**。本轮证明的是择时第一次**可以被表达**，不是已经找到好时机。
+
+### 基线逐位不变（改特征前后）
+
+| 运行 | status | hits | deaths | ticks | bossDamage | minLife | outcome |
+|---|---|---|---|---|---|---|---|
+| 改特征前（无策略） | win | 3 | 0 | 4632 | 78000 | 214 | SuccessNoDeath |
+| 改特征后（无策略） | win | 3 | 0 | 4632 | 78000 | 214 | SuccessNoDeath |
+
+逐位一致。无策略时残差提前返回，特征维度与头数都与它无关，这正是期望的性质。
+
+### 变异验证（四个变异都编译通过，且对应测试确实失败）
+
+| 变异 | 期望失败的测试 | 结果 |
+|---|---|---|
+| latch 还原到"提议时置位" | `HeldDashIsNotSpentUntilItIsIssued` | 失败 ✓ |
+| 删掉 `&& dashProposed` 守卫 | `ForcedDashDoesNotBurnTheChargesDash` | 失败 ✓ |
+| 冲刺头改回 2 路 | `DashHeadSeparatesHoldingFromForcing` | 失败 ✓ |
+| 工具回退到 `$input_ = 38` | `PolicyLayoutMatchesTheToolThatWritesIt` | 失败 ✓ |
+
+### 测试
+
+`Chaite.Tests.exe` **758 项通过 0 失败**（新增 `PolicyLayoutMatchesTheToolThatWritesIt`、
+`DashHeadSeparatesHoldingFromForcing` 两项）。旧策略文件因表头声明 38 输入而被加载器拒绝，
+属 fail-closed，不是回归。
+
+## v0.7 进行中：训练目标更正、战斗场地更正、范围收窄（2026-09-18 第二轮）
+
+### 训练目标：改前 / 改后对照（不占机器，纯离线）
+
+`tools/train-policy.ps1` 的排序改前为 `Clean 数量 → Hits → PlayerDamagePerK → Damage`，
+`win` 不在排序里；改后为 `noHitWins → wins → deaths → hits → cleanLoopShare
+→ playerDamagePerK → damage`。
+
+把**已记录的 9 个组合**（`game-probe-rt-nh0*`，`-ScoreTag` 路径，不启动游戏）分别喂给两边：
+
+| 组合 | 胜场 | 死亡 | 受击 | 干净闭环数 | 旧排序名次 | 新排序名次 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `nh03` 猪鲨/高级翅膀 | **2** | 4 | 38 | 39 | **第 5** | **第 1** |
+| `nh08` 光女夜/高级翅膀 | 0 | 5 | 68 | **87** | **第 1** | **第 9** |
+| `nh07` 光女昼/扫帚 | 0 | 5 | 5 | 50 | 第 4 | 第 2 |
+
+旧目标把**唯一赢过**的组合排第 5、把**从未赢过且 5 场全死**的组合排第 1。
+排序不同 ⇒ 改动确实被执行，不是空转。
+
+门禁 `tools/test-training-objective.ps1`（19 项，无游戏进程、无探针）从**源码**读出排序并与
+文件头声明比对，同时回放上表的历史缺陷。**已验证它在改动前的版本上失败**，报出
+`Training objective regression: ordering is Clean > Hits > PlayerDamagePerK > Damage`。
+
+日志顺序也改了：先 `fight verdict: no-hit wins N/M (wins W, deaths D, hits H)`，
+再 `loop verdict`，并把四个验收量写进 `chaite-loop-stability/v1`。
+
+### 战斗场地：同参数探针对照
+
+使用者指出真实场地是一条长直平地（光女约 1200 格、起点正中；猪鲨约 300 余格、
+**起点贴边**、战斗时识别后镜像）。旧夹具把猪鲨出生点放在 400 格跑道**正中**，
+并在平地上方加了两条贯穿全场的木平台；公布值 `platformLeft/Right=50/550` 与实际建造的
+1–399 也不一致。
+
+对照条件完全相同：`duke-fishron` / `monitor` / seed 2 / expert / `fishron-strong-wing` /
+takeoverTick 120 / ticks 12000 / wallSeconds 600，两边 `config.json` 哈希相同
+（`AABC490E…`）且都**不**加载策略文件（只有 `train-policy.ps1` 会设 `CHAITE_POLICY_FILE`），
+因此唯一变量是夹具。
+
+| | 旧夹具 | 新夹具 |
+| --- | --- | --- |
+| `platformRows` | `[460,420]` | `[]` |
+| 出生 tile | 200（正中） | 21（左端内 20 格） |
+| `status` | loss | **win** |
+| `hits` | 8 | **4** |
+| `deaths` | 1 | **0** |
+| `bossDamage` | 35,593 | **78,000（满血击杀）** |
+| `ticks` | 2,226 | 4,393 |
+| `minLife` | 0 | 247 |
+
+`hits` 与 `ticks` 都变了 ⇒ 改动确实被执行。且 `hits=4` 且零死亡是**本项目至今最好的单场结果**
+（此前最好为 `nh03` seed 6 的 `hits=5`、零死亡）。
+
+**结论：此前所有基于旧夹具的路线结论都需要在新夹具上重测。** 这不影响"受击来源"的结论——
+45 场旧实测里**环境伤害为 0**，受击全部来自 BOSS 本体或其射弹；场地错在几何与起点，不在伤害来源。
+
+### 范围收窄（使用者定案）
+
+- **虾松露（坐骑 12 / `EmpressRainFishron`）不在范围内**：已从枚举、`FormulaRouteCatalog`
+  三处、`CombatPlanner` 分支与 `Reset`、`EmpressFlightScript` 守卫与雨天检查、
+  `FormulaMobilityContract` 雨天检查与坐骑映射、探针雨天置位与坐骑物品、三份工具门禁、
+  四处契约测试中整体删除。坐骑 12 现选中 `None`（拒绝，而非驱动）。
+- **冲刺无敌帧是合法资源**：此前"冲刺不利用无敌帧穿过射弹与本体"的前提作废。
+  验收口径仍为 `hits`（生命下降帧）。**白天光女不受影响**：其接触与即死弹幕属
+  无敌帧 Group 2，冲刺类无敌帧只给 Group 5，物理上挡不住。
+
+### 本轮离线验证
+
+`Chaite.Tests.exe` **754 项通过 0 失败**；`test-priority-phase-fixture-contract`（8 场景 76 元组）、
+`test-priority-organic-fixture-contract`、`test-priority-boss-probe-schema`（8 场景 86 元组 8 反例）、
+`test-training-objective`（19 项）全部 `exit 0`。
+
+## v0.7 进行中：猪鲨／光女生产白名单、原生机动与战中恢复（已被上方 2026-09-23 范围变更取代）
 
 本轮生产边界已明确固定为猪鲨公爵（NPC type 370）和光之女皇（NPC type 636，昼／夜由原生状态区分）。松露虫钓鱼、七彩草蛉释放和已存在的这两个 Boss 是唯一生产入口；其他 Boss、混合 Boss、自然排程和旧召唤链在消耗物品或发出控制输入前拒绝，并使用 `AudioCue.UnsupportedBoss`（本地槽位 `boss_too_hard_for_me.wav`）。下文较早的全 Boss 数字是历史离线回归，不能视为当前生产支持或胜率证据。
 
@@ -291,6 +425,52 @@ F8/F9 由测试副本的确定性热键采样器提供，不使用操作系统�
 | 原版分段跑速 + 200 弹幕 | 1.702 ms | 2.360 ms | 2.928 ms |
 
 约 188–195 B/次，计时窗口无 GC；冷构造与首次密集规划 17.850 ms（包括 JIT）。机器负载影响明显，数字不是延迟保证。原版克眼探针中 snapshot+plan+capture 共 4591 次，平均 0.091 ms，最慢 24.295 ms；最慢值包括初次规划/JIT，不能只报告平均值。探针使用节流且不渲染，墙钟加速比不是帧率或端到端延迟。
+
+## v0.7 战斗级无伤实测与前端玩梗改造（2026-09-18）
+
+**结论：0/9 组合达成战斗级无伤。** 45 场中 2 场获胜，且两场都有受击。
+
+用隔离原版探针（`verify-nohit.ps1`，串行，每场全新单次副本）对 9 个生产组合
+（猪鲨 5 种配装 + 光女昼/夜各 2 种）逐组合跑门禁种子 2–6，读取每场 `result.json`：
+- 判据：该组合每个种子都 `status=win` 且 `hits=0` 且 `deaths=0`。
+- `hits` 定义（探针原文）：玩家生命下降的原版更新帧数，含环境伤害；不是伤害事件钩子。
+- 结果：猪鲨五条路线 `hits` 落在 5–10，全部 `deaths=1`；光女昼间 `hits=1`（昼间为
+  一击必杀，`minLife=0`）；光女夜间 `hits` 6–15。
+- 唯一获胜的 2 场是猪鲨／高级翅膀 seed 5（hits=10，deaths=1）与 seed 6
+  （hits=5，deaths=0，`minLife=229`）。
+- 总耗时 31.7 分钟；报告 `CHAITE-NOHIT-VERIFY.txt`。
+
+`verify-nohit.ps1` 与 `runwave.ps1` / `runprobe.ps1` 一样是仓库外的开发辅助脚本
+（沿用 `train-policy.ps1` 现有的外部依赖约定），不随包分发。
+
+**这一轮最重要的修正是口径，不是脚本。** 训练器给出的
+「STABLE clean closed loops on 5 of 5 gate seeds」衡量的是**单个玩家闭环内无伤且回到
+初始状态的数量**，与验收要求的「整场一次都没被打到」不是同一个量。把前者读成后者
+是本项目第三次在闭环口径上出错，因此 README、前端与本文都写死两者必须分开报告。
+
+前端（`Chaite.Manager`）：
+
+- 前端重做为面向用户的三段式（标题／猪鲨·光女两栏／按键说明），移除全部开发者信息。
+- 改用本体贴图：管理器运行时用 XNA `ContentManager` 从玩家自己的 `Content/Images/*.xnb`
+  解码（该文件是 LZX 压缩，`flags=0x80`；XNA 自带解压，无需自实现 LZX），
+  缓存到 `Chaite/Sprites/`。Boss 头像索引与中文名分别读自 Terraria.exe 内嵌的
+  `NPCID.Sets.BossHeadTextures` 表与 `zh-Hans` 本地化资源。
+- 冒烟测试新增 `PASS sprite-store` 与 `PASS vanilla-art`（对真实 Content 解码 17 张
+  贴图，校验尺寸、非空白、两两互异；无游戏时 SKIP），并断言缓存就绪时每个贴图
+  槽位都持有本体美术。管理器因此固定 x86；无显示设备的机器退回中性占位框。
+- 新增梗语登记 `MemeVoice`，按状态轮换，**只在状态变化时推进**（不用计时器，
+  否则两次布局之间的文本变化会让冒烟测试不稳定）。
+- 新增梗图槽位 `Chaite/Memes/`：安装器创建目录并刷新 README，用户图片永不覆盖。
+- 安装载荷契约新增 `Memes/README.txt`；`PatcherTests` 两个夹具同步更新并新增
+  「用户梗图在升级后仍保留」断言。
+
+验证：`Chaite.Tests.exe` **752 项通过、0 失败**（本机 x86 Release）；
+`Chaite.Manager.exe --ui-smoke` 六种尺寸/缩放 **Failures: 0**，新增
+`PASS meme-slot`（临时目录内真实读写、坏文件跳过、缩略图上限、文件名排序），
+以及字形覆盖度与两两互异检查；预览窗口全程未抢前台。
+
+未做：没有在真实客户端里听音频、看前端。本轮音频验证只覆盖代码路径与回归，
+不宣称梗音频实播成功——隔离副本没有梗音频文件。
 
 ## 证据与复现
 

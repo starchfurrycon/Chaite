@@ -35,7 +35,13 @@ internal static class DesktopHost
             var output = WorkspacePath(Required(options, "output"), root, false);
             var working = WorkspacePath(Required(options, "working"), root, false);
             var timeout = int.Parse(Required(options, "timeout"), CultureInfo.InvariantCulture);
-            if (timeout < 120 || timeout > 960) throw new ArgumentOutOfRangeException("timeout", "Timeout must be 120..960 seconds.");
+            // The upper bound exists so a stuck probe cannot hold the private
+            // desktop forever. Episode training legitimately runs for hours in
+            // one process (a training session must not be recompiled or
+            // relaunched mid-run), so the bound is one day rather than the
+            // sixteen minutes that killed the first two training sessions with
+            // exit code 124.
+            if (timeout < 120 || timeout > 86400) throw new ArgumentOutOfRangeException("timeout", "Timeout must be 120..86400 seconds.");
             if (!Directory.Exists(output) || !Directory.Exists(working)) throw new DirectoryNotFoundException("Output and working directory must already exist.");
             var arguments = Encoding.UTF8.GetString(Convert.FromBase64String(Required(options, "args64")));
             Log = TextWriter.Synchronized(new StreamWriter(new FileStream(Path.Combine(output, "desktop-host.log"), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true });

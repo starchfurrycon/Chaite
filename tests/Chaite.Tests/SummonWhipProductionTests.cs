@@ -23,8 +23,6 @@ namespace Chaite.Tests
                 BossArrivalResetPreservesSummonDeploymentState);
             Run(nameof(SummonWhipLiveProofLossReturnsNeutralControl),
                 SummonWhipLiveProofLossReturnsNeutralControl);
-            Run(nameof(LacewingStartRejectsDualSlotOnlyOutput),
-                LacewingStartRejectsDualSlotOnlyOutput);
             Run(nameof(FacadeSumsSpiderFamilyWithoutWorldProjectileScan),
                 FacadeSumsSpiderFamilyWithoutWorldProjectileScan);
             Run(nameof(FacadeRejectsAmbiguousOrMalformedSummonPairs),
@@ -200,17 +198,6 @@ namespace Chaite.Tests
             confirmedPlanner.Plan(confirmed);
             confirmed.SummonWhipOutput.ExpectedStaffBuffActive = false;
             AssertNeutralReturn(confirmedPlanner.Plan(confirmed));
-        }
-
-        private static void LacewingStartRejectsDualSlotOnlyOutput()
-        {
-            var snapshot = SummonWhipFallbackScenario(636);
-            var planner = new CombatPlanner(new PlannerSettings());
-            string reason;
-            False(planner.PrepareForExpectedEncounter(snapshot,
-                "prismatic-lacewing", 636, out reason));
-            True(reason != null && reason.Contains("single-slot"), reason);
-            False(planner.UsesSummonWhipOutput);
         }
 
         private static void FacadeSumsSpiderFamilyWithoutWorldProjectileScan()

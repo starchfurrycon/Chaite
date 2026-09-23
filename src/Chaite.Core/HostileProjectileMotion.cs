@@ -24,64 +24,13 @@ namespace Chaite.Core
     }
 
     /// <summary>
-    /// Incremental AI_171 state for a hostile type-873 rainbow streak whose
-    /// exact target player is known. The planner keeps one state per relevant
-    /// streak while rolling out a movement candidate, so each native update
-    /// can use that candidate's own future player center without allocating.
-    /// </summary>
-    public struct TargetedProjectileMotionState
-    {
-        public bool Valid;
-        public bool Active;
-        public Vec2 Position;
-        public Vec2 Velocity;
-        public int TimeLeft;
-        internal int Type;
-        internal int Width;
-        internal int Height;
-        internal int NativeIdentity;
-        // Fishron bubble (type 385) can share the candidate-coupled path when
-        // its native target and ai/localAI values are all available.  These
-        // fields remain zero for the Empress 873 state and are never treated
-        // as known unless the corresponding factory validates them.
-        internal float Ai1;
-        internal float Ai2;
-        internal float LocalAi0;
-        internal int Direction;
-    }
-
-    /// <summary>
-    /// Candidate-coupled state for NPC 636's native AI_120 state 8/9 dash.
-    /// Position is the NPC top-left, while TargetCenter is supplied afresh for
-    /// every rollout tick. The state is a value type so the planner can reuse a
-    /// preallocated array on its hot path.
-    /// </summary>
-    public struct EmpressDashMotionState
-    {
-        public bool Valid;
-        public bool Active;
-        public Vec2 Position;
-        public Vec2 Velocity;
-        public int Width;
-        public int Height;
-        public int State;
-        public int Timer;
-        public bool Phase2;
-        public bool Expert;
-        public bool Enraged;
-        internal int NativeIdentity;
-    }
-
-    /// <summary>
     /// Terraria 1.4.5.8 hostile projectile motion used by the bounded threat
-    /// planner.  The reviewed branches are Projectile.AI_171 and the type
-    /// 920/921 branches of Projectile.AI_001.  No heap state is retained or
-    /// allocated while sampling.
+    /// planner.  The reviewed branches are the Duke Fishron-owned hazard
+    /// families and the type 920/921 branches of Projectile.AI_001.  No heap
+    /// state is retained or allocated while sampling.
     /// </summary>
     public static class HostileProjectileMotion
     {
-        private const float RainbowSlowdown = .98f;
-        private const float RainbowHomingSpeed = 30f;
         private const float FallingGravity = .15f;
         private const float MaximumFallingSpeed = 16f;
         private const float MinimumLiquidTravel = .25f;
@@ -107,10 +56,6 @@ namespace Chaite.Core
                 case 385:
                 case 386:
                     return ThreatTrajectory.UnmodeledDukeFishronHazard;
-                case 872:
-                    return ThreatTrajectory.EmpressRainbowTrail;
-                case 873:
-                    return ThreatTrajectory.EmpressRainbowStreak;
                 case 920:
                     return ThreatTrajectory.FallingHostileBolt;
                 case 921:
@@ -145,16 +90,6 @@ namespace Chaite.Core
                     {
                         sample = default(ProjectileMotionSample);
                     }
-                    break;
-                case ThreatTrajectory.EmpressRainbowTrail:
-                    if (!SampleRainbowTrail(threat, ticks, ref sample))
-                    {
-                        sample = default(ProjectileMotionSample);
-                    }
-                    break;
-                case ThreatTrajectory.EmpressRainbowStreak:
-                    if (threat.NativeIdentity < 0) return false;
-                    SampleRainbowStreak(threat, ticks, ref sample);
                     break;
                 case ThreatTrajectory.FallingHostileBolt:
                     SampleFallingBolt(threat, ticks, false, ref sample);
@@ -209,345 +144,6 @@ namespace Chaite.Core
             return horizonTicks >= 0 &&
                 TrySweep(threat, 0, horizonTicks, out sweep) &&
                 sweep.Active ? sweep.Bounds : default(RectF);
-        }
-
-        /// <summary>
-        /// Starts candidate-coupled prediction only when AI_171's captured
-        /// ai[0] is an exact match for the local player. Unknown, fractional,
-        /// out-of-range, or other-player targets keep using TrySweep's
-        /// direction-independent conservative envelope.
-        /// </summary>
-        public static bool TryCreateTargetedState(in ThreatSnapshot threat,
-            int localPlayerIndex, out TargetedProjectileMotionState state)
-        {
-            state = default(TargetedProjectileMotionState);
-            if (localPlayerIndex < 0 || localPlayerIndex >= 255 ||
-                !threat.NativeTargetPlayerKnown ||
-                threat.NativeTargetPlayerIndex != localPlayerIndex ||
-                !threat.TrajectoryAi0Known ||
-                !Finite(threat.TrajectoryAi0) ||
-                threat.TrajectoryAi0 != threat.NativeTargetPlayerIndex ||
-                threat.Kind != ThreatKind.Projectile ||
-                threat.Geometry != ThreatGeometry.Body ||
-                threat.Trajectory != ThreatTrajectory.EmpressRainbowStreak ||
-                threat.Type != 873 ||
-                threat.NativeIdentity < 0 ||
-                threat.TimeLeft <= 0 || threat.Width <= 0 ||
-                threat.Height <= 0 || !Finite(threat.Position) ||
-                !Finite(threat.Velocity))
-                return false;
-
-            state.Valid = true;
-            state.Active = true;
-            state.Position = threat.Position;
-            state.Velocity = threat.Velocity;
-            state.TimeLeft = threat.TimeLeft;
-            state.Type = threat.Type;
-            state.Width = threat.Width;
-            state.Height = threat.Height;
-            state.NativeIdentity = threat.NativeIdentity;
-            state.Ai1 = threat.TrajectoryAi1;
-            state.Ai2 = threat.TrajectoryAi2;
-            state.LocalAi0 = threat.TrajectoryLocalAi0;
-            state.Direction = threat.NativeDirectionKnown ?
-                threat.NativeDirection : 0;
-            return true;
-        }
-
-        /// <summary>
-        /// Creates the exact native state needed for an Empress 8/9 contact
-        /// dash. Every clock and difficulty bit is required; a caller cannot
-        /// accidentally turn a default snapshot into a predictable dash.
-        /// </summary>
-        public static bool TryCreateEmpressDashState(
-            in ThreatSnapshot threat, out EmpressDashMotionState state)
-        {
-            state = default(EmpressDashMotionState);
-            if (threat.Kind != ThreatKind.NpcContact ||
-                threat.Type != PriorityBossThreatGate.EmpressType ||
-                threat.Trajectory != ThreatTrajectory.EmpressDashContact ||
-                !threat.SourceBossContextKnown ||
-                threat.SourceBossType != PriorityBossThreatGate.EmpressType ||
-                !threat.TrajectoryAi1Known || !threat.TrajectoryAi3Known ||
-                !threat.NativeExpertModeKnown ||
-                !threat.NativeShouldBeEnragedKnown ||
-                !threat.NativeTargetPlayerKnown ||
-                threat.NativeTargetPlayerIndex < 0 ||
-                threat.NativeTargetPlayerIndex >= 255 ||
-                !threat.TrajectoryAi0Known ||
-                !Finite(threat.TrajectoryAi0) ||
-                !Finite(threat.TrajectoryAi1) ||
-                !Finite(threat.TrajectoryAi3) ||
-                threat.TrajectoryAi0 != 8f && threat.TrajectoryAi0 != 9f ||
-                !IsIntegerInRange(threat.TrajectoryAi1, 0, 200) ||
-                !IsIntegerInRange(threat.TrajectoryAi3, 0, 3) ||
-                threat.Width <= 0 || threat.Height <= 0 ||
-                !Finite(threat.Position) || !Finite(threat.Velocity) ||
-                threat.NativeIdentity < 0)
-                return false;
-
-            state.Valid = true;
-            state.Active = true;
-            state.Position = threat.Position;
-            state.Velocity = threat.Velocity;
-            state.Width = threat.Width;
-            state.Height = threat.Height;
-            state.State = (int)threat.TrajectoryAi0;
-            state.Timer = (int)threat.TrajectoryAi1;
-            state.Phase2 = threat.TrajectoryAi3 == 1f ||
-                threat.TrajectoryAi3 == 3f;
-            state.Expert = threat.NativeExpertMode;
-            state.Enraged = threat.NativeShouldBeEnraged;
-            state.NativeIdentity = threat.NativeIdentity;
-            var duration = DashDuration(in state);
-            if (state.Timer < 0 || state.Timer >= duration)
-            {
-                state.Valid = false;
-                state.Active = false;
-                return false;
-            }
-            return true;
-        }
-
-        /// <summary>Advances one AI_120 dash update and integrates position in
-        /// the same order as NPC.UpdateNPC (AI, then position += velocity).</summary>
-        public static bool TryAdvanceEmpressDash(
-            ref EmpressDashMotionState state, Vec2 targetCenter,
-            out ProjectileMotionSample sample)
-        {
-            sample = default(ProjectileMotionSample);
-            if (!ValidDashState(in state) || !Finite(targetCenter))
-            {
-                state.Valid = false;
-                return false;
-            }
-            if (!state.Active)
-            {
-                sample.Position = state.Position;
-                sample.Velocity = state.Velocity;
-                sample.Bounds = BodyBounds(state.Position, state.Width,
-                    state.Height, 0f, 0f);
-                sample.Active = false;
-                return Valid(sample);
-            }
-
-            var timer = state.Timer;
-            var num33 = state.State == 8 ? -1f : 1f;
-            if (timer <= 40)
-            {
-                var destination = targetCenter + new Vec2(num33 * -550f, 0f);
-                var delta = destination - new Vec2(
-                    state.Position.X + state.Width * .5f,
-                    state.Position.Y + state.Height * .5f);
-                // AI_120_DashTo first applies the -300 vertical offset and
-                // retreats 100 px along the resulting direction when farther
-                // than 200 px. This is the exact native target construction.
-                destination = targetCenter + new Vec2(num33 * -550f, -300f);
-                var toDestination = destination - new Vec2(
-                    state.Position.X + state.Width * .5f,
-                    state.Position.Y + state.Height * .5f);
-                var length = toDestination.Length;
-                if (!Finite(length)) return InvalidateDash(ref state);
-                if (length > 200f && length > .0001f)
-                    destination -= toDestination * (100f / length);
-                delta = destination - new Vec2(
-                    state.Position.X + state.Width * .5f,
-                    state.Position.Y + state.Height * .5f);
-                var direction = delta.Length > .0001f ?
-                    delta * (1f / delta.Length) : default(Vec2);
-                var desired = direction * 12f;
-                SimpleFly(ref state.Velocity, desired, 1f);
-                if (timer == 40) state.Velocity *= .3f;
-            }
-            else if (timer <= 90)
-            {
-                var desired = new Vec2(num33 * 50f, 0f);
-                // Vector2.Lerp(value1: velocity, value2: desired, .05).
-                state.Velocity = state.Velocity * .95f + desired * .05f;
-                if (timer == 90) state.Velocity *= .7f;
-            }
-            else
-            {
-                state.Velocity *= .92f;
-            }
-
-            state.Position += state.Velocity;
-            state.Timer++;
-            if (state.Timer >= DashDuration(in state)) state.Active = false;
-            sample.Active = true;
-            sample.Position = state.Position;
-            sample.Velocity = state.Velocity;
-            sample.Bounds = BodyBounds(state.Position, state.Width,
-                state.Height, 0f, 0f);
-            if (Valid(sample)) return true;
-            return InvalidateDash(ref state);
-        }
-
-        public static bool TryAdvanceEmpressDashSweep(
-            ref EmpressDashMotionState state, Vec2 targetCenterBefore,
-            Vec2 targetCenterAfter, int ticks, out ProjectileMotionSweep sweep)
-        {
-            sweep = default(ProjectileMotionSweep);
-            if (ticks <= 0 || !Finite(targetCenterBefore) ||
-                !Finite(targetCenterAfter) || !ValidDashState(in state))
-                return false;
-            if (state.Active)
-            {
-                sweep.Active = true;
-                sweep.Bounds = BodyBounds(state.Position, state.Width,
-                    state.Height, 0f, 0f);
-            }
-            var delta = targetCenterAfter - targetCenterBefore;
-            for (var tick = 1; tick <= ticks; tick++)
-            {
-                var target = targetCenterBefore + delta *
-                    (tick / (float)ticks);
-                ProjectileMotionSample sample;
-                if (!TryAdvanceEmpressDash(ref state, target, out sample))
-                    return false;
-                if (!sample.Active) continue;
-                if (!sweep.Active)
-                {
-                    sweep.Active = true;
-                    sweep.Bounds = sample.Bounds;
-                }
-                else sweep.Bounds = Union(sweep.Bounds, sample.Bounds);
-            }
-            return true;
-        }
-
-        /// <summary>
-        /// Advances one native AI_171 update using the candidate player's
-        /// center for this exact update. SmoothStep and position integration
-        /// match Terraria 1.4.5.8's hostile type-873 branch.
-        /// </summary>
-        public static bool TryAdvanceTargeted(
-            ref TargetedProjectileMotionState state, Vec2 targetPlayerCenter,
-            out ProjectileMotionSample sample)
-        {
-            sample = default(ProjectileMotionSample);
-            if (!ValidTargetedState(in state) ||
-                !Finite(targetPlayerCenter))
-            {
-                state.Valid = false;
-                return false;
-            }
-
-            if (!state.Active || state.TimeLeft <= 0)
-            {
-                sample.Active = false;
-                sample.Position = state.Position;
-                sample.Velocity = state.Velocity;
-                sample.Bounds = BodyBounds(state.Position, state.Width,
-                    state.Height, 0f, 0f);
-                return Valid(sample);
-            }
-
-            var velocity = state.Velocity;
-            if (state.Type == 385)
-            {
-                state.LocalAi0 += 1f;
-                var speed = (state.Ai2 == 1f ? FishronBubbleFastSpeed :
-                    FishronBubbleBaseSpeed) + state.LocalAi0 / 20f;
-                if (!Finite(speed) || speed > 64f)
-                {
-                    state.Valid = false;
-                    return false;
-                }
-                var bubbleCenter = new Vec2(state.Position.X +
-                    state.Width * .5f, state.Position.Y + state.Height * .5f);
-                var direction = targetPlayerCenter - bubbleCenter;
-                var lengthSquared = direction.LengthSquared;
-                if (!Finite(lengthSquared) || lengthSquared <= 0f)
-                {
-                    state.Valid = false;
-                    return false;
-                }
-                velocity = direction * (speed /
-                    (float)Math.Sqrt(lengthSquared));
-            }
-            else if (state.TimeLeft > 140)
-            {
-                velocity *= RainbowSlowdown;
-                var wave = (float)Math.Cos(state.NativeIdentity % 6f / 6f +
-                    state.Position.X / 320f + state.Position.Y / 160f);
-                var rotation = wave * (Pi * 2f) * .125f / 30f;
-                velocity = Rotate(velocity, rotation);
-            }
-            else if (state.TimeLeft > 30)
-            {
-                var projectileCenter = new Vec2(
-                    state.Position.X + state.Width * .5f,
-                    state.Position.Y + state.Height * .5f);
-                var direction = targetPlayerCenter - projectileCenter;
-                var lengthSquared = direction.LengthSquared;
-                if (!Finite(lengthSquared) || lengthSquared <= 0f)
-                {
-                    state.Valid = false;
-                    return false;
-                }
-                var targetDirection = direction *
-                    (1f / (float)Math.Sqrt(lengthSquared));
-                var targetVelocity = targetDirection * RainbowHomingSpeed;
-                var progress = Clamp01((140f - state.TimeLeft) / 110f);
-                var amount = .05f + .05f * progress;
-                var weight = amount * amount * (3f - 2f * amount);
-                velocity = velocity * (1f - weight) +
-                    targetVelocity * weight;
-            }
-
-            state.Velocity = velocity;
-            state.Position += velocity;
-            state.TimeLeft--;
-            state.Active = state.TimeLeft > 0;
-            sample.Active = true;
-            sample.Position = state.Position;
-            sample.Velocity = state.Velocity;
-            sample.Bounds = BodyBounds(state.Position, state.Width,
-                state.Height, 0f, 0f);
-            if (Valid(sample)) return true;
-            state.Valid = false;
-            sample = default(ProjectileMotionSample);
-            return false;
-        }
-
-        /// <summary>
-        /// Advances a bounded group of native updates. The candidate segment is
-        /// sampled once per native tick rather than aiming every update at one
-        /// endpoint; the result encloses each exact projectile body.
-        /// </summary>
-        public static bool TryAdvanceTargetedSweep(
-            ref TargetedProjectileMotionState state,
-            Vec2 targetPlayerCenterBefore, Vec2 targetPlayerCenterAfter,
-            int ticks, out ProjectileMotionSweep sweep)
-        {
-            sweep = default(ProjectileMotionSweep);
-            if (ticks <= 0 || !Finite(targetPlayerCenterBefore) ||
-                !Finite(targetPlayerCenterAfter) ||
-                !ValidTargetedState(in state)) return false;
-            if (state.Active && state.TimeLeft > 0)
-            {
-                sweep.Active = true;
-                sweep.Bounds = BodyBounds(state.Position, state.Width,
-                    state.Height, 0f, 0f);
-            }
-            var delta = targetPlayerCenterAfter - targetPlayerCenterBefore;
-            for (var tick = 1; tick <= ticks; tick++)
-            {
-                var target = targetPlayerCenterBefore +
-                    delta * (tick / (float)ticks);
-                ProjectileMotionSample sample;
-                if (!TryAdvanceTargeted(ref state, target, out sample))
-                    return false;
-                if (!sample.Active) continue;
-                if (!sweep.Active)
-                {
-                    sweep.Active = true;
-                    sweep.Bounds = sample.Bounds;
-                }
-                else sweep.Bounds = Union(sweep.Bounds, sample.Bounds);
-            }
-            return true;
         }
 
         /// <summary>
@@ -883,138 +479,6 @@ namespace Chaite.Core
             return timeLeft <= 0 || elapsed + 1 < timeLeft;
         }
 
-        private static void SampleRainbowStreak(in ThreatSnapshot threat,
-            int ticks, ref ProjectileMotionSample sample)
-        {
-            var position = threat.Position;
-            var velocity = threat.Velocity;
-            var positionRadius = 0f;
-            var velocityRadius = 0f;
-            var timeLeft = threat.TimeLeft;
-
-            for (var tick = 0; tick < ticks &&
-                (timeLeft <= 0 || tick < threat.TimeLeft); tick++)
-            {
-                // AI_171's first stage is deterministic: the native code uses
-                // whoAmI, top-left position and the current velocity in exactly
-                // this order before HandleMovement applies the new velocity.
-                if (timeLeft <= 0 || timeLeft > 140)
-                {
-                    velocity = velocity * RainbowSlowdown;
-                    var wave = (float)Math.Cos(threat.NativeIdentity % 6f / 6f +
-                        position.X / 320f + position.Y / 160f);
-                    var rotation = wave * (Pi * 2f) * .125f / 30f;
-                    velocity = Rotate(velocity, rotation);
-                }
-                else if (timeLeft > 30)
-                {
-                    // The target player's future position is intentionally not
-                    // guessed. Vector2.SmoothStep is affine after its scalar
-                    // cubic, so this recurrence encloses every possible native
-                    // target direction of length 30.
-                    var progress = Clamp01((140f - timeLeft) / 110f);
-                    var amount = .05f + .05f * progress;
-                    var weight = amount * amount * (3f - 2f * amount);
-                    var targetRadius = Math.Max(RainbowHomingSpeed,
-                        velocity.Length + velocityRadius);
-                    velocity = velocity * (1f - weight);
-                    velocityRadius = velocityRadius * (1f - weight) +
-                        targetRadius * weight;
-                }
-
-                position += velocity;
-                positionRadius += velocityRadius;
-                if (timeLeft > 0) timeLeft--;
-            }
-
-            sample.Active = threat.TimeLeft <= 0 || ticks <= threat.TimeLeft;
-            sample.Position = position;
-            sample.Velocity = velocity;
-            sample.UncertaintyX = positionRadius;
-            sample.UncertaintyY = positionRadius;
-            sample.Bounds = BodyBounds(threat, position, positionRadius,
-                positionRadius);
-        }
-
-        private static bool SampleRainbowTrail(in ThreatSnapshot threat,
-            int ticks, ref ProjectileMotionSample sample)
-        {
-            if (!threat.NativeRainbowHistoryKnown ||
-                !threat.TrajectoryAi0Known ||
-                RainbowTrailHistory50.Length != 50 || ticks < 0)
-                return false;
-
-            var position = threat.Position;
-            var velocity = threat.Velocity;
-            var ai0 = threat.TrajectoryAi0;
-            var timeLeft = threat.TimeLeft;
-            var history = threat.NativeRainbowHistory;
-            if (!Finite(ai0) || !Finite(position) || !Finite(velocity) ||
-                timeLeft <= 0) return false;
-
-            // At t=0 Damage() sees the captured history before the next native
-            // update. Every later sample first runs AI_173 and integrates the
-            // new body position, then checks the *pre-shift* history, matching
-            // Projectile.Update's Damage -> oldPos shift -> timeLeft order.
-            for (var tick = 0; tick <= ticks; tick++)
-            {
-                if (timeLeft <= 0)
-                {
-                    sample.Active = false;
-                    sample.Position = position;
-                    sample.Velocity = velocity;
-                    sample.Bounds = default(RectF);
-                    return true;
-                }
-
-                if (tick > 0)
-                {
-                    var rotation = ai0;
-                    velocity = Rotate(velocity, rotation);
-                    if (ai0 < Pi / 360f)
-                        ai0 += (Pi / 360f) / 30f;
-                    position += velocity;
-                }
-
-                RectF hazard = default(RectF);
-                var hasHazard = false;
-                for (var slot = 0; slot < 50; slot += 2)
-                {
-                    var old = history.Get(slot);
-                    // Vector2.Zero is vanilla's uninitialized trail sentinel.
-                    if (old.X == 0f && old.Y == 0f) continue;
-                    if (!Finite(old)) return false;
-                    var body = new RectF((int)old.X, (int)old.Y,
-                        threat.Width, threat.Height);
-                    if (!hasHazard)
-                    {
-                        hazard = body;
-                        hasHazard = true;
-                    }
-                    else hazard = Union(hazard, body);
-                }
-
-                sample.Active = hasHazard;
-                sample.Position = position;
-                sample.Velocity = velocity;
-                sample.UncertaintyX = 0f;
-                sample.UncertaintyY = 0f;
-                sample.Bounds = hasHazard ? hazard : default(RectF);
-
-                // The native update shifts the trail and decrements lifetime
-                // after Damage(). Do this after producing the current sample,
-                // including the final damaging frame when timeLeft == 1.
-                if (tick > 0)
-                {
-                    for (var slot = 49; slot > 0; slot--)
-                        history.Set(slot, history.Get(slot - 1));
-                    history.Set(0, position);
-                    timeLeft--;
-                }
-            }
-            return true;
-        }
-
         private static void SampleFallingBolt(in ThreatSnapshot threat,
             int ticks, bool canBounce, ref ProjectileMotionSample sample)
         {
@@ -1185,15 +649,6 @@ namespace Chaite.Core
             }
             else if (value > third) third = value;
         }
-
-        private static Vec2 Rotate(Vec2 value, float radians)
-        {
-            var cosine = (float)Math.Cos(radians);
-            var sine = (float)Math.Sin(radians);
-            return new Vec2(value.X * cosine - value.Y * sine,
-                value.X * sine + value.Y * cosine);
-        }
-
         private static void SimpleFly(ref Vec2 velocity, Vec2 desired,
             float moveSpeed)
         {
@@ -1223,30 +678,6 @@ namespace Chaite.Core
             }
         }
 
-        private static int DashDuration(in EmpressDashMotionState state)
-        {
-            var num17 = 0;
-            if (state.Phase2) num17 += 15;
-            if (state.Expert || state.Enraged) num17 += 5;
-            return 90 + 20 - num17;
-        }
-
-        private static bool ValidDashState(in EmpressDashMotionState state)
-        {
-            return state.Valid && state.State >= 8 && state.State <= 9 &&
-                state.Width > 0 && state.Height > 0 &&
-                state.NativeIdentity >= 0 && state.Timer >= 0 &&
-                state.Timer < DashDuration(in state) &&
-                Finite(state.Position) && Finite(state.Velocity);
-        }
-
-        private static bool InvalidateDash(ref EmpressDashMotionState state)
-        {
-            state.Valid = false;
-            state.Active = false;
-            return false;
-        }
-
         private static bool IsIntegerInRange(float value, int minimum,
             int maximum)
         {
@@ -1273,11 +704,6 @@ namespace Chaite.Core
             Finite(sample.UncertaintyY) && sample.UncertaintyY >= 0f &&
             Finite(sample.Bounds) && sample.Bounds.Width > 0f &&
             sample.Bounds.Height > 0f;
-        private static bool ValidTargetedState(
-            in TargetedProjectileMotionState state) => state.Valid &&
-            state.Type == 873 && state.Width > 0 && state.Height > 0 &&
-            state.NativeIdentity >= 0 && state.TimeLeft >= 0 &&
-            Finite(state.Position) && Finite(state.Velocity);
         private static bool Finite(float value) => !float.IsNaN(value) &&
             !float.IsInfinity(value);
         private static float Clamp01(float value) => Math.Max(0f,
@@ -1287,85 +713,33 @@ namespace Chaite.Core
     /// <summary>
     /// Narrow admission boundary for native hazards whose current hitbox and
     /// linear velocity do not enclose their future damage.  This deliberately
-    /// covers only Duke Fishron and Empress of Light; it does not make these
-    /// trajectories predictable and cannot classify them without a live
-    /// same-frame Boss source supplied by the native adapter.
+    /// covers only Duke Fishron; it does not make these trajectories
+    /// predictable and cannot classify them without a live same-frame Boss
+    /// source supplied by the native adapter.
     /// </summary>
     public static class PriorityBossThreatGate
     {
         public const int DukeFishronType = 370;
-        public const int EmpressType = 636;
 
         public static ThreatTrajectory SourceBoundProjectileTrajectory(
-            int projectileType, bool dukeFishronSourceActive,
-            bool empressSourceActive)
+            int projectileType, bool dukeFishronSourceActive)
         {
             var trajectory = HostileProjectileMotion.ForProjectileType(
                 projectileType);
             if (trajectory == ThreatTrajectory.UnmodeledDukeFishronHazard &&
                 !dukeFishronSourceActive)
                 return ThreatTrajectory.Linear;
-            if (projectileType == 872)
-            {
-                // A type-872 projectile is only safe to model after the
-                // adapter has captured its native oldPos history.  The simple
-                // source-bound classifier deliberately returns an unknown
-                // sentinel; TerrariaFacade upgrades it to
-                // EmpressRainbowTrail only when all 50 entries are finite.
-                return empressSourceActive
-                    ? ThreatTrajectory.UnmodeledEmpressRainbowTrail
-                    : ThreatTrajectory.Linear;
-            }
-            if ((trajectory == ThreatTrajectory.EmpressRainbowTrail ||
-                 trajectory == ThreatTrajectory.UnmodeledEmpressRainbowTrail) &&
-                !empressSourceActive)
-                return ThreatTrajectory.Linear;
             return trajectory;
         }
 
-        // Compatibility surface used by older/synthetic adapters.  The
-        // four-argument form has no way to distinguish an unavailable ai[0]
-        // from a deliberately supplied value, so it only classifies the two
-        // reviewed dash states and leaves all other contacts Linear.  The
-        // native facade uses the strict overload below and supplies that
-        // availability bit explicitly.
+        /// <summary>Only the Fishron-owned shark/tornado contact bodies have a
+        /// source-bound native trajectory.  Every other contact stays Linear,
+        /// and the family tag requires a live same-frame Fishron source.</summary>
         public static ThreatTrajectory SourceBoundNpcTrajectory(int npcType,
-            float ai0, bool dukeFishronSourceActive,
-            bool empressSourceActive)
+            bool dukeFishronSourceActive)
         {
             if (dukeFishronSourceActive && npcType >= 371 && npcType <= 373)
                 return ThreatTrajectory.UnmodeledDukeFishronHazard;
-            if (empressSourceActive && npcType == EmpressType &&
-                (ai0 == 8f || ai0 == 9f))
-                return ThreatTrajectory.UnmodeledEmpressDashContact;
-            return ThreatTrajectory.Linear;
-        }
-
-        public static ThreatTrajectory SourceBoundNpcTrajectory(int npcType,
-            float ai0, bool ai0Known, bool dukeFishronSourceActive,
-            bool empressSourceActive)
-        {
-            if (dukeFishronSourceActive && npcType >= 371 && npcType <= 373)
-                return ThreatTrajectory.UnmodeledDukeFishronHazard;
-            if (empressSourceActive && npcType == EmpressType)
-            {
-                // A missing ai[0] must never inherit a default value which
-                // happens to equal a dash state.  The strict native adapter
-                // supplies this bit explicitly; reject before comparing the
-                // payload so malformed snapshots remain fail-closed.
-                if (!ai0Known)
-                    return ThreatTrajectory.UnmodeledEmpressDashContact;
-                if (ai0 == 8f || ai0 == 9f)
-                    return ThreatTrajectory.EmpressDashContact;
-                // A native adapter which explicitly reports an unavailable,
-                // fractional, or out-of-range state cannot prove the contact
-                // branch.  Keep that path source-bound and fail closed.  The
-                // compatibility overload above intentionally does not make
-                // this inference from a bare float.
-                if (ai0Known && (!IsFinite(ai0) || ai0 != (int)ai0 ||
-                    ai0 < 0f || ai0 > 13f))
-                    return ThreatTrajectory.UnmodeledEmpressDashContact;
-            }
             return ThreatTrajectory.Linear;
         }
 
@@ -1384,18 +758,8 @@ namespace Chaite.Core
         public static int RequiredSourceBossType(
             ThreatTrajectory trajectory)
         {
-            switch (trajectory)
-            {
-                case ThreatTrajectory.UnmodeledDukeFishronHazard:
-                    return DukeFishronType;
-                case ThreatTrajectory.EmpressRainbowTrail:
-                case ThreatTrajectory.EmpressDashContact:
-                case ThreatTrajectory.UnmodeledEmpressRainbowTrail:
-                case ThreatTrajectory.UnmodeledEmpressDashContact:
-                    return EmpressType;
-                default:
-                    return 0;
-            }
+            return trajectory == ThreatTrajectory.UnmodeledDukeFishronHazard
+                ? DukeFishronType : 0;
         }
 
         public static bool TryGetNeutralHoldReason(CombatSnapshot snapshot,
@@ -1431,28 +795,6 @@ namespace Chaite.Core
                         return true;
                     }
                 }
-
-                if (sourceBossType == EmpressType &&
-                    threat.Kind == ThreatKind.Projectile &&
-                    threat.Type == 872 &&
-                    (threat.Trajectory == ThreatTrajectory.EmpressRainbowTrail ||
-                     threat.Trajectory == ThreatTrajectory.UnmodeledEmpressRainbowTrail) &&
-                    !IsValidRainbowTrailThreat(in threat))
-                {
-                    reason = "Empress of Light rainbow trail native history is unavailable or malformed";
-                    return true;
-                }
-
-                if (sourceBossType == EmpressType &&
-                    threat.Kind == ThreatKind.NpcContact &&
-                    threat.Type == EmpressType &&
-                    (threat.Trajectory == ThreatTrajectory.EmpressDashContact ||
-                     threat.Trajectory == ThreatTrajectory.UnmodeledEmpressDashContact) &&
-                    !IsValidDashThreat(in threat))
-                {
-                    reason = "Empress of Light dash contact native state is unavailable or malformed";
-                    return true;
-                }
             }
             return false;
         }
@@ -1469,256 +811,5 @@ namespace Chaite.Core
             }
             return false;
         }
-
-        private static bool IsValidRainbowTrailThreat(
-            in ThreatSnapshot threat)
-        {
-            ProjectileMotionSample sample;
-            return threat.Trajectory == ThreatTrajectory.EmpressRainbowTrail &&
-                HostileProjectileMotion.TrySample(threat, 0, out sample);
-        }
-
-        private static bool IsValidDashThreat(in ThreatSnapshot threat)
-        {
-            EmpressDashMotionState state;
-            return threat.Trajectory == ThreatTrajectory.EmpressDashContact &&
-                HostileProjectileMotion.TryCreateEmpressDashState(threat,
-                out state);
-        }
-
-        private static bool IsFinite(float value) => !float.IsNaN(value) &&
-            !float.IsInfinity(value);
-    }
-
-    /// <summary>
-    /// Projectile 919's native AI_179 movement and Colliding line segment.
-    /// Integral tick samples exactly preserve its age-60 launch, age-61 damage
-    /// gate, 40 px/tick travel and 80-by-8 oriented collision shape.
-    /// </summary>
-    public static class EmpressLanceGeometry
-    {
-        private const float HalfLength = 40f;
-        private const float HalfWidth = 4f;
-        // A handful of float projections/reconstructions are used to turn the
-        // native line into a lobe. Inflate by roughly eight single-precision
-        // ulps, including the absolute world-coordinate magnitude: otherwise
-        // a locally tiny lobe can lose an edge when Bounds adds it to a center
-        // near Terraria's world limit.
-        private const float RoundoffScale = .000001f;
-
-        public static BeamSample AtTime(in ThreatSnapshot threat, float ticks)
-        {
-            if (!Finite(ticks) || ticks < 0f || ticks >= 361f ||
-                !ValidSnapshot(threat))
-                return default(BeamSample);
-            var completed = CompletedTicks(ticks);
-            if (!ValidTick(threat, completed) ||
-                threat.BeamAge + completed <= 60f)
-                return default(BeamSample);
-            var rawDirection = threat.BeamDirection;
-            var axis = rawDirection.Normalized();
-            Vec2 origin;
-            if (!TryOriginAt(threat, rawDirection, completed, out origin))
-                return default(BeamSample);
-            float nativeHalfLength;
-            float nativeHalfWidth;
-            NativeExtents(rawDirection, axis, out nativeHalfLength,
-                out nativeHalfWidth);
-            var padding = RoundoffPadding(origin, origin,
-                Math.Max(nativeHalfLength, nativeHalfWidth));
-            var lobe = new BeamLobe { Center = origin, Axis = axis,
-                HalfLength = nativeHalfLength + padding,
-                HalfWidth = nativeHalfWidth + padding };
-            return new BeamSample { Count = 1, First = lobe,
-                Bounds = Bounds(lobe) };
-        }
-
-        public static BeamSample Sweep(in ThreatSnapshot threat,
-            float fromTicks, float toTicks)
-        {
-            if (!Finite(fromTicks) || !Finite(toTicks) || fromTicks < 0f ||
-                toTicks < fromTicks || !ValidSnapshot(threat))
-                return default(BeamSample);
-
-            // Resolve the finite native lifetime before converting caller
-            // floats to ints.  Besides being constant-time for huge horizons,
-            // this avoids the implementation-defined out-of-range float-to-int
-            // conversion which could otherwise discard an active current lance.
-            var minimum = MinimumDamagingTick(threat);
-            var maximum = MaximumValidTick(threat);
-            if (maximum < minimum || fromTicks > maximum ||
-                toTicks < minimum) return default(BeamSample);
-            var first = (int)Math.Ceiling(Math.Max(fromTicks, minimum));
-            var last = (int)Math.Floor(Math.Min(toTicks, maximum));
-            if (last < first) return default(BeamSample);
-
-            var rawDirection = threat.BeamDirection;
-            var axis = rawDirection.Normalized();
-            var perpendicular = new Vec2(-axis.Y, axis.X);
-            float nativeHalfLength;
-            float nativeHalfWidth;
-            NativeExtents(rawDirection, axis, out nativeHalfLength,
-                out nativeHalfWidth);
-            Vec2 firstCenter;
-            if (!TryOriginAt(threat, rawDirection, first,
-                    out firstCenter)) return default(BeamSample);
-
-            var minimumAlong = -nativeHalfLength;
-            var maximumAlong = nativeHalfLength;
-            var minimumAcross = -nativeHalfWidth;
-            var maximumAcross = nativeHalfWidth;
-            var center = firstCenter;
-            var step = rawDirection * HalfLength;
-            for (var tick = first + 1; tick <= last; tick++)
-            {
-                // AI_179 installs the same raw cos/sin velocity every update,
-                // then XNA performs a float position += velocity.  Repeating
-                // that addition is necessary: a closed-form multiply can miss
-                // the native center by more than half a pixel at world-scale X.
-                center += step;
-                if (!Finite(center)) return default(BeamSample);
-                var delta = center - firstCenter;
-                var along = Vec2.Dot(delta, axis);
-                var across = Vec2.Dot(delta, perpendicular);
-                if (!Finite(along) || !Finite(across))
-                    return default(BeamSample);
-                minimumAlong = Math.Min(minimumAlong,
-                    along - nativeHalfLength);
-                maximumAlong = Math.Max(maximumAlong,
-                    along + nativeHalfLength);
-                minimumAcross = Math.Min(minimumAcross,
-                    across - nativeHalfWidth);
-                maximumAcross = Math.Max(maximumAcross,
-                    across + nativeHalfWidth);
-            }
-
-            var middleAlong = minimumAlong * .5f + maximumAlong * .5f;
-            var middleAcross = minimumAcross * .5f + maximumAcross * .5f;
-            var sweepCenter = firstCenter + axis * middleAlong +
-                perpendicular * middleAcross;
-            if (!Finite(sweepCenter)) return default(BeamSample);
-
-            // Reproject the rounded center so each side receives any centering
-            // error, then add a magnitude-scaled float roundoff allowance.
-            var roundedDelta = sweepCenter - firstCenter;
-            var roundedAlong = Vec2.Dot(roundedDelta, axis);
-            var roundedAcross = Vec2.Dot(roundedDelta, perpendicular);
-            var magnitude = Math.Max(Math.Max(Math.Abs(minimumAlong),
-                Math.Abs(maximumAlong)), Math.Max(Math.Abs(minimumAcross),
-                Math.Abs(maximumAcross)));
-            magnitude = Math.Max(magnitude, CoordinateMagnitude(sweepCenter));
-            var padding = RoundoffPadding(firstCenter, center, magnitude);
-            var lobe = new BeamLobe
-            {
-                Center = sweepCenter,
-                Axis = axis,
-                HalfLength = Math.Max(maximumAlong - roundedAlong,
-                    roundedAlong - minimumAlong) + padding,
-                HalfWidth = Math.Max(maximumAcross - roundedAcross,
-                    roundedAcross - minimumAcross) + padding
-            };
-            if (!Finite(lobe.HalfLength) || !Finite(lobe.HalfWidth) ||
-                lobe.HalfLength <= 0f || lobe.HalfWidth <= 0f)
-                return default(BeamSample);
-            return new BeamSample { Count = 1, First = lobe,
-                Bounds = Bounds(lobe) };
-        }
-
-        public static RectF ConservativeBounds(in ThreatSnapshot threat,
-            float horizon)
-        {
-            return !Finite(horizon) || horizon < 0f ? default(RectF) :
-                Sweep(threat, 0f, horizon).Bounds;
-        }
-
-        private static bool TryOriginAt(in ThreatSnapshot threat,
-            Vec2 rawDirection, int completedTicks, out Vec2 origin)
-        {
-            int movingTicks;
-            if (threat.BeamAge >= 60f) movingTicks = completedTicks;
-            else
-            {
-                var firstMovingTick = (int)Math.Ceiling(60f - threat.BeamAge);
-                movingTicks = Math.Max(0, completedTicks - firstMovingTick + 1);
-            }
-            origin = threat.BeamOrigin;
-            var step = rawDirection * HalfLength;
-            for (var tick = 0; tick < movingTicks; tick++) origin += step;
-            return Finite(origin);
-        }
-
-        private static void NativeExtents(Vec2 rawDirection, Vec2 axis,
-            out float halfLength, out float halfWidth)
-        {
-            var halfVector = rawDirection * HalfLength;
-            var perpendicular = new Vec2(-axis.Y, axis.X);
-            halfLength = Math.Max(HalfLength * rawDirection.Length,
-                Math.Abs(Vec2.Dot(halfVector, axis)));
-            // Mathematically the second term is zero.  Retaining its float
-            // residue guarantees that normalization never shaves a raw native
-            // endpoint off the represented 8-pixel-wide segment.
-            halfWidth = HalfWidth +
-                Math.Abs(Vec2.Dot(halfVector, perpendicular));
-        }
-
-        private static float RoundoffPadding(Vec2 first, Vec2 last,
-            float localMagnitude)
-        {
-            var magnitude = Math.Max(localMagnitude,
-                Math.Max(CoordinateMagnitude(first),
-                    CoordinateMagnitude(last)));
-            return Math.Max(.00001f, magnitude * RoundoffScale);
-        }
-
-        private static float CoordinateMagnitude(Vec2 value) =>
-            Math.Max(Math.Abs(value.X), Math.Abs(value.Y));
-
-        internal static bool ValidSnapshot(in ThreatSnapshot threat)
-        {
-            var directionLengthSquared = threat.BeamDirection.LengthSquared;
-            return threat.Kind == ThreatKind.Projectile &&
-                threat.Geometry == ThreatGeometry.EmpressLance &&
-                threat.Type == 919 && threat.TimeLeft > 0 &&
-                Finite(threat.BeamOrigin) && Finite(threat.BeamDirection) &&
-                Finite(directionLengthSquared) &&
-                directionLengthSquared >= .00001f &&
-                Finite(threat.BeamAge) && threat.BeamAge >= 0f &&
-                threat.BeamAge < 360f;
-        }
-
-        internal static bool RequiresSafetyModel(in ThreatSnapshot threat) =>
-            threat.Geometry == ThreatGeometry.EmpressLance;
-
-        private static bool ValidTick(in ThreatSnapshot threat, int ticks) =>
-            ticks >= 0 && ticks <= threat.TimeLeft &&
-            threat.BeamAge + ticks < 360f;
-
-        private static int MinimumDamagingTick(in ThreatSnapshot threat) =>
-            threat.BeamAge > 60f ? 0 :
-                (int)Math.Floor(60f - threat.BeamAge) + 1;
-
-        private static int MaximumValidTick(in ThreatSnapshot threat)
-        {
-            var ageLimit = (int)Math.Ceiling(360f - threat.BeamAge) - 1;
-            return Math.Min(threat.TimeLeft, ageLimit);
-        }
-
-        private static int CompletedTicks(float ticks) => ticks <= 0f ? 0 :
-            (int)Math.Floor(ticks + .00001f);
-
-        private static RectF Bounds(in BeamLobe beam)
-        {
-            var x = Math.Abs(beam.Axis.X) * beam.HalfLength +
-                Math.Abs(beam.Axis.Y) * beam.HalfWidth;
-            var y = Math.Abs(beam.Axis.Y) * beam.HalfLength +
-                Math.Abs(beam.Axis.X) * beam.HalfWidth;
-            return new RectF(beam.Center.X - x, beam.Center.Y - y,
-                x * 2f, y * 2f);
-        }
-
-        private static bool Finite(Vec2 value) => Finite(value.X) &&
-            Finite(value.Y);
-        private static bool Finite(float value) => !float.IsNaN(value) &&
-            !float.IsInfinity(value);
     }
 }

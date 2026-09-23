@@ -159,8 +159,6 @@ namespace Chaite.Core
                 {
                     var threat = threats[threatIndex];
                     if (!FiniteThreat(threat)) return false;
-                    if (EmpressLanceGeometry.RequiresSafetyModel(threat) &&
-                        !EmpressLanceGeometry.ValidSnapshot(threat)) return false;
                     var penalty = 1000f + Math.Max(1, threat.Damage) * 90f;
                     if (threat.Geometry == ThreatGeometry.Body)
                     {
@@ -537,8 +535,6 @@ namespace Chaite.Core
             {
                 var threat = threats[index];
                 if (!FiniteThreat(threat)) return false;
-                if (EmpressLanceGeometry.RequiresSafetyModel(threat) &&
-                    !EmpressLanceGeometry.ValidSnapshot(threat)) return false;
                 var penalty = 1000f + Math.Max(1, threat.Damage) * 90f;
                 var playerBefore = before.Inflated(request.PlayerSafetyMargin);
                 var playerAfter = after.Inflated(request.PlayerSafetyMargin);
