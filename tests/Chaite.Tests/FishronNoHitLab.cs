@@ -2866,31 +2866,48 @@ namespace Chaite.Tests
             // rare in mid-arena, which is a different problem from "the escape
             // is too slow" and points at the guide's own advice to keep the boss
             // controlled at the platform EDGE rather than being cornered by it.
-            var wallHits = 0;
-            var midHits = 0;
-            var totalHits = 0;
+            // Is "at" inside the charge it is printed with? The log is written
+            // when the NEXT charge begins, and it prints chargeHitTick, which
+            // belongs to the charge that has just ENDED. So the hit tick must
+            // lie within that charge's lifetime, start + num6. If it does not,
+            // the hit and the geometry being shown are different events and the
+            // whole per-charge clearance analysis is misattributed.
             foreach (var entry in geoRun.ChargeLog)
             {
                 if (!entry.Contains("hit=True")) continue;
-                totalHits++;
-                var at = entry.IndexOf("ply=(");
-                var x = -1f;
-                if (at >= 0)
-                {
-                    var tail = entry.Substring(at + 5);
-                    var comma = tail.IndexOf(',');
-                    if (comma > 0)
-                        float.TryParse(tail.Substring(0, comma),
-                            NumberStyles.Float, CultureInfo.InvariantCulture,
-                            out x);
-                }
-                if (x < 1300f || x > 5700f) wallHits++;
-                else midHits++;
+                Console.WriteLine("    HIT " + entry);
+            }
+            var inside = 0;
+            var outside = 0;
+            var noTick = 0;
+            var spanMin = 9999;
+            var spanMax = -9999;
+            var hitCharges = 0;
+            foreach (var entry in geoRun.ChargeLog)
+            {
+                if (!entry.Contains("hit=True")) continue;
+                hitCharges++;
+                var mStart = System.Text.RegularExpressions.Regex.Match(entry,
+                    @"start\s+(\d+)");
+                var mAt = System.Text.RegularExpressions.Regex.Match(entry,
+                    @"at\s+(-?\d+)");
+                if (!mStart.Success || !mAt.Success) continue;
+                var st = int.Parse(mStart.Groups[1].Value,
+                    CultureInfo.InvariantCulture);
+                var at = int.Parse(mAt.Groups[1].Value,
+                    CultureInfo.InvariantCulture);
+                if (at < 0) { noTick++; continue; }
+                var span = at - st;
+                if (span < spanMin) spanMin = span;
+                if (span > spanMax) spanMax = span;
+                // Phase-one charge lifetime is num6 = 30 ticks.
+                if (span >= 0 && span <= 30) inside++;
+                else outside++;
             }
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "    charges={0} hits={1} nearWall(<1300 or >5700)={2} " +
-                "midArena={3}", geoRun.ChargeLog.Count, totalHits, wallHits,
-                midHits));
+                "    hitCharges={0} insideLifetime={1} outside={2} " +
+                "noTick={3} spanRange=[{4},{5}] (lifetime is 30)",
+                hitCharges, inside, outside, noTick, spanMin, spanMax));
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.

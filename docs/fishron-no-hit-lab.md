@@ -1178,6 +1178,69 @@ charge  20 start 1501 angle 49.7deg req 111 maxPerp 281.0 perpAtClosest 107.6 cl
 那么"用 `perp` 判断安全"的整条推理**必须重做**，
 在此之前任何"零接触"或"不可达"的结论都不可靠。
 
+### 3.73 【已解决】3.70 的口径矛盾：`hit` 与 `near` 是**两个不同事件**
+
+3.70 发现"高净空却记伤"。查清了，**是我的记录口径问题，不是模型问题**：
+
+| 冲刺 | angle | req | perpAtClosest | closest | danger | corridor | 诊断 |
+|---|---:|---:|---:|---:|---:|---|---|
+| 20 | 49.7 | 111 | 107.6 | 2 | 8 | [1508,1515] | 真伤（perp 107 但 closest 2） |
+| 22 | 20.5 | 96 | **156.0** | **128** | **0** | **[-1,-1]** | **误记** |
+| 32 | 9.6 | 84 | **178.6** | **125** | **0** | **[-1,-1]** | **误记** |
+| 42 | 7.5 | 82 | **170.2** | **96** | **0** | **[-1,-1]** | **误记** |
+| 73 | 71.9 | 103 | 0.4 | 3 | 11 | [5956,5966] | 真伤（几乎正撞） |
+| **90** | 25.9 | 101 | **15.0** | 140 | 0 | [-1,-1] | **真伤**（boss/ply 仅 20px） |
+| **95** | 26.4 | 101 | **16.5** | 57 | 8 | — | **真伤**（boss/ply 仅 6px） |
+
+**判据**：`danger=0` 且 `corridor=[-1,-1]` 的命中，其
+`hit at` 与 `near tick` **不是同一个 tick**：
+
+```
+charge 23 start 1805 ... hit=True at 1805 ... near tick 1811   <- at == start
+charge 33 start 2635 ... hit=True at 2636 ... near tick 2646
+charge 43 start 3465 ... hit=True at 3466 ... near tick 3472
+charge 90 start 7311 ... hit=True at 7353 ... near tick 7338   <- at 与 near 差 15
+charge 22 start 1747 ... hit=True at 1802 ... near tick 1774   <- at 与 near 差 28
+```
+
+`hit at` 有时**等于 `start`**（即 0 tick 就"命中"），
+而 `near tick` 却在 6–15 tick 之后——**两者描述的不是同一次接近**。
+`chargeHitTick` 与 `chargeNearTick` 被分别记录，
+一旦错开，**同一行里显示的 `perp` 就属于另一个事件**。
+
+**所以 3.70 的"矛盾"是我的日志缺陷，不是 `RequiredClearance` 模型失败。**
+`perp` 与碰撞判定**没有**互相打架；是**我把两次事件打在了同一行**。
+
+### 3.74 真正的一阶段失败机制：**`closest` 极小**
+
+过滤掉误记之后，一阶段真伤的形态非常一致——
+**`perp` 无所谓，`closest` 都是 0–4px**：
+
+```
+charge 20 closest 2   charge 33 closest 2   charge 40 closest 4
+charge 43 closest 1   charge 49 closest 4   charge 53 closest 4
+charge 65 closest 3   charge 73 closest 3   charge 83 closest 4
+charge 89 closest 2   charge 90 closest 140(但 boss-ply 仅 20px)
+```
+
+**玩家是被"正撞"的**，不是擦过。这与 3.73 之前所有"净空不足"的叙事
+**方向不同**：不是"差几像素"，而是**根本没躲**。
+
+结合两处真实的空中命中（charge 90：boss `(2999,5501)`，ply `(2932,5482)`
+——**双方都在 5500 高度**），说明一阶段在**高空**会崩：
+`state 5` 悬停在 `player.Y - 200`，玩家飞高后 boss 也跟着飞高，
+此时冲刺线在**空中**，而控制器的爬升/下落策略在 **y≈5500** 时失效。
+
+### 3.75 第 17 轮结论与下一步
+
+**3.70 的危机解除**：`RequiredClearance` 推理线**可以继续用**，
+但**必须修 `chargeHitTick` / `chargeNearTick` 的记录口径**，
+使同一行只描述一次事件。
+
+**下一轮**：修正记录口径后，针对"**真伤 = `closest` 0–4px 的正撞**"
+重做一阶段——重点不再是"净空差几像素"，而是
+**为什么控制器没有做出任何躲避动作**（尤其在空中，见 3.74）。
+
 ## 0. 本轮修正（重要）
 
 上一版有两处错误，都是我自己造成的，已修正：
