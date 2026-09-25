@@ -1689,20 +1689,31 @@ namespace Chaite.Tests
         /// </summary>
         public static void FishronChargeTrace(int ordinal, float jumpSpeed)
         {
+            // The winning config is climbAbove 0.88 at jump speed 8.91. Tracing
+            // the old 0.75 / 7.41 pair would answer a question about a run that
+            // no longer exists, so those values are read from the profile.
+            var profile = WeakWings();
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "== charge {0} trace, admitted weak set, jumpSpeed={1:F2} ==",
-                ordinal, jumpSpeed));
+                "== charge {0} trace, {1}, jumpSpeed={2:F2} climbAbove={3:F2} ==",
+                ordinal, profile.Name, jumpSpeed, profile.ClimbAbove));
             TraceCharge = true;
             TraceOnlyCharge = ordinal;
-            var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
-                0f, 0.75f, 0.85f), 8000, maxHits: 1, bossOnly: true,
-                bubbles: true, jumpSpeed: jumpSpeed, wingTimeMax: 100f,
-                autoJump: true, trace: true, traceTicks: 8000);
+            var fight = RunFight(new CorridorEscape(true, profile.Lead,
+                profile.DashAt, true, 0f, profile.ClimbAbove, profile.DashAim, 0,
+                profile.ClimbCap, profile.HoverDescend), 8000, maxHits: 999,
+                bossOnly: true, bubbles: true, jumpSpeed: jumpSpeed,
+                wingTimeMax: profile.FlyTicks, autoJump: true, trace: true,
+                traceTicks: 8000);
             TraceCharge = false;
             TraceOnlyCharge = 0;
+            var contactCount = 0;
+            foreach (var line in fight.HitLog)
+                if (line.Contains("src boss")) contactCount++;
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                "  result: firstHit={0} charges={1}", fight.Ticks,
-                fight.Charges));
+                "  result: ticks={0} charges={1} bossContacts={2}",
+                fight.Ticks, fight.Charges, contactCount));
+            foreach (var line in fight.HitLog)
+                Console.WriteLine("    " + line);
 
             // Charge 5 clears by about ten pixels (perp 114 against a 104
             // requirement), which is a 10% margin, so it is the escape's
@@ -1801,6 +1812,49 @@ namespace Chaite.Tests
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "    zero-contact configs: {0}", clean));
             Console.WriteLine("    first: " + cleanLabel);
+
+            // The first hunt only varied climbAbove/lead/hoverDescend. The
+            // contacts are a hover-phase cluster, so the hover geometry itself
+            // -- how high the controller lets the player sit between charges --
+            // is the more likely lever, and it is varied here with the ascent
+            // cap. A clean config is required to have zero boss contacts, not
+            // merely a long run.
+            Console.WriteLine();
+            Console.WriteLine("  wider zero-hit hunt (climbCap x hoverDescend x climbAbove):");
+            var wide = 0;
+            var wideLabel = "none";
+            var wideBest = 0;
+            var wideBestLabel = "none";
+            foreach (var cap in new[] { 200f, 300f, 420f, 600f, 900f })
+            foreach (var desc in new[] { 80f, 120f, 160f, 220f, 320f })
+            foreach (var above in new[] { 0.80f, 0.86f, 0.88f, 0.92f })
+            {
+                var run = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                    above, 0.85f, 0, cap, desc), 8000, maxHits: 999,
+                    bossOnly: true, bubbles: true, jumpSpeed: 8.91f,
+                    wingTimeMax: 100f, autoJump: true);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                if (n == 0)
+                {
+                    wide++;
+                    wideLabel = string.Format(CultureInfo.InvariantCulture,
+                        "cap={0:F0} desc={1:F0} above={2:F2} ticks={3} ch={4}",
+                        cap, desc, above, run.Ticks, run.Charges);
+                }
+                if (run.Ticks > wideBest)
+                {
+                    wideBest = run.Ticks;
+                    wideBestLabel = string.Format(CultureInfo.InvariantCulture,
+                        "cap={0:F0} desc={1:F0} above={2:F2} contacts={3} ch={4}",
+                        cap, desc, above, n, run.Charges);
+                }
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    zero-contact: {0} of 100", wide));
+            Console.WriteLine("    first clean: " + wideLabel);
+            Console.WriteLine("    longest run: " + wideBestLabel);
         }
 
         // ------------------------------------------------------------------ lab
