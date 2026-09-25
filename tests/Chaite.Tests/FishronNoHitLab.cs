@@ -1351,7 +1351,7 @@ namespace Chaite.Tests
             private readonly float _wallBand;
             /// <summary>State-driven escape choice (3.88) instead of a fixed gate.</summary>
             private readonly bool _adaptiveGate;
-            private readonly float _holdTolerance;
+            private readonly bool _bandMode;            private readonly float _holdTolerance;
             /// <summary>Ticks before predicted contact at which to fire the
             /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
             /// restores the old fire-on-lead behaviour.</summary>
@@ -1371,7 +1371,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f, bool adaptiveGate = false)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f, bool adaptiveGate = false, bool bandMode = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1390,16 +1390,27 @@ namespace Chaite.Tests
                 _retreat = retreat;
                 _wallBand = wallBand;
                 _adaptiveGate = adaptiveGate;
+                _bandMode = bandMode;
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
                 _holdAltitude = holdAltitude;
             }
 
+            // Diagnostic: how many ticks the CHARGE escape body below the hover
+            // gate actually executed. Some configurations pin at exactly 200
+            // contacts per run (3.91's no-climb, 3.94's counter-dash, and band
+            // mode in 4.7), and 200 over 97 charges is about two per charge with
+            // a suspiciously constant value. Two readings fit that: the escapes
+            // run and simply never clear the corridor, or they never run at all.
+            // Counting executions separates those, which no contact count can.
+            public int EscapeBodyTicks { get; private set; }
+
             public void Reset()
             {
                 _lastState = int.MinValue;
                 _dashIssued = false;
+                EscapeBodyTicks = 0;
 
                 _ux = new Vec2(1f, 0f);
             }
@@ -1649,6 +1660,8 @@ namespace Chaite.Tests
                     return controls;
                 }
 
+                EscapeBodyTicks++;
+
                 // Which way along the normal to leave, chosen by which side
                 // needs LESS travel rather than by which side happens to be
                 // positive. The corridor is symmetric about the charge line and
@@ -1802,7 +1815,17 @@ namespace Chaite.Tests
                 // the climb cover everything up to 41 degrees, which is exactly
                 // the 34-44 degree family this run kept dying to.
                 var normalVertical = Math.Abs(_ux.X);
-                if (_climb && !escapeDown && normalVertical > _climbAbove)
+                // ANGLE BANDS. 4.5 showed the stall is a partition problem: the
+                // tools answer different angles, and one scalar boundary leaves a
+                // dead band the charges in 33-60 deg fall into. In band mode the
+                // two parameters stop being competing cutoffs and become the two
+                // EDGES of a partition -- climb takes the middle band
+                // (_climbAbove, _dashAim) and the dash takes everything steeper
+                // than _dashAim, so the two cover the angle range with no gap and
+                // no overlap.
+                var climbBand = normalVertical > _climbAbove &&
+                    (!_bandMode || normalVertical < _dashAim);
+                if (_climb && !escapeDown && climbBand)
                 {
                     controls.Jump = _jumpPulse <= 0 ||
                         world.Tick % _jumpPulse == 0;
@@ -1812,6 +1835,10 @@ namespace Chaite.Tests
 
                 if (!_useDash || _dashIssued || !frame.DashReady ||
                     frame.Dash.DashDelay < 0) return controls;
+                // In band mode the climb now owns the middle band, so the dash is
+                // restricted to charges steeper than the band edge and the two
+                // partition the angles instead of one pre-empting the other.
+                if (_bandMode && normalVertical > _dashAim) return controls;
                 if (world.StateTimer < _dashAtTimer) return controls;
 
                 // Distance along the line still to run before the closest
@@ -3455,6 +3482,97 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    dashAim={0,5:F2} |{1} | sum={2,5} clean={3}/8", aim,
                     cells, total, clean));
+            }
+
+            // ANGLE BANDS. 4.5 read the stall as a partition problem -- the two
+            // sources answer different angles, and one scalar boundary leaves a
+            // dead band of charges that get neither. Band mode makes the two
+            // parameters the EDGES of a partition rather than competing cutoffs:
+            // climb owns (climbAbove, dashAim] and the dash owns (dashAim, 1].
+            // Sweep the pair, since the point is the partition, not either edge.
+            Console.WriteLine();
+            Console.WriteLine("== angle bands (weak): climb (lo,hi], dash (hi,1] ==");
+            foreach (var lo in new[] { 0.40f, 0.55f, 0.70f })
+            {
+                foreach (var hi in new[] { 0.75f, 0.85f, 0.90f, 1.01f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var run = RunFight(new CorridorEscape(true,
+                            WeakWings().Lead, WeakWings().DashAt, true, 0f, lo,
+                            hi, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend, 0, "none", false, 0f, 0,
+                            false, 0f, false, 0f, false, true), 8000,
+                            maxHits: 999, bossOnly: true, bubbles: true,
+                            startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    climb=({0:F2},{1:F2}] |{2} | sum={3,5} clean={4}/8",
+                        lo, hi, cells, total, clean));
+                }
+            }
+
+            // ESCAPE-BODY EXECUTION COUNT. The 200-contact floor is the single
+            // most common outcome for ineffective configurations, and it is
+            // constant across openings, which is not how a geometric failure
+            // behaves. Count how many ticks the escape body actually ran, for a
+            // configuration that hits the floor and for one that does not. If the
+            // floor cases show the body never running, then "this mechanism does
+            // not work" was the wrong reading all along and 3.91/3.94 need
+            // reinterpreting rather than being treated as evidence.
+            Console.WriteLine();
+            Console.WriteLine("== escape-body execution count vs the 200 floor ==");
+            foreach (var probe in new[]
+            {
+                new { Name = "baseline (dashAim .85, no band)", Lo = 0.88f,
+                    Hi = 0.85f, Band = false },
+                new { Name = "no-climb (3.91 floor case)", Lo = 1.01f,
+                    Hi = 0.85f, Band = false },
+                new { Name = "counter-dash (3.94 floor case)", Lo = 0.88f,
+                    Hi = 0.85f, Band = false },
+                new { Name = "band (0.55,0.85] (4.7 floor case)", Lo = 0.55f,
+                    Hi = 0.85f, Band = true },
+                new { Name = "band (0.55,1.01] (best band)", Lo = 0.55f,
+                    Hi = 1.01f, Band = true }
+            })
+            {
+                var cells = new System.Text.StringBuilder();
+                var totals = 0;
+                var bodyTicks = 0;
+                foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, probe.Lo, probe.Hi, 0,
+                        WeakWings().ClimbCap, WeakWings().HoverDescend, 0,
+                        "none", probe.Name.Contains("counter"), 0f, 0, false,
+                        0f, false, 0f, false, probe.Band);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    totals += n;
+                    bodyTicks += ctrl.EscapeBodyTicks;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    {0,-38} |{1} | sum={2,4} bodyTicks={3,6}",
+                    probe.Name, cells, totals, bodyTicks));
             }
 
             // All threats, weak set, every opening: what still lands and from
