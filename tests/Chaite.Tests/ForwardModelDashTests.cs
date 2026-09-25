@@ -196,6 +196,52 @@ namespace Chaite.Tests
                 legacyNext.Velocity.X, unnamedRefusal, undirectedRefusal));
         }
 
+        /// <summary>
+        /// The dash's direction must follow the Left/Right bits, because the lab
+        /// steers its escape with those bits and has no other way to aim a
+        /// dash. This exists because a sweep over the dash-alignment gate
+        /// returned the same first-contact tick for all six settings, which is
+        /// either "the gate does not matter" or "the direction never reaches the
+        /// impulse" -- and those two are very different, so the chain is pinned
+        /// here rather than assumed. Note the harness distinction this checks:
+        /// PlayerControlFrame.Direction is read-only and derived, so a controller
+        /// must set Left/Right, and an unnamed dash with no direction at all is
+        /// refused rather than guessed.
+        /// </summary>
+        private static void FrameDashDirectionFollowsTheHeldHorizontalBit()
+        {
+            var right = DashFloorFrame();
+            right.DashIdentity = DashEquipmentIdentity.ShieldOfCthulhuItem3097;
+            right.DashReady = true;
+
+            PlayerMotionFrame nextRight;
+            ForwardModelRefusal rightRefusal;
+            True(PlayerForwardModel.TryAdvance(in right,
+                new PlayerControlFrame { Right = true, Dash = true },
+                out nextRight, out rightRefusal), "rightward dash refused: " + rightRefusal);
+            Equal(14.5f, nextRight.Velocity.X);
+
+            var left = DashFloorFrame();
+            left.DashIdentity = DashEquipmentIdentity.ShieldOfCthulhuItem3097;
+            left.DashReady = true;
+
+            PlayerMotionFrame nextLeft;
+            ForwardModelRefusal leftRefusal;
+            True(PlayerForwardModel.TryAdvance(in left,
+                new PlayerControlFrame { Left = true, Dash = true },
+                out nextLeft, out leftRefusal), "leftward dash refused: " + leftRefusal);
+            Equal(-14.5f, nextLeft.Velocity.X);
+
+            // Opposite directions, same magnitude: the impulse is aimed, not
+            // merely applied, so the lab's horizontal steering does reach it.
+            True(nextRight.Velocity.X == -nextLeft.Velocity.X,
+                "the dash impulse must mirror with the held horizontal bit");
+
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "DASH DIRECTION rightVX={0:F4} leftVX={1:F4}",
+                nextRight.Velocity.X, nextLeft.Velocity.X));
+        }
+
         /// <summary>Advances one tick holding the dash key and returns why the
         /// model refused it. A request the frame cannot answer must not advance:
         /// predicting it as ordinary movement is the silent drop this regression

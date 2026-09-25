@@ -1895,6 +1895,22 @@ namespace Chaite.Tests
                     "  gate|ux|<{0:F2} firstHit={1,5} charges={2,3}",
                     gate, fight.Ticks, fight.Charges));
             }
+            Console.WriteLine("== dash fire delay (is the dash spent too early?) ==");
+            // Dash aim was proven to reach the impulse (FrameDashDirectionFoll-
+            // owsTheHeldHorizontalBit pins rightVX 14.5 / leftVX -14.5), so a
+            // flat gate sweep means the direction is decided too late to matter.
+            // _dashIssued makes the dash a once-per-charge event, and at=8
+            // spends it eight ticks into the charge -- well before the escape
+            // side is settled. These delays move the spend later.
+            foreach (var at in new[] { 8, 12, 16, 20, 24, 28 })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, at, true,
+                    0f, 0.75f, 0.85f), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  dashAt={0,2} firstHit={1,5} charges={2,3}",
+                    at, fight.Ticks, fight.Charges));
+            }
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
             // A full phase one is ten charges (ai[0] 0..9) plus the phase-two
