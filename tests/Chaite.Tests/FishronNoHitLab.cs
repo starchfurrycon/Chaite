@@ -4529,6 +4529,109 @@ namespace Chaite.Tests
                     bx0, cells, total, clean));
             }
 
+            // COMBINED FINE SWEEP. The altitude result was found by sweeping
+            // altitude while holding lead at 240, and the earlier lead conclusion
+            // (best at 240) was itself reached at altitude ZERO. So the two were
+            // never optimised together, and the residual 3+1 contacts sit at the
+            // two openings whose initial geometry differs -- the player starts to
+            // the LEFT of the boss at 2400 and to its RIGHT at 2800, which flips
+            // the sign of the park offset. Sweeping the pair jointly is the
+            // cheapest way to see whether those four contacts are a genuine floor
+            // or just an unsearched corner of a two-dimensional parameter space.
+            Console.WriteLine();
+            Console.WriteLine("== combined altitude x lead sweep (weak), best rows ==");
+            var comboSum = int.MaxValue;
+            var comboRow = "";
+            var anyAllClean = 0;
+            foreach (var h0 in new[] { 300f, 320f, 340f, 360f, 380f, 400f, 420f,
+                440f })
+            {
+                foreach (var lead in new[] { 200f, 220f, 240f, 260f, 280f, 300f })
+                {
+                    foreach (var aim in new[] { 0.83f, 0.85f, 0.87f })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var clean = 0;
+                        foreach (var startX in new[] { 2400f, 2800f, 3300f,
+                            3800f, 4300f, 4800f, 5300f, 5800f })
+                        {
+                            var ctrl = new CorridorEscape(true, lead, 0, true, 0f,
+                                0.88f, aim, 0, WeakWings().ClimbCap,
+                                WeakWings().HoverDescend);
+                            var run = RunFight(ctrl, 8000, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: WeakWings().JumpSpeed,
+                                wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                                wingAccRunSpeed: 12f, startAltitude: h0);
+                            var n = 0;
+                            foreach (var l in run.HitLog)
+                                if (l.Contains("src boss")) n++;
+                            total += n;
+                            if (n == 0) clean++;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,5}", n));
+                        }
+                        if (clean == 8) anyAllClean++;
+                        if (total < comboSum)
+                        {
+                            comboSum = total;
+                            comboRow = string.Format(CultureInfo.InvariantCulture,
+                                "    alt0={0,4:F0} lead={1,3:F0} aim={2,4:F2} |{3} " +
+                                "| sum={4,4} clean={5}/8", h0, lead, aim, cells,
+                                total, clean);
+                        }
+                        if (total <= 3)
+                            Console.WriteLine(string.Format(
+                                CultureInfo.InvariantCulture,
+                                "    alt0={0,4:F0} lead={1,3:F0} aim={2,4:F2} |{3} " +
+                                "| sum={4,4} clean={5}/8", h0, lead, aim, cells,
+                                total, clean));
+                    }
+                }
+            }
+            Console.WriteLine("    BEST: " + comboRow);
+            Console.WriteLine("    configurations with 8/8 clean: " + anyAllClean);
+
+            // WHEN do the residual contacts happen? Four contacts survive 144
+            // configurations, always at the same two openings, so the question is
+            // whether they are spread through the fight (a real control failure)
+            // or bunched at the very start (an initialisation artefact). The boss
+            // begins 200 px from the player at both of those openings, which is
+            // the closest any opening starts, so a first-charge-only signature
+            // would mean the residual is about the opening moment rather than
+            // about the controller.
+            Console.WriteLine();
+            Console.WriteLine("== residual contact timing at the two low openings ==");
+            // Run the SAME configuration twice in a row, once immediately and once
+            // after a throwaway run. A contradiction showed up here: this block
+            // reported zero contacts at 2400 while the sweep just above, using
+            // literally the same arguments, reported three. If the repeat run
+            // differs from the first, something is leaking between RunFight calls
+            // and every sweep in this lab is suspect; if they agree, the sweep's
+            // own numbers are the ones to distrust.
+            foreach (var opening in new[] { 2400f, 2800f })
+            {
+                var samples = new List<int>();
+                for (var rep = 0; rep < 3; rep++)
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.83f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: opening,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: 12f, startAltitude: 340f);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    samples.Add(n);
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} three repeats -> [{1}]", opening,
+                    string.Join(",", samples)));
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
