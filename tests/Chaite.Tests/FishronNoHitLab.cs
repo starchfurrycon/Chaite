@@ -157,8 +157,19 @@ namespace Chaite.Tests
         // pinned build, whose measured constants are num2=.95 num5=.15 num4=1
         // num3=4.5 with an up-hover of 0.4. Horizontal run speed with boots is
         // accRunSpeed 6; the base sprint ceiling is 6.75.
+        //
+        // WING HORIZONTAL SPEED. Those 6/6.75 figures are the ON-FOOT numbers and
+        // the lab used them for flight too, which is wrong. Native
+        // Player.WingAirLogicTweaks (Player.cs:29550) raises accRunSpeed to
+        // wingStats.AccRunSpeedOverride while flying and scales runAcceleration by
+        // AccRunAccelerationMult, so wings have their own horizontal speed and the
+        // wiki tabulates it (Wings/List, "Horizontal speed", sourced from the
+        // sourcecode): Fairy Wings 761 are 35 mph = 25.3125 tiles/s = 15.82 px/tick,
+        // against the 6.75 px/tick the lab has been flying at. Wings are NOT
+        // horizontal-neutral, which retracts the earlier claim that they are.
         private static PlayerMotionFrame FishronPlayerStart(float x, float floorY,
-            float jumpSpeed = 5.01f, float wingTimeMax = 150f, bool autoJump = false)
+            float jumpSpeed = 5.01f, float wingTimeMax = 150f, bool autoJump = false,
+            float wingAccRunSpeed = 0f)
         {
             var jump = new JumpSnapshot
             {
@@ -195,8 +206,8 @@ namespace Chaite.Tests
                 MaxFallSpeed = 10f,
                 GravityDirection = 1,
                 BaseRunSpeed = 3f,
-                MaxRunSpeed = 6.75f,
-                AccRunSpeed = 6f,
+                MaxRunSpeed = wingAccRunSpeed > 0f ? wingAccRunSpeed : 6.75f,
+                AccRunSpeed = wingAccRunSpeed > 0f ? wingAccRunSpeed : 6f,
                 RunAcceleration = 0.08f,
                 SprintAcceleration = 0.08f,
                 RunSlowdown = 0.2f,
@@ -803,7 +814,8 @@ namespace Chaite.Tests
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
-            float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false)
+            float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false,
+            float wingAccRunSpeed = 0f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -826,7 +838,7 @@ namespace Chaite.Tests
                 BossContactEnabled = true,
             };
             var frame = FishronPlayerStart(startX, floorY, jumpSpeed, wingTimeMax,
-                autoJump);
+                autoJump, wingAccRunSpeed);
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -3573,6 +3585,47 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    {0,-38} |{1} | sum={2,4} bodyTicks={3,6}",
                     probe.Name, cells, totals, bodyTicks));
+            }
+
+            // WING HORIZONTAL SPEED -- the fidelity gap that matters most.
+            // Native WingAirLogicTweaks raises accRunSpeed to the wing's own
+            // override while flying, but the lab has been flying at the on-foot
+            // 6.75 px/tick. The wiki's Wings/List tabulates the real figures:
+            // Fairy Wings (761) 35 mph = 25.3125 tiles/s = 15.82 px/tick, and the
+            // Fishron-tier wings 36 mph = 26.25 tiles/s = 16.4 px/tick. If the
+            // phase-one gap really was a capability gap, raising horizontal speed
+            // to the documented value should close it; if the contacts barely
+            // move, the gap is something else and the 3.76 arithmetic stands.
+            Console.WriteLine();
+            Console.WriteLine("== wing horizontal speed (weak), contacts by opening ==");
+            foreach (var wing in new[] { 0f, 8f, 12f, 15.82f, 16.4f, 20f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: wing);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    wingSpeed={0,5:F2}{1} |{2} | sum={3,5} clean={4}/8",
+                    wing, wing <= 0f ? " (on-foot)" : "         ", cells, total,
+                    clean));
             }
 
             // All threats, weak set, every opening: what still lands and from
