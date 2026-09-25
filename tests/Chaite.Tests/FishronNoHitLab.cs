@@ -5683,6 +5683,46 @@ namespace Chaite.Tests
                 Console.WriteLine();
             }
 
+            // FINAL SEARCH AT TRUE SPEED. Horizon and pulse have never been swept
+            // jointly at the documented wing speeds -- horizon was always held at 50
+            // while pulse was tested alone, and pulse alone at horizon 50. This is
+            // the last unsearched dimension of the predictive controller, so it is
+            // worth one pass before concluding.
+            Console.WriteLine();
+            Console.WriteLine("== FINAL: predictive horizon x pulse at TRUE speeds ==");
+            foreach (var sp in new[] { 15.82f, 16.4f })
+            {
+                foreach (var hz in new[] { 40, 55 })
+                {
+                    foreach (var pulse in new[] { 0, 4, 6 })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var clean = 0;
+                        foreach (var startX in new[] { 2400f, 3300f, 4800f,
+                            5800f })
+                        {
+                            var ctrl = new PredictiveDodge(hz, true, 1f, pulse);
+                            var run = RunFight(ctrl, 2500, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: WeakWings().JumpSpeed,
+                                wingTimeMax: WeakWings().FlyTicks,
+                                autoJump: true, wingAccRunSpeed: sp);
+                            total += run.BossContacts;
+                            if (run.BossContacts == 0) clean++;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,5}",
+                                run.BossContacts));
+                        }
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    speed={0,5:F2} hz={1,3} pulse={2} |{3} | " +
+                            "sum={4,4} clean={5}/4", sp, hz, pulse, cells,
+                            total, clean));
+                    }
+                }
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
