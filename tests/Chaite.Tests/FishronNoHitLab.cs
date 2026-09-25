@@ -1227,6 +1227,8 @@ namespace Chaite.Tests
             private readonly float _climbAbove;
             private readonly float _dashAim;
             private readonly int _jumpPulse;
+            private readonly float _climbCap;
+            private readonly float _hoverDescend;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
@@ -1234,7 +1236,8 @@ namespace Chaite.Tests
 
             public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
                 bool climb = false, float lead = 0f, float climbAbove = 0.75f,
-                float dashAim = 0.85f, int jumpPulse = 0)
+                float dashAim = 0.85f, int jumpPulse = 0, float climbCap = 420f,
+                float hoverDescend = 160f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1244,6 +1247,8 @@ namespace Chaite.Tests
                 _climbAbove = climbAbove;
                 _dashAim = dashAim;
                 _jumpPulse = jumpPulse;
+                _climbCap = climbCap;
+                _hoverDescend = hoverDescend;
             }
 
             public void Reset()
@@ -1335,7 +1340,8 @@ namespace Chaite.Tests
                 // any real arena origin and so was true on every tick.
                 if (!dashing)
                 {
-                    if (!frame.Grounded && player.Center.Y > world.FloorY - 160f)
+                    if (!frame.Grounded &&
+                        player.Center.Y > world.FloorY - _hoverDescend)
                         controls.Up = true;
                     return controls;
                 }
@@ -1466,7 +1472,7 @@ namespace Chaite.Tests
                     controls.Jump = _jumpPulse <= 0 ||
                         world.Tick % _jumpPulse == 0;
                     controls.Up = true;
-                    if (altitude > 420f) controls.Up = false;
+                    if (altitude > _climbCap) controls.Up = false;
                 }
 
                 if (!_useDash || _dashIssued || !frame.DashReady ||
@@ -2008,6 +2014,36 @@ namespace Chaite.Tests
                     js, fight.Ticks, fight.Charges, contacts,
                     fight.ClosestPerpendicular));
             }
+            Console.WriteLine();
+            // The 420 px ascent cap and the 160 px hover descent were both
+            // chosen against the old 4.6 px/tick climb. At the admitted 8.6 the
+            // player reaches either bound far sooner, so the geometry those
+            // numbers encode no longer holds and they have to be re-chosen
+            // rather than inherited.
+            Console.WriteLine("== loadout re-tune (climb cap x hover descent, 9.01) ==");
+            var tuneBest = 0;
+            var tuneLabel = "none";
+            foreach (var cap in new[] { 260f, 420f, 700f, 1100f })
+            foreach (var desc in new[] { 100f, 160f, 300f, 520f })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f, 0, cap, desc), 8000, maxHits: 8,
+                    bossOnly: true, bubbles: true, jumpSpeed: 9.01f);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                if (fight.Ticks > tuneBest)
+                {
+                    tuneBest = fight.Ticks;
+                    tuneLabel = string.Format(CultureInfo.InvariantCulture,
+                        "cap={0:F0} desc={1:F0}", cap, desc);
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  cap={0,5:F0} desc={1,4:F0} lastHit={2,5} charges={3,3} " +
+                    "bossHits={4,3}", cap, desc, fight.Ticks, fight.Charges,
+                    contacts));
+            }
+            Console.WriteLine("  best: " + tuneLabel + " at " + tuneBest);
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
             // A full phase one is ten charges (ai[0] 0..9) plus the phase-two
