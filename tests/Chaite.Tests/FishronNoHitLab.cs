@@ -1598,6 +1598,57 @@ namespace Chaite.Tests
 
         // ------------------------------------------------------------------ lab
         /// <summary>
+        /// Measures the accoladed loadout's vertical mobility directly instead
+        /// of inferring it. Earlier rounds concluded "the climb is capped at a
+        /// hard 4.6 px/tick" from runs that used the bare jump speed and never
+        /// enabled autoJump, which is not the admitted loadout: both wing routes
+        /// gate on the Frog Leg (jumpSpeedBoost +2.4, Player.cs:19741) and the
+        /// Amphibious Boots add autoJump plus +1.6 (Player.cs:14523 family), so
+        /// the real jump.Speed is 5.01 + 2.4 + 1.6 = 9.01 and holding Jump keeps
+        /// re-jumping from the ground. This probe prints the actual velocity.Y
+        /// trace for each combination so the ceiling is measured, not assumed.
+        /// Run with --fishron-jump-probe.
+        /// </summary>
+        public static void FishronJumpProbe()
+        {
+            Console.WriteLine("== vertical mobility probe ==");
+            Console.WriteLine("  jumpSpeed  autoJump  tick:velocity.Y (first 26 ticks)");
+            foreach (var js in new[] { 5.01f, 7.41f, 9.01f })
+            foreach (var auto in new[] { false, true })
+            {
+                var frame = FishronPlayerStart(3300f, 6000f, js);
+                if (auto)
+                {
+                    var j = frame.Jump;
+                    j.AutoJump = true;
+                    frame.Jump = j;
+                }
+                var shape = new System.Text.StringBuilder();
+                var peak = 0f;
+                for (var tick = 1; tick <= 26; tick++)
+                {
+                    PlayerMotionFrame next;
+                    ForwardModelRefusal refusal;
+                    if (!PlayerForwardModel.TryAdvance(in frame,
+                        new PlayerControlFrame { Jump = true, Up = true },
+                        out next, out refusal))
+                    {
+                        shape.Append("REFUSED:" + refusal);
+                        break;
+                    }
+                    frame = next;
+                    if (frame.Velocity.Y < peak) peak = frame.Velocity.Y;
+                    if (tick <= 26)
+                        shape.Append(frame.Velocity.Y.ToString("F1",
+                            CultureInfo.InvariantCulture)).Append(' ');
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  {0,9:F2}  {1,-8}  peakVY={2,6:F2}  {3}",
+                    js, auto, peak, shape.ToString().Trim()));
+            }
+        }
+
+        /// <summary>
         /// Fine sweep of the opening position, looking for a start whose locked
         /// charge angles all fall where the movement model can clear them. The
         /// hover tracks the player, so the start is the only place the fight's
@@ -1933,6 +1984,29 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "  jumpSpeed={0,5:F2} pulse={1} firstHit={2,5} charges={3,3}",
                     js, pulse, fight.Ticks, fight.Charges));
+            }
+            Console.WriteLine();
+            // The admitted loadout, end to end. Both wing routes gate on the
+            // Frog Leg and the set carries Amphibious Boots, so jump.Speed is
+            // 5.01 + 2.4 + 1.6 = 9.01 (Player.cs 19741 and the 14523 boot
+            // family) and autoJump is on, which starts the ascent a tick
+            // earlier. The probe shows that combination climbing at a constant
+            // -8.6 px/tick, against -4.6 for the bare fixture every earlier
+            // sweep used.
+            Console.WriteLine("== admitted loadout (frog leg + boots, jumpSpeed 9.01) ==");
+            foreach (var js in new[] { 5.01f, 7.41f, 9.01f })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
+                    8000, maxHits: 8, bossOnly: true, bubbles: true,
+                    jumpSpeed: js);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  jumpSpeed={0,5:F2} lastHitTick={1,5} charges={2,3} " +
+                    "bossHits={3,3} perpAtClosest={4,6:F1}",
+                    js, fight.Ticks, fight.Charges, contacts,
+                    fight.ClosestPerpendicular));
             }
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
