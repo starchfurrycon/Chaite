@@ -803,7 +803,7 @@ namespace Chaite.Tests
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
-            float holdX = 0f, bool traceClose = false, float wallBand = 0f)
+            float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -1349,6 +1349,8 @@ namespace Chaite.Tests
             private float _holdX;
             private bool _retreat;
             private readonly float _wallBand;
+            /// <summary>State-driven escape choice (3.88) instead of a fixed gate.</summary>
+            private readonly bool _adaptiveGate;
             private readonly float _holdTolerance;
             /// <summary>Ticks before predicted contact at which to fire the
             /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
@@ -1369,7 +1371,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f, bool adaptiveGate = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1387,6 +1389,7 @@ namespace Chaite.Tests
                 _holdX = holdX;
                 _retreat = retreat;
                 _wallBand = wallBand;
+                _adaptiveGate = adaptiveGate;
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
@@ -1788,6 +1791,54 @@ namespace Chaite.Tests
                     boss.Center.X) * _ux.X + (frame.Position.Y + frame.Height * 0.5f -
                     boss.Center.Y) * _ux.Y;
                 if (toBoss > _dashLead) return controls;
+
+                // ADAPTIVE GATE. The gate sweep (3.85) showed the right gate
+                // depends on the player's LIVE state, and that per-opening
+                // presets are the wrong shape (3.87). So compute the choice
+                // instead of tabulating it. For this charge, how many ticks
+                // remain before the boss arrives, and how many would each escape
+                // need to clear the corridor?
+                //
+                //   ticksToContact ~ toBoss / closingSpeed, capped by the ticks
+                //                     left in the charge
+                //   climbTicks     ~ need / (4.6 * |ux|)   the climb moves the
+                //                     player along the normal at 4.6*|ux|/tick
+                //   dashTicks      ~ need / (172 * |uy| / 15)  the dash delivers
+                //                     172*|uy| across its 15 live ticks
+                //
+                // Whichever escape is feasible gets taken; when neither is, the
+                // dash is still spent, because its 15 immune ticks absorb the
+                // contact even when the geometry does not. This replaces the
+                // fixed |ux| threshold, which cannot be right for every state.
+                if (_adaptiveGate && Math.Abs(_ux.X) > 0.15f)
+                {
+                    const float closingSpeed = 16f;
+                    var ticksLeft = 30f - world.StateTimer;
+                    if (ticksLeft < 1f) ticksLeft = 1f;
+                    var ticksToContact = toBoss / closingSpeed;
+                    if (ticksToContact > ticksLeft) ticksToContact = ticksLeft;
+                    if (ticksToContact < 1f) ticksToContact = 1f;
+
+                    var climbRate = 4.6f * Math.Abs(_ux.X);
+                    var climbTicks = climbRate > 0.01f
+                        ? need / climbRate : 9999f;
+                    var dashPerTick = 172f * Math.Abs(_ux.Y) / 15f;
+                    var dashTicks = dashPerTick > 0.01f
+                        ? need / dashPerTick : 9999f;
+
+                    if (climbTicks > ticksToContact)
+                    {
+                        // Prefer the dash: either it clears, or its immune ticks
+                        // are all that stands between the player and contact.
+                        var dashToward = -_ux.Y * escapeDir > 0f;
+                        controls.Right = dashToward;
+                        controls.Left = !dashToward;
+                        controls.Up = false;
+                        controls.Down = false;
+                        if (dashTicks > ticksToContact)
+                            controls.Dash = true;
+                    }
+                }
 
                 // Scheduled i-frames. The 3.50 trace showed the run survives by
                 // eating charges through the dash's 15 immune ticks rather than
@@ -3152,6 +3203,45 @@ namespace Chaite.Tests
             }
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "    positionDependent |{0} | sum={1,5}", pdCells, pdTotal));
+
+            // ADAPTIVE vs FIXED. 3.85 found a gate that nearly solves 2400 but
+            // destroys 3300, and 3.87 showed per-opening presets are the wrong
+            // shape. This compares the fixed gates against choosing the escape
+            // from the live state (ticks needed vs ticks available), which is
+            // the shape 3.87 says is required.
+            Console.WriteLine();
+            Console.WriteLine("== adaptive vs fixed gates (weak), contacts by opening ==");
+            for (var mode = 0; mode < 3; mode++)
+            {
+                var label = mode == 0 ? "fixed 0.85/0.85 (baseline)"
+                    : mode == 1 ? "fixed 0.50/0.85 (best for 2400)"
+                    : "adaptive (state-driven)";
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var above = mode == 1 ? 0.50f : WeakWings().ClimbAbove;
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, above, WeakWings().DashAim,
+                        0, WeakWings().ClimbCap, WeakWings().HoverDescend, 0,
+                        "none", false, 0f, 0, false, 0f, mode == 2), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    {0,-26} |{1} | sum={2,5} clean={3}/8", label, cells,
+                    total, clean));
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
