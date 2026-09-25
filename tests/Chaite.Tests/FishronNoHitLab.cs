@@ -1363,7 +1363,8 @@ namespace Chaite.Tests
             private readonly float _wallBand;
             /// <summary>State-driven escape choice (3.88) instead of a fixed gate.</summary>
             private readonly bool _adaptiveGate;
-            private readonly bool _bandMode;            private readonly float _holdTolerance;
+            private readonly bool _bandMode;
+            private readonly bool _perpSeek;            private readonly float _holdTolerance;
             /// <summary>Ticks before predicted contact at which to fire the
             /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
             /// restores the old fire-on-lead behaviour.</summary>
@@ -1383,7 +1384,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f, bool adaptiveGate = false, bool bandMode = false)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f, bool adaptiveGate = false, bool bandMode = false, bool perpSeek = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1403,6 +1404,7 @@ namespace Chaite.Tests
                 _wallBand = wallBand;
                 _adaptiveGate = adaptiveGate;
                 _bandMode = bandMode;
+                _perpSeek = perpSeek;
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
@@ -1712,6 +1714,52 @@ namespace Chaite.Tests
                 // travel below the ground, so a downward need that large is
                 // really an upward one.
                 if (escapeDown && need > altitude * 0.5f) escapeDown = false;
+
+                // STATE FEEDBACK. Everything above picks from a fixed partition:
+                // climb if the normal is vertical enough, dash if it is steep
+                // enough, otherwise nothing. Thirty rounds of sweeps kept landing
+                // on the same floor of about three contacts, and 4.14 showed the
+                // documented wing speed cannot be tuned into the low-contact
+                // region at all -- which is what a controller built from
+                // thresholds looks like when the real decision is continuous.
+                //
+                // So compute the decision instead. The escape direction is
+                // exactly the normal (-uy, ux), and the player can spend its
+                // horizontal speed along -uy and its climb rate along ux at the
+                // same time. Steering by that, and closing the loop on the live
+                // perpendicular distance rather than on the charge's angle, is
+                // what a player watching the screen actually does.
+                if (_perpSeek)
+                {
+                    var perpX = -_ux.Y;
+                    var perpY = _ux.X;
+                    // Travel toward the nearer side of the corridor, which is
+                    // what minimises the distance still to cover.
+                    var want = signed >= 0f ? 1f : -1f;
+                    if (Math.Abs(signed) < 0.5f) want = 1f;
+                    controls.Right = perpX * want > 0f;
+                    controls.Left = perpX * want < 0f;
+                    var down = perpY * want > 0f;
+                    if (down && altitude < need) down = false;
+                    if (down) controls.Down = true;
+                    else controls.Up = true;
+                    if (down) controls.Up = false;
+                    if (!down) controls.Down = false;
+
+                    // The dash is horizontal only, so it is worth spending when
+                    // the normal has a horizontal component and the corridor is
+                    // not yet clear. Gate on the live need, not on the angle.
+                    if (_useDash && !_dashIssued && frame.DashReady &&
+                        frame.Dash.DashDelay >= 0 && need > 0f &&
+                        Math.Abs(perpX) > 0.2f)
+                    {
+                        controls.Jump = true;
+                        controls.Dash = true;
+                        _dashIssued = true;
+                        DashIssues++;
+                    }
+                    return controls;
+                }
 
                 // Committing the side once per charge was tried twice and is
                 // WORSE, so it is not done. Holding the first tick's side took
@@ -3787,6 +3835,56 @@ namespace Chaite.Tests
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "    speed=12 aim={0,4:F2} at={1} |{2} | sum={3,5} " +
                         "clean={4}/8", aim, at, cells, total, clean));
+                }
+            }
+
+            // STATE FEEDBACK. Thirty rounds of threshold sweeps kept landing on
+            // the same floor of about three contacts, and 4.14 showed the
+            // documented wing speed cannot be tuned into the low-contact region
+            // at all -- which is what a controller built from thresholds looks
+            // like when the real decision is continuous. This steers along the
+            // live normal instead. Run across both admitted loadouts, which the
+            // objective requires to be handled separately because their vertical
+            // mobility differs.
+            Console.WriteLine();
+            Console.WriteLine("== state feedback (perp seek), both loadouts ==");
+            foreach (var set in new[]
+            {
+                new { Name = "weak  (fairy 761)  ", Prof = WeakWings(), Wing = 15.82f },
+                new { Name = "strong(fishron)    ", Prof = StrongWings(), Wing = 16.4f }
+            })
+            {
+                foreach (var wing in new[] { 0f, 12f, set.Wing })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    var issued = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, set.Prof.Lead,
+                            set.Prof.DashAt, true, 0f, set.Prof.ClimbAbove,
+                            set.Prof.DashAim, 0, set.Prof.ClimbCap,
+                            set.Prof.HoverDescend, 0, "none", false, 0f, 0,
+                            false, 0f, false, 0f, false, false, true);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: set.Prof.JumpSpeed,
+                            wingTimeMax: set.Prof.FlyTicks, autoJump: true,
+                            wingAccRunSpeed: wing);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        issued += ctrl.DashIssues;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    {0} wing={1,5:F2} |{2} | sum={3,5} clean={4}/8 " +
+                        "dash={5}", set.Name, wing, cells, total, clean, issued));
                 }
             }
 
