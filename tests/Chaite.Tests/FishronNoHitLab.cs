@@ -1347,6 +1347,7 @@ namespace Chaite.Tests
             /// the runway made every opening worse. Holding a position is the
             /// closed-loop replacement for that accident.</summary>
             private float _holdX;
+            private bool _retreat;
             private readonly float _holdTolerance;
             /// <summary>Ticks before predicted contact at which to fire the
             /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
@@ -1367,7 +1368,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false, float holdAltitude = 0f)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1383,6 +1384,7 @@ namespace Chaite.Tests
                 _hoverVariant = hoverVariant;
                 _counterDash = counterDash;
                 _holdX = holdX;
+                _retreat = retreat;
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
@@ -1533,6 +1535,29 @@ namespace Chaite.Tests
                         }
                     }
 
+                    // RETREAT mode. The close-approach trace closed the
+                    // arithmetic exactly: the lock aims the charge at the
+                    // player, so perp starts at 0; a horizontal charge needs
+                    // req ~ 106 px of vertical clearance; the boss closes at
+                    // ~16 px/tick, so contact lands in about 18 ticks, while
+                    // 106 px of ascent takes nearer 23. Short by roughly five
+                    // ticks, and no parameter fixes that because the escape
+                    // arithmetic is already correct -- the missing quantity is
+                    // TIME.
+                    //
+                    // The only controllable source of time is the length of the
+                    // charge, and the only way to lengthen it is to be further
+                    // away when the lock happens. During a hover the boss parks
+                    // on the side it already occupies, so moving away from that
+                    // side during the hover forces a longer approach without
+                    // changing anything about the escape itself.
+                    if (_retreat && !IsDashState(world.State))
+                    {
+                        var awaySide = boss.Center.X >= player.Center.X;
+                        controls.Left = awaySide;
+                        controls.Right = !awaySide;
+                    }
+
                     // The surviving contacts sit in the hover's last frames
                     // (state 0, seq 10, timer 14-18), which is the transition
                     // into a charge rather than the charge itself. During those
@@ -1659,6 +1684,15 @@ namespace Chaite.Tests
                 //   climb  46 * |ux|   (about ten ticks at 4.6:  46*0.788 = 36.2)
                 //   total                       142.0  vs requirement 108
                 //
+                // (Tried here: forcing Jump/Up whenever altitude < 60, reading
+                // "alt= 21" in the trace as the player being stuck on the
+                // ground. That was a misreading -- altitude is computed as
+                // FloorY - player.Center.Y, so 21 px means the player is
+                // already airborne, just flying low, and pushing it upward
+                // drove it into the boss's path instead of away from it.
+                // 3300 went from a clean 0 contacts to 104, so the change was
+                // reverted rather than kept.)
+
                 // Neither term alone clears it -- the dash alone is 105.8 and
                 // the climb alone is 36.2 -- but together they do, and only if
                 // the dash is aimed at the escape side rather than merely away
@@ -2516,12 +2550,12 @@ namespace Chaite.Tests
             // whole run. Every previous attempt to improve on it guessed at the
             // mechanism; this reads it off instead.
             Console.WriteLine();
-            Console.WriteLine("== close-approach trace, working config (startX 3300) ==");
+            Console.WriteLine("== close-approach trace, FAILING config (startX 2400) ==");
             RunFight(new CorridorEscape(true, WeakWings().Lead,
                 WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
                 WeakWings().DashAim, 0, WeakWings().ClimbCap,
-                WeakWings().HoverDescend, 0, "none", false, 0f), 1200,
-                maxHits: 999, bossOnly: true, bubbles: true,
+                WeakWings().HoverDescend, 0, "none", false, 0f), 2000,
+                maxHits: 999, bossOnly: true, bubbles: true, startX: 2400f,
                 jumpSpeed: WeakWings().JumpSpeed,
                 wingTimeMax: WeakWings().FlyTicks, autoJump: true,
                 traceClose: true);
@@ -2908,6 +2942,46 @@ namespace Chaite.Tests
                 "    hitCharges={0} insideLifetime={1} outside={2} " +
                 "noTick={3} spanRange=[{4},{5}] (lifetime is 30)",
                 hitCharges, inside, outside, noTick, spanMin, spanMax));
+
+            // RETREAT test. The close-approach trace says the escape is short by
+            // roughly five ticks and that no parameter can create them, because
+            // the escape arithmetic is already correct -- what is missing is
+            // TIME, and the only controllable source of time is the length of
+            // the charge. Retreating from the boss during the hover should force
+            // a longer approach. Measured at every opening, because the whole
+            // question is whether it is systematic or another single-opening
+            // accident.
+            Console.WriteLine();
+            Console.WriteLine("== retreat-during-hover vs baseline (weak) ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var withRetreat = RunFight(new CorridorEscape(true,
+                    WeakWings().Lead, WeakWings().DashAt, true, 0f,
+                    WeakWings().ClimbAbove, WeakWings().DashAim, 0,
+                    WeakWings().ClimbCap, WeakWings().HoverDescend, 0, "away",
+                    false, 0f), 8000, maxHits: 999,
+                    bossOnly: true, bubbles: true, startX: startX,
+                    jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var n = 0;
+                foreach (var l in withRetreat.HitLog)
+                    if (l.Contains("src boss")) n++;
+                var viaFlag = RunFight(new CorridorEscape(true,
+                    WeakWings().Lead, WeakWings().DashAt, true, 0f,
+                    WeakWings().ClimbAbove, WeakWings().DashAim, 0,
+                    WeakWings().ClimbCap, WeakWings().HoverDescend, 0, "none",
+                    false, 0f, 0, false, 0f, true), 8000, maxHits: 999,
+                    bossOnly: true, bubbles: true, startX: startX,
+                    jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var m = 0;
+                foreach (var l in viaFlag.HitLog)
+                    if (l.Contains("src boss")) m++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} variantAway={1,4} retreatFlag={2,4}",
+                    startX, n, m));
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
