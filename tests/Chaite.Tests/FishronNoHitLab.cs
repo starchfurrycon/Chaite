@@ -768,6 +768,10 @@ namespace Chaite.Tests
         private static bool TraceCharge;
         /// <summary>Set only by the A/B check that the dash immunity matters.</summary>
         private static bool FishronDashImmunityDisabled;
+        /// <summary>Arena runway bounds. Widened by the drift test to tell an
+        /// arena-geometry failure from a controller failure.</summary>
+        private static float ArenaBandLeft = 1000f;
+        private static float ArenaBandRight = 6000f;
         /// <summary>When positive, the charge trace prints only this charge
         /// ordinal. Charge 5 is a fixed obstacle across every jump speed from
         /// 6.41 to 8.91, so isolating its trace is what makes that readable.</summary>
@@ -781,8 +785,8 @@ namespace Chaite.Tests
             bool autoJump = false, string hoverVariant = "none")
         {
             const float floorY = 6000f;
-            var bandLeft = 1000f;
-            var bandRight = 6000f;
+            var bandLeft = ArenaBandLeft;
+            var bandRight = ArenaBandRight;
             var world = new FightWorld
             {
                 FloorY = floorY,
@@ -2097,6 +2101,114 @@ namespace Chaite.Tests
                 wingTimeMax: 100f, autoJump: true);
             foreach (var line in baseRun.HitLog)
                 Console.WriteLine("    " + line);
+        }
+
+        /// <summary>
+        /// Verifies the zero-body-contact result beyond the single opening it
+        /// was found on, for both admitted wing sets.
+        ///
+        /// The 3.41 result is narrow: one opening position (startX 3300), boss
+        /// body only. Before it can be called a movement strategy it has to
+        /// survive other openings and both loadouts, because the whole point of
+        /// a formulaic answer is that it does not depend on where the fight
+        /// happens to start. Run with --fishron-generalize.
+        /// </summary>
+        public static void FishronGeneralize()
+        {
+            var starts = new[] { 2400f, 2800f, 3300f, 3800f, 4300f, 4800f,
+                5300f, 5800f };
+            Console.WriteLine("== opening-position generality, boss body only ==");
+            Console.WriteLine("  (zero body contact must hold across openings)");
+            foreach (var profile in new[] { WeakWings(), StrongWings() })
+            {
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  {0}", profile.Name));
+                var clean = 0;
+                foreach (var startX in starts)
+                {
+                    var run = RunFight(new CorridorEscape(true, profile.Lead,
+                        profile.DashAt, true, 0f, profile.ClimbAbove,
+                        profile.DashAim, 0, profile.ClimbCap,
+                        profile.HoverDescend, 0, "none", false), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: profile.JumpSpeed,
+                        wingTimeMax: profile.FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var line in run.HitLog)
+                        if (line.Contains("src boss")) n++;
+                    if (n == 0) clean++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    startX={0,5:F0} ticks={1,5} charges={2,3} " +
+                        "bossContacts={3,4}", startX, run.Ticks, run.Charges,
+                        n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    clean openings: {0} of {1}", clean, starts.Length));
+            }
+
+            // Is the opening dependence an ARENA-geometry effect or a
+            // controller effect? The controller drifts, so with a bounded
+            // runway it eventually reaches a wall and is pinned there. Repeating
+            // two openings with a far wider runway separates the two: if the
+            // failures vanish, the controller is sound and the arena was the
+            // limit; if they persist, the controller itself is the problem.
+            Console.WriteLine();
+            Console.WriteLine("== drift test: bounded vs wide runway ==");
+            var savedLeft = ArenaBandLeft;
+            var savedRight = ArenaBandRight;
+            foreach (var wide in new[] { false, true })
+            {
+                if (wide) { ArenaBandLeft = -20000f; ArenaBandRight = 30000f; }
+                else { ArenaBandLeft = 1000f; ArenaBandRight = 6000f; }
+                foreach (var startX in new[] { 3300f, 5800f, 2400f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var line in run.HitLog)
+                        if (line.Contains("src boss")) n++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    runway={0,-6} startX={1,5:F0} charges={2,3} " +
+                        "bossContacts={3,4}", wide ? "wide" : "bounded",
+                        startX, run.Charges, n));
+                }
+            }
+            ArenaBandLeft = savedLeft;
+            ArenaBandRight = savedRight;
+
+            // All threats, weak set, every opening: what still lands and from
+            // where. Bubbles and sharkrons should be the only sources.
+            Console.WriteLine();
+            Console.WriteLine("== all threats, weak set, per opening ==");
+            foreach (var startX in starts)
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false), 8000,
+                    maxHits: 999, bossOnly: false, bubbles: true,
+                    tornados: true, startX: startX,
+                    jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var bossN = 0;
+                var bubbleN = 0;
+                var otherN = 0;
+                foreach (var line in run.HitLog)
+                {
+                    if (line.Contains("src boss")) bossN++;
+                    else if (line.Contains("src bubble")) bubbleN++;
+                    else otherN++;
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} totalHits={1,4} boss={2,3} bubble={3,3} " +
+                    "other={4,3} charges={5,3}", startX, run.Hits, bossN,
+                    bubbleN, otherN, run.Charges));
+            }
         }
 
         // ------------------------------------------------------------------ lab

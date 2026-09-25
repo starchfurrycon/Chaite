@@ -32,6 +32,11 @@ namespace Chaite.Tests
                 FishronChargeTrace(ordinal, speed);
                 return 0;
             }
+            if (args.Length >= 1 && args[0] == "--fishron-generalize")
+            {
+                FishronGeneralize();
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "--fishron-loadouts")
             {
                 FishronLoadoutCompare();
