@@ -1529,6 +1529,33 @@ namespace Chaite.Tests
                     // late instead of early. So the phantom-threat theory may well
                     // be part of the story, but this is not the cure, and the
                     // verified configuration is restored below.
+                    // BOSS PREDICTION: TWO FIXES ATTEMPTED, BOTH REFUTED, REVERTED.
+                    //
+                    // Finding: extrapolating the hover velocity across a long
+                    // horizon invents a phantom boss past its park point, and a
+                    // faster player runs deeper into the phantom, which matches the
+                    // inverted speed response (12 clean, 15.82 and up far worse, a
+                    // wider arena no help). Two cures were tried.
+                    //
+                    //  1. Freeze the parked boss (trust its velocity 3 ticks, then
+                    //     hold it still). REFUTED: speed 12 went 0 -> 19 and 15.82
+                    //     165 -> 1028. It discards the lookahead that legitimately
+                    //     helps once a charge is under way, so the controller
+                    //     degrades from reacting early to reacting late.
+                    //
+                    //  2. Predict the hover properly -- fly toward the park point
+                    //     (HoverOffset to the side of the player, 200 px above) and
+                    //     hold there, tracking the player's rollout position.
+                    //     REFUTED: speed 12 went 0 -> 41 and 15.82 228 -> 324. Making
+                    //     the hover prediction accurate made the controller MORE
+                    //     conservative, presumably because an accurately predicted
+                    //     hovering boss now looks persistently dangerous.
+                    //
+                    // So the plain linear extrapolation is kept. It is exact during
+                    // a charge, which is where the dodging happens, and the verified
+                    // zero at speed 12 depends on it. The phantom-threat account
+                    // remains the best explanation for the speed inversion, but
+                    // neither of these is the cure and the record should say so.
                     bx += bvx;
                     by += bvy;
 
