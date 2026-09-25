@@ -1242,78 +1242,57 @@ namespace Chaite.Tests
                 if (away > 0) controls.Right = true;
                 else controls.Left = true;
 
-                // Build longitudinal separation BEFORE the lock, and keep it.
-                // The measured lock geometry is the whole story of this fight:
-                // a charge only 476 px long, locked when the player is 241 px
-                // along the line, reaches the player's position with sixteen
-                // ticks to spare, so the closest approach lands on the first
-                // tick of the charge and no escape can start early enough. The
-                // single charge this lab has ever dodged was locked at
-                // lockAlong=562 -- beyond the charge's own reach. Separation is
-                // therefore the primary objective and the perpendicular escape
-                // is the secondary one.
+                // Hover is the safe window, so it is spent resetting altitude.
+                // Getting high is easy and getting back down is the part that
+                // costs a fight: the ascent that clears a shallow charge leaves
+                // the player above the boss, which is the worst place to be when
+                // the next charge locks, because the lock aims at the player and
+                // a charge taken from below is steeper. The cap is therefore
+                // measured from the FLOOR, not in world Y -- an earlier version
+                // compared player.Center.Y against a bare -380, which is above
+                // any real arena origin and so was true on every tick.
                 if (!dashing)
                 {
-                    if (_lead > 0f)
-                    {
-                        var leadX = player.Center.X - boss.Center.X;
-                        var leadY = player.Center.Y - boss.Center.Y;
-                        var need = (float)Math.Sqrt(leadX * leadX + leadY * leadY) < _lead;
-                        if (need)
-                        {
-                            if (away > 0) controls.Right = true;
-                            else controls.Left = true;
-                        }
-                    }
-                    if (!frame.Grounded) controls.Up = true;
+                    if (!frame.Grounded && player.Center.Y > world.FloorY - 160f)
+                        controls.Up = true;
                     return controls;
                 }
 
-                // Wing ascent and the dash are two independent sources of
-                // perpendicular displacement, and they answer opposite cases.
-                // The dash is a horizontal impulse, so it carries its whole
-                // 172 px along the normal of a STEEP charge; a shallow charge
-                // is escaped by gaining height instead. Without this the
-                // shallow second charge had the player's vertical velocity
-                // pinned at zero for the entire charge, which is why every
-                // dash timing in the search returned the same peak.
-                //
-                // Both bits are required and they are NOT the same input:
-                // FlightMotion.ApplyJump tests controls.Jump for the impulse
-                // and controls.Up only for sustained ascent. Setting Up alone
-                // left the player grounded with velocity.Y at exactly zero for
-                // the whole charge, which is what the earlier "climb changed
-                // nothing" result was actually measuring.
-                //
-                // Climbing the whole charge is also self-defeating: gaining the
-                // 190 px needed for a shallow charge leaves the player high
-                // above the boss, which is the worst place to be when the next
-                // charge locks (the lock aims at the player, so a charge taken
-                // from below is steep). The ascent is therefore capped, and the
-                // hover spends the safe window coming back down. -380 is one
-                // boss-height and a half: enough to clear the ~104 px the
-                // separating-axis test demands for the shallow angles without
-                // climbing out of the boss's reach.
-                if (_climb)
-                {
-                    var climbCap = -380f;
-                    if (player.Center.Y < climbCap) controls.Down = true;
-                    else
-                    {
-                        controls.Jump = true;
-                        controls.Up = true;
-                    }
-                }
-
-                // Which way along the normal is the player already leaving?
-                // Being exactly on the line means there is no side yet, so the
-                // cycle's own preference for climbing is used as the tie-break.
+                // Which way along the normal the player is already leaving.
+                // Being exactly on the line means there is no side yet; the
+                // shallow-charge answer (climb) is the tie-break.
                 var dx = player.Center.X - boss.Center.X;
                 var dy = player.Center.Y - boss.Center.Y;
                 var signed = dx * -_ux.Y + dy * _ux.X;
-                var escape = signed > 0.5f ? 1 : (signed < -0.5f ? -1 : -1);
-                if (escape > 0) controls.Down = true;
+                var escapeDown = signed >= 0f;
+                var altitude = world.FloorY - player.Center.Y;
+                if (escapeDown) controls.Down = true;
                 else controls.Up = true;
+
+                // Wing ascent and the dash are two independent sources of
+                // perpendicular displacement and they answer opposite charges.
+                // The dash is a horizontal impulse: for a steep charge -- the
+                // line running up-and-back, normal mostly horizontal -- it
+                // delivers most of its 172 px straight along the normal. For a
+                // shallow charge the normal is nearly vertical and the dash
+                // contributes almost nothing, so height is the whole escape.
+                //
+                // Both bits are required and they are NOT the same input:
+                // FlightMotion's impulse tests controls.Jump, while controls.Up
+                // only steers sustained ascent (and doubles as the descend
+                // control). Setting Up alone left the player grounded with
+                // velocity.Y at exactly zero for the whole charge, so every
+                // earlier "climb" experiment was silently measuring no climb.
+                //
+                // The shallow case also has to climb NOW rather than at the
+                // dash: its closest approach is the first projected tick, so
+                // ascending only once the dash trigger fires is already late.
+                if (_climb && !escapeDown)
+                {
+                    controls.Jump = true;
+                    controls.Up = true;
+                    if (altitude > 420f) controls.Up = false;
+                }
 
                 if (!_useDash || _dashIssued || !frame.DashReady ||
                     frame.Dash.DashDelay < 0) return controls;
@@ -1550,6 +1529,35 @@ namespace Chaite.Tests
             }
             Console.WriteLine("  best: hits=" + bestSep + " at " + bestSepLabel);
             Console.WriteLine();
+            // With the angle-aware escape in place the fight survives four of
+            // five charges, so this is now a search for the last one rather
+            // than for the first. Both dimensions matter: how much of the
+            // eighteen-tick dash decay is left when the boss arrives, and how
+            // late the ascent starts (a shallow charge wants it immediately).
+            Console.WriteLine("== full search (climb x dash lead x dash tick) ==");
+            var fullBest = int.MaxValue;
+            var fullBestLabel = "none";
+            foreach (var climb in new[] { false, true })
+            foreach (var dl in new[] { 120f, 160f, 200f, 240f, 280f, 340f })
+            foreach (var at in new[] { 0, 4, 8, 12, 16, 20 })
+            {
+                var fight = RunFight(new CorridorEscape(true, dl, at, climb),
+                    12000, bossOnly: true);
+                if (fight.Hits < fullBest)
+                {
+                    fullBest = fight.Hits;
+                    fullBestLabel = string.Format(CultureInfo.InvariantCulture,
+                        "climb={0} dl={1:F0} at={2}", climb, dl, at);
+                }
+                if (fight.Hits == 0)
+                    Console.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "  ZERO HITS: climb={0} dl={1:F0} at={2} ticks={3} " +
+                        "charges={4}", climb, dl, at, fight.Ticks,
+                        fight.Charges));
+            }
+            Console.WriteLine("  best: hits=" + fullBest + " at " + fullBestLabel);
+            Console.WriteLine();
             Console.WriteLine("== one charge, tick by tick (dash on the lock tick) ==");
             TraceCharge = true;
             var traced = RunFight(new BeatCycleDodge(true, DashAim.Flee, 1), 6000,
@@ -1566,7 +1574,7 @@ namespace Chaite.Tests
             // once it is visible whether the vertical velocity ever left zero.
             Console.WriteLine("== corridor escape with wing ascent held ==");
             TraceCharge = true;
-            var climbing = RunFight(new CorridorEscape(true, 200f, 6, true), 6000,
+            var climbing = RunFight(new CorridorEscape(true, 240f, 8, true), 12000,
                 bossOnly: true);
             TraceCharge = false;
             Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks);
