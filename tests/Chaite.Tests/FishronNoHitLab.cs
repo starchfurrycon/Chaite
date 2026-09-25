@@ -2844,6 +2844,54 @@ namespace Chaite.Tests
             }
             Console.WriteLine("    BEST: " + bestRow);
 
+            // Per-charge geometry for the FAILING phase one, at an opening that
+            // fails. Every search so far optimised a scalar; this prints the
+            // actual angle / requirement / achieved clearance per charge, which
+            // is what says WHICH charge is short and BY HOW MUCH. The guide's
+            // "open up vertical distance" implies the shortfall should be in the
+            // vertical component, so the angle column is the one to read.
+            Console.WriteLine();
+            Console.WriteLine("== phase 1 charge geometry, startX 2400 (failing) ==");
+            var geoRun = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                maxHits: 999, bossOnly: true, bubbles: true, startX: 2400f,
+                jumpSpeed: WeakWings().JumpSpeed,
+                wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+            // Wall-pinning test. The failing charges show high clearance
+            // (maxPerp 156, 309) yet still register hits, and their player
+            // coordinates sit at x 1000 and 1062 -- the arena's left edge. If
+            // that is the mechanism, hits should cluster at the walls and be
+            // rare in mid-arena, which is a different problem from "the escape
+            // is too slow" and points at the guide's own advice to keep the boss
+            // controlled at the platform EDGE rather than being cornered by it.
+            var wallHits = 0;
+            var midHits = 0;
+            var totalHits = 0;
+            foreach (var entry in geoRun.ChargeLog)
+            {
+                if (!entry.Contains("hit=True")) continue;
+                totalHits++;
+                var at = entry.IndexOf("ply=(");
+                var x = -1f;
+                if (at >= 0)
+                {
+                    var tail = entry.Substring(at + 5);
+                    var comma = tail.IndexOf(',');
+                    if (comma > 0)
+                        float.TryParse(tail.Substring(0, comma),
+                            NumberStyles.Float, CultureInfo.InvariantCulture,
+                            out x);
+                }
+                if (x < 1300f || x > 5700f) wallHits++;
+                else midHits++;
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    charges={0} hits={1} nearWall(<1300 or >5700)={2} " +
+                "midArena={3}", geoRun.ChargeLog.Count, totalHits, wallHits,
+                midHits));
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
