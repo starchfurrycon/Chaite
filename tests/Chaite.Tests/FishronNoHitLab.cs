@@ -3300,6 +3300,49 @@ namespace Chaite.Tests
                     clean, steep, shallow));
             }
 
+            // ARRIVAL-TIMED I-FRAMES. 3.91 established that a horizontal charge
+            // cannot be out-escaped -- the perpendicular is vertical while the
+            // dash is horizontal, and the climb needs ~23 ticks against ~18. So
+            // surviving phase one requires EATING the contact with the dash's 15
+            // immune ticks rather than clearing it. _dashAtContact already fires
+            // the dash a chosen number of ticks before predicted arrival, which
+            // is the right shape; the open question is the value, and whether it
+            // should be aimed INTO the boss (the guide's stated mechanism) rather
+            // than along the escape side. Swept together, since the two interact.
+            Console.WriteLine();
+            Console.WriteLine("== arrival-timed dash, escape-aimed vs counter (weak) ==");
+            foreach (var counter in new[] { false, true })
+            {
+                foreach (var at in new[] { 1, 3, 5, 8, 12, 16, 20 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var run = RunFight(new CorridorEscape(true,
+                            WeakWings().Lead, WeakWings().DashAt, true, 0f,
+                            WeakWings().ClimbAbove, WeakWings().DashAim, 0,
+                            WeakWings().ClimbCap, WeakWings().HoverDescend, 0,
+                            "none", counter, 0f, at), 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    counter={0,-5} dashAtContact={1,2} |{2} | sum={3,5} " +
+                        "clean={4}/8", counter, at, cells, total, clean));
+                }
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
