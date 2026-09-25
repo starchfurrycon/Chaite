@@ -816,7 +816,8 @@ namespace Chaite.Tests
             bool autoJump = false, string hoverVariant = "none",
             float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false,
             float wingAccRunSpeed = -1f, float startBossLife = 0f,
-            float startAltitude = 0f, float startBossX = 0f)
+            float startAltitude = 0f, float startBossX = 0f,
+            float startBossAltitude = 0f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -848,6 +849,7 @@ namespace Chaite.Tests
             // in the requested phase.
             if (startBossLife > 0f) world.BossLife = startBossLife;
             if (startBossX > 0f) world.BossX = startBossX;
+            if (startBossAltitude > 0f) world.BossY = floorY - startBossAltitude;
             // Starting altitude. FishronPlayerStart always places the player
             // standing on the floor, and every sweep in this lab has inherited
             // that, so the initial height has never been a variable. It matters
@@ -4630,6 +4632,292 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    startX={0,5:F0} three repeats -> [{1}]", opening,
                     string.Join(",", samples)));
+            }
+
+            // BOSS STARTING ALTITUDE. BossY is hard-coded to floorY - 42 - 400,
+            // that is 442 px above the floor, and it has never been varied either
+            // -- the same blind spot that the player's starting altitude turned
+            // out to be. The player's own altitude moved the total from 78 to 4,
+            // so the vertical relationship at the opening is clearly load-bearing,
+            // and the boss half of that relationship is still fixed.
+            Console.WriteLine();
+            Console.WriteLine("== boss starting altitude sweep (weak, alt0=340) ==");
+            foreach (var balt in new[] { 200f, 300f, 400f, 442f, 500f, 600f,
+                700f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.83f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: 12f, startAltitude: 340f,
+                        startBossAltitude: balt);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    bossAlt0={0,4:F0} |{1} | sum={2,4} clean={3}/8",
+                    balt, cells, total, clean));
+            }
+
+            // WIDE AIM SWEEP AT THE NEW ALTITUDE. The joint sweep only covered aim
+            // 0.83 to 0.87, because aim had previously been tuned at altitude ZERO
+            // where 0.85 was best. Since the altitude change moved the whole
+            // operating point, the aim optimum may have moved too, and the lower
+            // values (0.75, 0.80) that were competitive in the old regime have not
+            // been retried here at all.
+            Console.WriteLine();
+            Console.WriteLine("== wide aim x lead sweep at alt0=340 ==");
+            foreach (var aim in new[] { 0.70f, 0.75f, 0.78f, 0.80f, 0.83f, 0.86f,
+                0.90f, 0.95f, 1.01f })
+            {
+                foreach (var lead in new[] { 200f, 240f, 280f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, lead, 0, true, 0f,
+                            0.88f, aim, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: 12f, startAltitude: 340f);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    if (clean >= 6 || total <= 6)
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    aim={0,4:F2} lead={1,3:F0} |{2} | sum={3,4} " +
+                            "clean={4}/8", aim, lead, cells, total, clean));
+                }
+            }
+
+            // INDEPENDENT VERIFICATION of the zero-contact configuration.
+            // The wide aim sweep produced the first all-openings zero this series
+            // has seen: aim 0.95, lead 240, alt0 340, wing speed 12, giving
+            // 0 0 0 0 0 0 0 0. A single sweep result is not evidence, so this
+            // re-derives it and then tries to break it -- repeats for
+            // determinism, a longer fight, both loadout flight parameters, and
+            // tight and loose variants of the aim so the zero is shown to sit in
+            // a region rather than at one lucky point.
+            Console.WriteLine();
+            Console.WriteLine("== VERIFY: phase-one zero-contact configuration ==");
+            void Verify(string label, float aim, float lead, float alt0,
+                float wingSpeed, float jumpSpeed, float flyTicks, int ticks,
+                bool bubbles)
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, lead, 0, true, 0f, 0.88f,
+                        aim, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, ticks, maxHits: 999, bossOnly: true,
+                        bubbles: bubbles, startX: startX, jumpSpeed: jumpSpeed,
+                        wingTimeMax: flyTicks, autoJump: true,
+                        wingAccRunSpeed: wingSpeed, startAltitude: alt0);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    {0,-46} |{1} | sum={2,4} clean={3}/8", label, cells,
+                    total, clean));
+            }
+
+            Verify("baseline repeat", 0.95f, 240f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("repeat again (determinism)", 0.95f, 240f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("longer fight 16000 ticks", 0.95f, 240f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 16000, true);
+            Verify("strong wings (16.4, jump 8.6, 150t)", 0.95f, 240f, 340f,
+                16.4f, 9.01f, 150f, 8000, true);
+            Verify("aim 0.93 (tighter)", 0.93f, 240f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("aim 0.97 (looser)", 0.97f, 240f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("alt0 300", 0.95f, 240f, 300f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("alt0 380", 0.95f, 240f, 380f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("lead 220", 0.95f, 220f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+            Verify("lead 260", 0.95f, 260f, 340f, 12f,
+                WeakWings().JumpSpeed, WeakWings().FlyTicks, 8000, true);
+
+            // STRONG-WING SET. The owner insisted the two wing classes need
+            // separate routes, and the verification run proves it: the weak-wing
+            // zero (aim 0.95, lead 240, alt0 340, speed 12) collapses to 1428
+            // contacts on the strong set. The strong wings have their own
+            // parameters -- speed 16.4, jump 9.01, 150 fly ticks against the weak
+            // set's 8.5 and 100 -- so they need their own operating point rather
+            // than an inherited one. Search altitude, lead and aim jointly, and
+            // note that the strong wings are FAST, so a lead tuned for 12 px/tick
+            // is unlikely to transfer to 16.4.
+            Console.WriteLine();
+            Console.WriteLine("== STRONG-wing phase-one search ==");
+            var sBest = int.MaxValue;
+            var sRow = "";
+            foreach (var h0 in new[] { 300f, 340f, 380f, 420f, 460f })
+            {
+                foreach (var lead in new[] { 160f, 200f, 240f, 280f, 320f })
+                {
+                    foreach (var aim in new[] { 0.85f, 0.90f, 0.93f, 0.95f,
+                        0.97f })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var clean = 0;
+                        foreach (var startX in new[] { 2400f, 2800f, 3300f,
+                            3800f, 4300f, 4800f, 5300f, 5800f })
+                        {
+                            var ctrl = new CorridorEscape(true, lead, 0, true, 0f,
+                                0.88f, aim, 0, WeakWings().ClimbCap,
+                                WeakWings().HoverDescend);
+                            var run = RunFight(ctrl, 8000, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: 9.01f, wingTimeMax: 150f,
+                                autoJump: true, wingAccRunSpeed: 16.4f,
+                                startAltitude: h0);
+                            var n = 0;
+                            foreach (var l in run.HitLog)
+                                if (l.Contains("src boss")) n++;
+                            total += n;
+                            if (n == 0) clean++;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,5}", n));
+                        }
+                        if (total < sBest)
+                        {
+                            sBest = total;
+                            sRow = string.Format(CultureInfo.InvariantCulture,
+                                "    alt0={0,4:F0} lead={1,3:F0} aim={2,4:F2} |{3}" +
+                                " | sum={4,5} clean={5}/8", h0, lead, aim, cells,
+                                total, clean);
+                        }
+                        if (clean >= 6)
+                            Console.WriteLine(string.Format(
+                                CultureInfo.InvariantCulture,
+                                "    alt0={0,4:F0} lead={1,3:F0} aim={2,4:F2} |{3}" +
+                                " | sum={4,5} clean={5}/8", h0, lead, aim, cells,
+                                total, clean));
+                    }
+                }
+            }
+            Console.WriteLine("    STRONG BEST: " + sRow);
+
+            // WHY does the weak-wing zero work? Before treating it as a movement
+            // strategy it is worth knowing what the player is actually doing. If
+            // the run simply parks at a fixed altitude and the boss's charge is a
+            // pure horizontal pursuit then the zero is real but degenerate, and
+            // that matters for whether it can be called a formulaic route.
+            Console.WriteLine();
+            Console.WriteLine("== altitude profile of the zero run (startX=3300) ==");
+            {
+                var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                    0.95f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                var run = RunFight(ctrl, 3000, maxHits: 999, bossOnly: true,
+                    bubbles: true, startX: 3300f,
+                    jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                    wingAccRunSpeed: 12f, startAltitude: 340f);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    flight ticks={0}  dashIssues={1}  escapeBody={2}  " +
+                    "bossContacts=0 expected", run.Ticks,
+                    ctrl.DashIssues, ctrl.EscapeBodyTicks));
+            }
+
+            // Strong wings again, but varying the effective horizontal speed.
+            // The weak set's zero sits at speed 12, not at its documented 15.82,
+            // which suggests the controller has a speed window rather than a
+            // speed. If so the strong set should have one too, and it will not be
+            // at 16.4 merely because that is the documented value.
+            Console.WriteLine();
+            Console.WriteLine("== STRONG-wing speed window ==");
+            foreach (var sp in new[] { 9f, 10f, 11f, 12f, 13f, 14f, 16.4f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.95f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX, jumpSpeed: 9.01f,
+                        wingTimeMax: 150f, autoJump: true,
+                        wingAccRunSpeed: sp, startAltitude: 340f);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    speed={0,5:F1} |{1} | sum={2,5} clean={3}/8",
+                    sp, cells, total, clean));
+            }
+
+            Console.WriteLine("== STRONG-wing speed window (fine) ==");
+            foreach (var sp in new[] { 11.5f, 11.7f, 11.8f, 11.9f, 12.0f,
+                12.1f, 12.2f, 12.3f, 12.5f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.95f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX, jumpSpeed: 9.01f,
+                        wingTimeMax: 150f, autoJump: true,
+                        wingAccRunSpeed: sp, startAltitude: 340f);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    speed={0,5:F1} |{1} | sum={2,5} clean={3}/8",
+                    sp, cells, total, clean));
             }
 
             // All threats, weak set, every opening: what still lands and from
