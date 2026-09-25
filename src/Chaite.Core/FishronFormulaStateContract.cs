@@ -29,7 +29,14 @@ namespace Chaite.Core
                 case 5: return input.NativeSequence <= 7;
                 case 6: return input.NativeSequence <= 5;
                 case 7: return input.NativeSequence == 1;
-                case 8: return input.NativeSequence == 0;
+                // Sequence 1 is reachable: state 8 is the phase-2 sixth attack,
+                // and the native AI's attack counter is already 1 by the time it
+                // enters that state. Audited tuple by tuple against the engine's
+                // own recorded (ai[0], ai[3]) pairs -- this was the only case the
+                // engine contradicted, and TimerLimit needed no change (every
+                // observed pair's max(ai[2]) is exactly its limit minus one).
+                // See artifacts/formula-contract-case8-restore-20260925.md.
+                case 8: return input.NativeSequence <= 1;
                 case 9: return input.NativeSequence <= 7;
                 case 10: return input.NativeSequence <= 8;
                 case 11:

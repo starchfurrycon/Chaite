@@ -61,6 +61,9 @@ namespace Chaite.Plugin
         // control-return request, so a fight that hits it every tick cannot flood
         // chat. Only ever non-zero while CHAITE_BRIDGE_FILE names a route.
         private static int _bridgeGateCooldown;
+        // The LastFormulaTableMissCount already written to chaite.log, so each
+        // new miss is logged exactly once instead of on every tick it persists.
+        private static int _loggedFormulaTableMissCount;
 
         /// <summary>True when something other than the planner's formula script
         /// owns the movement channels this tick.
@@ -69,10 +72,13 @@ namespace Chaite.Plugin
         /// Horizontal/Jump/Drop/Dash before ApplyPlan, so when one of them is
         /// loaded the planner's mobility contract no longer guards a real output:
         /// it only decides whether the episode -- or the real fight -- continues.
-        /// The formula-state whitelist is a review artifact of the hand-written
-        /// formula era and whitelists Fishron state 8 only for sequence 0, while
-        /// the native AI also reaches sequence 1, so acting on it here would stop
-        /// the policy exactly where it does most of its flying.</summary>
+        /// What still reaches here is every contract ending other than the
+        /// formula-state table: the locked mobility configuration changing under
+        /// the route, an unreadable native Boss state, an unrecognized phase. The
+        /// formula-state table itself no longer returns control at all --
+        /// CombatPlanner records the miss in LastFormulaTableMiss* and keeps
+        /// flying the script -- so acting on one of these endings would stop the
+        /// policy exactly where it does most of its flying.</summary>
         private static bool MovementAuthorityIsExternal
         {
             get { return _replay != null || _exportedPolicy != null; }
@@ -117,6 +123,45 @@ namespace Chaite.Plugin
                 // files, and a tick-keyed file simply reports no coverage.
                 return -1L;
             }
+        }
+
+        /// <summary>The (NativeState, NativeTimer, NativeSequence) tuple the
+        /// reviewed formula table did not list, as last seen by the planner.
+        /// Null until a miss is recorded.
+        ///
+        /// The gate no longer returns control on a miss -- CombatPlanner records
+        /// the tuple and keeps flying the script -- so this read-only port is the
+        /// only way to see that the table is behind the native AI. Each new miss
+        /// is also written to chaite.log as a "Formula table miss:" line.
+        /// </summary>
+        public static string FormulaTableMiss
+        {
+            get
+            {
+                var planner = _planner;
+                if (planner == null || planner.LastFormulaTableMissCount == 0)
+                    return null;
+                return "state=" + planner.LastFormulaTableMissState +
+                    " timer=" + planner.LastFormulaTableMissTimer +
+                    " sequence=" + planner.LastFormulaTableMissSequence +
+                    " reason=" + planner.LastFormulaTableMissReason +
+                    " count=" + planner.LastFormulaTableMissCount;
+            }
+        }
+
+        /// <summary>Writes each newly observed formula-table miss to chaite.log
+        /// exactly once. Without this the relaxed gate would be silent evidence:
+        /// the fight no longer ends at the miss, so nothing downstream would ever
+        /// report that the reviewed table does not cover what the native AI flew.
+        /// </summary>
+        private static void LogFormulaTableMiss()
+        {
+            var planner = _planner;
+            if (planner == null || _log == null) return;
+            var count = planner.LastFormulaTableMissCount;
+            if (count == _loggedFormulaTableMissCount) return;
+            _loggedFormulaTableMissCount = count;
+            _log.Write("Formula table miss: " + FormulaTableMiss);
         }
 
         public static void Tick(object player, int playerIndex)
@@ -288,6 +333,9 @@ namespace Chaite.Plugin
                 string planScopeReason;
                 var plan = _planner.PlanSupported(snapshot,
                     out planScopeReason);
+                // The formula-table gate records a miss and keeps flying, so the
+                // only durable trace of it is this log line.
+                LogFormulaTableMiss();
                 if (plan.RequestControlReturn)
                 {
                     if (string.Equals(plan.StrategyId,
@@ -317,11 +365,14 @@ namespace Chaite.Plugin
                     //
                     // MEASURED 2026-09-21: under the bridge this ended 7.2% of
                     // fsw121d's fights and 30.5% of fsw121p's, essentially always
-                    // at the endgame, because the reviewed formula table
-                    // whitelists Fishron state 8 only for sequence 0 and the
-                    // native AI also reaches sequence 1. In a real fight the same
-                    // gate would block exactly the states the trained policy flies
-                    // in, so the policy could not be deployed through it at all.
+                    // at the endgame. The formula-table half of that cause is
+                    // fixed: the table now lists the state 8 / sequence 1 tuple
+                    // the native AI actually reaches, and CombatPlanner no longer
+                    // returns control on a miss at all -- it records
+                    // LastFormulaTableMiss* and keeps flying the script. What
+                    // still reaches here is the locked mobility configuration
+                    // changing under the route, an unreadable native Boss state,
+                    // and an unrecognized phase.
                     // See docs/safety-abort-misclassified-2026-09-21.md 12.7-12.9
                     // and 15.3.
                     if (MovementAuthorityIsExternal)

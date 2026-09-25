@@ -150,6 +150,26 @@ namespace Chaite.Core
         private BeamStep[] _beamSteps = Array.Empty<BeamStep>();
 
         public int LastCandidateCount { get; private set; }
+
+        /// <summary>The last Fishron formula-table miss PlanFormula saw, as
+        /// readable evidence.
+        ///
+        /// The reviewed tuple table is a review artifact, not a flight limit:
+        /// every field it reads is bounded, and the formula script still
+        /// produces a definite output for a tuple the table does not list, so
+        /// a miss is recorded here and then flown. Returning control instead
+        /// is what truncated 19 of 39 mounted rehearsal fights at one identical
+        /// tick. <c>LastFormulaTableMissCount</c> only ever increases, so a
+        /// consumer can tell a new miss from the same one re-observed every
+        /// tick. Runtime publishes these through its FormulaTableMiss port and
+        /// writes each new miss to chaite.log.
+        /// </summary>
+        public int LastFormulaTableMissCount { get; private set; }
+        public int LastFormulaTableMissState { get; private set; }
+        public int LastFormulaTableMissTimer { get; private set; }
+        public int LastFormulaTableMissSequence { get; private set; }
+        public string LastFormulaTableMissReason { get; private set; }
+
         public int LastRelevantThreatCount => _relevantThreats.Count + _relevantBeams.Count;
         public int LatchedOutputSlot => _hasLatchedOutputRoute ?
             _latchedOutputRoute.WeaponSlot : -1;
@@ -758,11 +778,29 @@ namespace Chaite.Core
             if (target.Type == SupportedBossPolicy.DukeFishronType)
             {
                 DukeFishronNativeEnrageObservation enrage;
-                if (!TryGetFishronEnrage(snapshot, target.Key, out enrage) ||
-                    !FishronFormulaStateContract.IsValid(in input,
-                        snapshot.Difficulty, enrage.NativeEnraged))
+                if (!TryGetFishronEnrage(snapshot, target.Key, out enrage))
                     return UnsupportedMobilityRoutePlan(plan,
                         "猪鲨原生 AI 状态/时钟不在已审核公式表");
+                if (!FishronFormulaStateContract.IsValid(in input,
+                        snapshot.Difficulty, enrage.NativeEnraged))
+                {
+                    // A tuple outside the reviewed table is "not yet reviewed",
+                    // not "cannot be flown": IsValid has already rejected the
+                    // out-of-range tuples, so every value reaching here is one
+                    // the native AI itself can produce, and the script has a
+                    // definite output for it. Returning control here used to
+                    // hand the fight back mid-flight -- and on the mounted
+                    // production path Runtime cancelled the session -- because
+                    // the table whitelisted Fishron state 8 only for sequence 0
+                    // while the native AI reaches it with sequence 1. Record the
+                    // tuple as evidence and keep flying the script.
+                    LastFormulaTableMissState = input.NativeState;
+                    LastFormulaTableMissTimer = input.NativeTimer;
+                    LastFormulaTableMissSequence = input.NativeSequence;
+                    LastFormulaTableMissReason =
+                        "猪鲨原生 AI 状态/时钟不在已审核公式表";
+                    LastFormulaTableMissCount++;
+                }
             }
             FormulaScriptOutput script;
             if (_formulaRoute == FormulaRoute.FishronFairyWingsDash)

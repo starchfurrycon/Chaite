@@ -1609,6 +1609,24 @@ public static class ChaiteGameProbe
         if(float.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_DPS"),
             NumberStyles.Float,CultureInfo.InvariantCulture,out parsedDps) && parsedDps>0f)
             simulatedDpsOverride=parsedDps<1f?1f:(parsedDps>100000f?100000f:parsedDps);
+        // The distance falloff band for the simulated output, in tiles (1 tile =
+        // 16 px). CHAITE_SIM_DPS still pins the FULL-range DPS; these two move
+        // only the range at which that DPS is delivered. Read once, here, for the
+        // same reason the DPS band is: an episode has to be replayable, and a
+        // band that changed mid-session would make two episodes incomparable.
+        // Individual values are validated by ReadSimulatedFalloffTiles and the
+        // pair here; both throw, and ValidateLaunch turns a throw into a loud
+        // LAUNCH_REJECTED with exit 11 rather than a run that quietly measures
+        // the wrong curve.
+        simulatedFalloffFullTiles=ReadSimulatedFalloffTiles(
+            "CHAITE_SIM_DPS_FULL_TILES",SimulatedFalloffFullTilesDefault);
+        simulatedFalloffZeroTiles=ReadSimulatedFalloffTiles(
+            "CHAITE_SIM_DPS_ZERO_TILES",SimulatedFalloffZeroTilesDefault);
+        if(simulatedFalloffFullTiles>=simulatedFalloffZeroTiles)
+            throw new ArgumentException("Invalid simulated DPS falloff band: CHAITE_SIM_DPS_FULL_TILES ("+
+                simulatedFalloffFullTiles.ToString("R",CultureInfo.InvariantCulture)+
+                ") must be less than CHAITE_SIM_DPS_ZERO_TILES ("+
+                simulatedFalloffZeroTiles.ToString("R",CultureInfo.InvariantCulture)+")");
         // CHAITE_PROJ_SLOTS widens the bridge's projectile window for one
         // session without touching the others. The trainer reads the same
         // variable, so the feature vector stays aligned with the row.
@@ -2104,6 +2122,32 @@ public static class ChaiteGameProbe
         int parsed;
         if(!int.TryParse(value,NumberStyles.None,CultureInfo.InvariantCulture,out parsed) || parsed<minimum || parsed>maximum)
             throw new ArgumentException("Invalid "+name+"; expected "+minimum+".."+maximum);
+        return parsed;
+    }
+
+    /// <summary>One tile threshold of the simulated-output distance falloff.
+    ///
+    /// Unset or empty keeps the reviewed default, which is how every other
+    /// CHAITE_* variable in this file treats an absent value. Anything else has
+    /// to be a positive finite number of tiles. A negative, zero or unparseable
+    /// value is a configuration error, not a request for "no falloff", so it is
+    /// rejected here and the run dies through ValidateLaunch's LAUNCH_REJECTED
+    /// path with exit 11 -- the same disposition every other probe argument
+    /// gets, and never a silent substitution of the default band. "NaN" and
+    /// "Infinity" parse successfully as floats, so they are rejected by the
+    /// finiteness check rather than by TryParse.</summary>
+    static float ReadSimulatedFalloffTiles(string name,float fallback)
+    {
+        var raw=Environment.GetEnvironmentVariable(name);
+        if(string.IsNullOrEmpty(raw)) return fallback;
+        float parsed;
+        if(!float.TryParse(raw.Trim(),NumberStyles.Float,CultureInfo.InvariantCulture,out parsed))
+            throw new ArgumentException("Invalid "+name+": '"+raw+"' is not a number of tiles");
+        if(!IsFinite(parsed))
+            throw new ArgumentException("Invalid "+name+": '"+raw+"' is not a finite number of tiles");
+        if(parsed<=0f)
+            throw new ArgumentException("Invalid "+name+": "+
+                parsed.ToString("R",CultureInfo.InvariantCulture)+" tiles is not positive");
         return parsed;
     }
     public static void PlayerReturned(Player player,string location)
@@ -3823,7 +3867,20 @@ public static class ChaiteGameProbe
     /// and it is the only projectile in these fights that is trivially broken,
     /// so each one is destroyed with a high per-tick probability rather than
     /// being left as a threat the movement policy cannot answer. The Sharknado
-    /// bubbles and column (372/373/384) stay real threats.</summary>
+    /// bubbles and column (372/373/384) stay real threats.
+    ///
+    /// The output is NOT range independent. Movement is the only thing the
+    /// policy owns, so the one coupling the real fight has between movement and
+    /// damage has to be modelled here: a player who runs away does no damage.
+    /// Leaving it out made running away free in the fixture and costly in the
+    /// game, so the fixture rewarded a strategy the game punishes and every win
+    /// rate measured against it was measured against the wrong objective. The
+    /// drain is therefore scaled by a smoothstep falloff on the player-to-Boss
+    /// centre distance: full DPS inside CHAITE_SIM_DPS_FULL_TILES (default 30
+    /// tiles = 480 px), zero beyond CHAITE_SIM_DPS_ZERO_TILES (default 80 tiles
+    /// = 1280 px), smoothstep in between. Both thresholds are read once, at
+    /// startup, and an illegal band is rejected rather than repaired. See
+    /// SimulatedFalloffFactor for the unreadable-distance rule.</summary>
     const float SimulatedDpsMin = 600f;
     const float SimulatedDpsMax = 1200f;
     const double DetonatingBubbleBreakChance = 0.35;
@@ -3833,9 +3890,201 @@ public static class ChaiteGameProbe
     static double simulatedDamageCarry;
     static System.Random simulatedOutputRandom;
     static float simulatedDpsOverride;
+    const float PixelsPerTile = 16f;
+    const float SimulatedFalloffFullTilesDefault = 30f;
+    const float SimulatedFalloffZeroTilesDefault = 80f;
+    // Band and per-episode telemetry for the distance falloff. The band is set
+    // once in ReadSettings and never again, so two episodes of one run cannot
+    // disagree about the curve they were measured under.
+    static float simulatedFalloffFullTiles = SimulatedFalloffFullTilesDefault;
+    static float simulatedFalloffZeroTiles = SimulatedFalloffZeroTilesDefault;
+    static double simulatedFalloffFactorSum;
+    static float simulatedFalloffMinimumFactor = 1f;
+    static int simulatedFalloffReadableTicks;
+    static int simulatedFalloffFullBandTicks, simulatedFalloffZeroBandTicks;
+    static int simulatedFalloffUnreadableTicks, simulatedFalloffUnreadableTransitions;
+    static bool simulatedFalloffUnreadable;
+    static int simulatedFalloffSummaryEpisode = -1;
+    static readonly System.Collections.Generic.List<float> simulatedFalloffDistances =
+        new System.Collections.Generic.List<float>();
     static readonly System.Collections.Generic.HashSet<int> reportedKilledBossSlots=new System.Collections.Generic.HashSet<int>();
     static int simulatedBubbleBreaks, simulatedDamageApplied;
     static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
+
+    /// <summary>The fraction of the simulated output the player produces at the
+    /// current range, plus the range it was read at.
+    ///
+    /// The range is the player-to-Boss CENTRE distance in tiles (1 tile = 16 px)
+    /// to the NEAREST active expected root, so there is exactly one number per
+    /// tick and the drain below is a property of the tick rather than of the
+    /// target list. Every acceptance scenario that matters here has a single
+    /// root, where "nearest" and "the Boss" are the same thing.
+    ///
+    /// The curve is smoothstep, not linear and not a hard threshold:
+    ///   t = (tiles - full) / (zero - full), clamped to [0,1] by the branches
+    ///   factor = 1 - (3t^2 - 2t^3)
+    /// which is C1-continuous at both ends: the output has no kink where the
+    /// player crosses into or out of range, so the policy cannot learn a cliff
+    /// that the real weapon range does not have.
+    ///
+    /// FAIL CLOSED. A missing Player, no active expected root, a non-finite
+    /// coordinate or a degenerate band all mean "the range is not known", and
+    /// the answer is 0 output plus a SIM_FALLOFF_UNREADABLE line. This is the
+    /// one place where guessing is not allowed: the wrong guess is the full
+    /// band, which is the exact defect this function exists to remove, so it is
+    /// never returned for an unmeasured range.</summary>
+    static float SimulatedFalloffFactor(out float tiles,out string unreadableReason)
+    {
+        tiles=0f;
+        unreadableReason=null;
+        // Validated at startup, but a band this broken would make the division
+        // below meaningless, and "meaningless" must not collapse to full output.
+        if(simulatedFalloffZeroTiles<=simulatedFalloffFullTiles)
+        {
+            unreadableReason="degenerate-band";
+            return 0f;
+        }
+        if(Game.player==null || Game.player.Length==0)
+        {
+            unreadableReason="no-player";
+            return 0f;
+        }
+        var player=Game.player[0];
+        if(player==null)
+        {
+            unreadableReason="no-player";
+            return 0f;
+        }
+        var playerCenter=player.Center;
+        if(!IsFinite(playerCenter.X) || !IsFinite(playerCenter.Y))
+        {
+            unreadableReason="nonfinite-player";
+            return 0f;
+        }
+        if(Game.npc==null)
+        {
+            unreadableReason="no-boss-root";
+            return 0f;
+        }
+        bool found=false;
+        float nearest=0f;
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc==null || !npc.active || !IsExpectedRoot(npc)) continue;
+            var center=npc.Center;
+            if(!IsFinite(center.X) || !IsFinite(center.Y)) continue;
+            float distance=Vector2.Distance(playerCenter,center);
+            if(!IsFinite(distance)) continue;
+            if(!found || distance<nearest) { found=true; nearest=distance; }
+        }
+        // Before the Boss is alive there is no range to read. That is an
+        // unreadable tick, not a full-band one: the summon and spawn windows
+        // used to drain the Boss for free, and they still do not.
+        if(!found)
+        {
+            unreadableReason="no-boss-root";
+            return 0f;
+        }
+        tiles=nearest/PixelsPerTile;
+        float t=(tiles-simulatedFalloffFullTiles)/(simulatedFalloffZeroTiles-simulatedFalloffFullTiles);
+        if(t<=0f) return 1f;
+        if(t>=1f) return 0f;
+        float smoothstep=t*t*(3f-2f*t);
+        float factor=1f-smoothstep;
+        if(factor<0f) return 0f;
+        if(factor>1f) return 1f;
+        return factor;
+    }
+
+    static bool IsFinite(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    /// <summary>Per-episode falloff accounting.
+    ///
+    /// The unreadable message is edge triggered, so one broken stretch of a
+    /// fight produces one line instead of one line per tick, and the summary
+    /// below still carries the tick count. Everything else here exists to make
+    /// the summary a reading rather than a restatement of the intent.</summary>
+    static void TrackSimulatedFalloff(float factor,float tiles,string unreadableReason)
+    {
+        if(unreadableReason!=null)
+        {
+            simulatedFalloffUnreadableTicks++;
+            if(!simulatedFalloffUnreadable)
+            {
+                simulatedFalloffUnreadable=true;
+                simulatedFalloffUnreadableTransitions++;
+                Log("SIM_FALLOFF_UNREADABLE episode="+episodeIndex+" tick="+ticks+" reason="+
+                    unreadableReason+" applied=0 fail=closed never_full_band");
+            }
+            return;
+        }
+        simulatedFalloffUnreadable=false;
+        simulatedFalloffReadableTicks++;
+        simulatedFalloffFactorSum+=factor;
+        if(factor<simulatedFalloffMinimumFactor) simulatedFalloffMinimumFactor=factor;
+        if(factor>=1f) simulatedFalloffFullBandTicks++;
+        else if(factor<=0f) simulatedFalloffZeroBandTicks++;
+        simulatedFalloffDistances.Add(tiles);
+    }
+
+    /// <summary>One falloff line per finished episode.
+    ///
+    /// This is the in-engine control that the falloff is applied to the damage
+    /// that actually lands: it reports the factor the drain used, not the factor
+    /// the code meant to use. An unwired falloff reads meanFactor=1.0000 with
+    /// every tick in the full band; the fixed fixture sampled 76.1% of a
+    /// historical winning run's ticks outside 30 tiles, so meanFactor well below
+    /// 1 is the expected shape, and medianTiles is the range the policy chose.
+    /// medianTiles is the upper median (sorted[n/2]) of the readable ticks.</summary>
+    static void LogSimulatedFalloffSummary(string outcome)
+    {
+        if(episodeLimit<=0) return;
+        if(simulatedFalloffSummaryEpisode==episodeIndex) return;
+        simulatedFalloffSummaryEpisode=episodeIndex;
+        double meanFactor=simulatedFalloffReadableTicks>0?
+            simulatedFalloffFactorSum/simulatedFalloffReadableTicks:0d;
+        float medianTiles=0f;
+        if(simulatedFalloffDistances.Count>0)
+        {
+            var sorted=new System.Collections.Generic.List<float>(simulatedFalloffDistances);
+            sorted.Sort();
+            medianTiles=sorted[sorted.Count/2];
+        }
+        Log("SIM_FALLOFF_SUMMARY episode="+episodeIndex+" outcome="+outcome+
+            " fullTiles="+simulatedFalloffFullTiles.ToString("R",CultureInfo.InvariantCulture)+
+            " zeroTiles="+simulatedFalloffZeroTiles.ToString("R",CultureInfo.InvariantCulture)+
+            " dps="+simulatedDps.ToString("F1",CultureInfo.InvariantCulture)+
+            " readableTicks="+simulatedFalloffReadableTicks+
+            " unreadableTicks="+simulatedFalloffUnreadableTicks+
+            " unreadableTransitions="+simulatedFalloffUnreadableTransitions+
+            " meanFactor="+meanFactor.ToString("F4",CultureInfo.InvariantCulture)+
+            " minFactor="+simulatedFalloffMinimumFactor.ToString("F4",CultureInfo.InvariantCulture)+
+            " fullBandTicks="+simulatedFalloffFullBandTicks+
+            " zeroBandTicks="+simulatedFalloffZeroBandTicks+
+            " medianTiles="+medianTiles.ToString("F1",CultureInfo.InvariantCulture));
+        // The phrases the rest of the project greps for, so a reader does not
+        // have to know the summary schema to see whether the falloff ran.
+        if(simulatedFalloffUnreadableTicks>0)
+            Log("SIM_FALLOFF_UNREADABLE_SUMMARY episode="+episodeIndex+" ticks="+
+                simulatedFalloffUnreadableTicks+" transitions="+simulatedFalloffUnreadableTransitions);
+    }
+
+    static void ResetSimulatedFalloffEpisode()
+    {
+        simulatedFalloffFactorSum=0d;
+        simulatedFalloffMinimumFactor=1f;
+        simulatedFalloffReadableTicks=0;
+        simulatedFalloffFullBandTicks=0;
+        simulatedFalloffZeroBandTicks=0;
+        simulatedFalloffUnreadableTicks=0;
+        simulatedFalloffUnreadableTransitions=0;
+        simulatedFalloffUnreadable=false;
+        simulatedFalloffDistances.Clear();
+    }
 
     static void ApplySimulatedPlayerOutput()
     {
@@ -3850,12 +4099,23 @@ public static class ChaiteGameProbe
             simulatedDps=simulatedDpsOverride>0f?simulatedDpsOverride:
                 SimulatedDpsMin+(float)simulatedOutputRandom.NextDouble()*(SimulatedDpsMax-SimulatedDpsMin);
             simulatedDamageCarry=0d;
-            Log("SIM_OUTPUT episode="+episodeIndex+" dps="+simulatedDps.ToString("F1",CultureInfo.InvariantCulture));
+            Log("SIM_OUTPUT episode="+episodeIndex+" dps="+simulatedDps.ToString("F1",CultureInfo.InvariantCulture)+
+                " falloffFullTiles="+simulatedFalloffFullTiles.ToString("R",CultureInfo.InvariantCulture)+
+                " falloffZeroTiles="+simulatedFalloffZeroTiles.ToString("R",CultureInfo.InvariantCulture)+
+                " falloffCurve=smoothstep");
         }
         if(simulatedOutputRandom==null) return;
         // Terraria's native tick is 60 Hz, so DPS/60 per tick, with the
         // fractional part carried so the total dealt matches the DPS exactly.
-        simulatedDamageCarry+=simulatedDps/60d;
+        // The falloff scales the DPS, not the per-tick integer, so the carried
+        // remainder keeps the dealt total equal to the decayed rate instead of
+        // rounding a sub-1 drain away every tick. At factor 1 the arithmetic is
+        // bit-identical to the unfallen-off DPS/60.
+        float falloffTiles;
+        string falloffUnreadableReason;
+        float falloffFactor=SimulatedFalloffFactor(out falloffTiles,out falloffUnreadableReason);
+        TrackSimulatedFalloff(falloffFactor,falloffTiles,falloffUnreadableReason);
+        simulatedDamageCarry+=simulatedDps*falloffFactor/60d;
         int whole=(int)simulatedDamageCarry;
         simulatedDamageCarry-=whole;
         if(whole>0)
@@ -4810,6 +5070,12 @@ public static class ChaiteGameProbe
     {
         if(finishing) return;
         finishing=true;
+        // Before the episode branch below turns a finished episode into a reset:
+        // the falloff telemetry has to be reported for the episode that just
+        // ended, and every episode ends here, the last one included (it falls
+        // through to the result path instead of resetting). No-op outside
+        // episode mode.
+        LogSimulatedFalloffSummary(outcome);
         if(timerResolutionRaised)
         {
             try { TimeEndPeriod(1); } catch { }
@@ -5012,6 +5278,8 @@ public static class ChaiteGameProbe
     // to a boss with 78000 health.
     simulatedDamageEpisodeStart=simulatedDamageApplied;
     simulatedBubbleEpisodeStart=simulatedBubbleBreaks;
+    // The band is a run-level setting and stays; the readings are per episode.
+    ResetSimulatedFalloffEpisode();
         episodeArmTick=ticks+30;
         directSpawnTick=episodeArmTick+120;
         directSpawnAttempted=false;

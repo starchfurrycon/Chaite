@@ -1,0 +1,86 @@
+{
+  "schema": "chaite-boss-readiness-coverage/v1",
+  "id": "terraria-1.4.5.8-core-bosses-v1",
+  "gameVersion": "1.4.5.8",
+  "completeTargetList": true,
+  "coverageDescription": "Fixed product acceptance scope for every non-event vanilla core Boss encounter, each supported difficulty, the corruption/crimson alternatives, and the two distinct mechanical multi-Boss encounters.",
+  "scope": "Every listed cell requires an independently profiled, fixed-loadout native campaign of at least 40 predeclared seeds. The six user-priority encounter variants must meet priority-near-certain; every other listed cell must meet secondary-majority. A cell represents one Boss/encounter, one Classic/Expert/Master mode, and one named encounter variant.",
+  "excludedScope": "Invasions and wave events are excluded because the product deliberately does not automate events. The Empress of Light is excluded outright: the product does not admit her and does not take over her fight, so no readiness cell is claimed for her in either time-of-day variant. Secret-world rule mutations other than the mechanically distinct getfixedboi Mechdusa encounter are not silently folded into standard Boss evidence; they require a separately versioned catalog before any readiness claim. Enrages caused by deliberately invalid biome/arena conditions are likewise not a substitute for the declared reasonable-arena acceptance contract.",
+  "cells": [
+    { "id": "king-slime-classic-standard", "boss": "king-slime", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "king-slime-expert-standard", "boss": "king-slime", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "king-slime-master-standard", "boss": "king-slime", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "eye-classic-standard", "boss": "eye", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "eye-expert-standard", "boss": "eye", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "eye-master-standard", "boss": "eye", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "eater-of-worlds-classic-standard", "boss": "eater-of-worlds", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "eater-of-worlds-expert-standard", "boss": "eater-of-worlds", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "eater-of-worlds-master-standard", "boss": "eater-of-worlds", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "brain-of-cthulhu-classic-standard", "boss": "brain-of-cthulhu", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "brain-of-cthulhu-expert-standard", "boss": "brain-of-cthulhu", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "brain-of-cthulhu-master-standard", "boss": "brain-of-cthulhu", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "queen-bee-classic-standard", "boss": "queen-bee", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "queen-bee-expert-standard", "boss": "queen-bee", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "queen-bee-master-standard", "boss": "queen-bee", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "deerclops-classic-standard", "boss": "deerclops", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "deerclops-expert-standard", "boss": "deerclops", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "deerclops-master-standard", "boss": "deerclops", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "skeletron-classic-standard", "boss": "skeletron", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "skeletron-expert-standard", "boss": "skeletron", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "skeletron-master-standard", "boss": "skeletron", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "wall-of-flesh-classic-standard", "boss": "wall-of-flesh", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "wall-of-flesh-expert-standard", "boss": "wall-of-flesh", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "wall-of-flesh-master-standard", "boss": "wall-of-flesh", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "queen-slime-classic-standard", "boss": "queen-slime", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "queen-slime-expert-standard", "boss": "queen-slime", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "queen-slime-master-standard", "boss": "queen-slime", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "destroyer-classic-standard", "boss": "destroyer", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "destroyer-expert-standard", "boss": "destroyer", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "destroyer-master-standard", "boss": "destroyer", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "twins-classic-standard", "boss": "twins", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "twins-expert-standard", "boss": "twins", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "twins-master-standard", "boss": "twins", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "prime-classic-standard", "boss": "prime", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "prime-expert-standard", "boss": "prime", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "prime-master-standard", "boss": "prime", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "plantera-classic-standard", "boss": "plantera", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "plantera-expert-standard", "boss": "plantera", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "plantera-master-standard", "boss": "plantera", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "golem-classic-standard", "boss": "golem", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "golem-expert-standard", "boss": "golem", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "golem-master-standard", "boss": "golem", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "duke-fishron-classic-standard", "boss": "duke-fishron", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "duke-fishron-expert-standard", "boss": "duke-fishron", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "duke-fishron-master-standard", "boss": "duke-fishron", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "lunatic-cultist-classic-standard", "boss": "lunatic-cultist", "difficulty": "classic", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "lunatic-cultist-expert-standard", "boss": "lunatic-cultist", "difficulty": "expert", "variant": "standard", "goal": "secondary-majority" },
+    { "id": "lunatic-cultist-master-standard", "boss": "lunatic-cultist", "difficulty": "master", "variant": "standard", "goal": "secondary-majority" },
+
+    { "id": "moon-lord-classic-standard", "boss": "moon-lord", "difficulty": "classic", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "moon-lord-expert-standard", "boss": "moon-lord", "difficulty": "expert", "variant": "standard", "goal": "priority-near-certain" },
+    { "id": "moon-lord-master-standard", "boss": "moon-lord", "difficulty": "master", "variant": "standard", "goal": "priority-near-certain" },
+
+    { "id": "mechanical-mayhem-classic-simultaneous-mechanical-trio", "boss": "mechanical-mayhem", "difficulty": "classic", "variant": "simultaneous-mechanical-trio", "goal": "secondary-majority" },
+    { "id": "mechanical-mayhem-expert-simultaneous-mechanical-trio", "boss": "mechanical-mayhem", "difficulty": "expert", "variant": "simultaneous-mechanical-trio", "goal": "secondary-majority" },
+    { "id": "mechanical-mayhem-master-simultaneous-mechanical-trio", "boss": "mechanical-mayhem", "difficulty": "master", "variant": "simultaneous-mechanical-trio", "goal": "secondary-majority" },
+
+    { "id": "mechdusa-classic-getfixedboi-mechdusa", "boss": "mechdusa", "difficulty": "classic", "variant": "getfixedboi-mechdusa", "goal": "secondary-majority" },
+    { "id": "mechdusa-expert-getfixedboi-mechdusa", "boss": "mechdusa", "difficulty": "expert", "variant": "getfixedboi-mechdusa", "goal": "secondary-majority" },
+    { "id": "mechdusa-master-getfixedboi-mechdusa", "boss": "mechdusa", "difficulty": "master", "variant": "getfixedboi-mechdusa", "goal": "secondary-majority" }
+  ]
+}
