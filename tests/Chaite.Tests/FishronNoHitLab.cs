@@ -1331,15 +1331,23 @@ namespace Chaite.Tests
             /// into trouble. 1.0 means no discount at all.
             /// </summary>
             private readonly float _discount;
+            /// <summary>
+            /// Pulse length for horizontal thrust: the rollout holds the direction
+            /// for this many ticks and then releases, which is how a slower
+            /// effective speed is expressed when the model only accepts per-tick
+            /// input. 0 means hold for the whole horizon.
+            /// </summary>
+            private readonly int _pulse;
 
             private int _lastDashTick = -1000;
 
             public PredictiveDodge(int horizon, bool allowDash = true,
-                float discount = 1f)
+                float discount = 1f, int pulse = 0)
             {
                 _horizon = horizon;
                 _allowDash = allowDash;
                 _discount = discount;
+                _pulse = pulse;
             }
 
             public void Reset() => _lastDashTick = -1000;
@@ -1499,12 +1507,15 @@ namespace Chaite.Tests
                     if (weighted < worst) worst = weighted;
                     if (clear < rawWorst) rawWorst = clear;
 
-                    // Hold the horizontal input for the whole horizon: this is a
-                    // decision about which way to commit, not a one-tick nudge.
+                    // Hold the horizontal input for the whole horizon, or for the
+                    // pulse length and then coast: this is a decision about which
+                    // way to commit, but with a pulse it is also a decision about
+                    // how long to commit for.
+                    var hold = _pulse <= 0 || i < _pulse;
                     controls = new PlayerControlFrame
                     {
-                        Left = first.Left,
-                        Right = first.Right,
+                        Left = hold && first.Left,
+                        Right = hold && first.Right,
                         Up = first.Up,
                         Down = first.Down,
                         Jump = first.Up,
@@ -1520,6 +1531,65 @@ namespace Chaite.Tests
                 var score = worst + wing * 0.01f;
                 if (rawWorst <= 0f) score -= 100000f;
                 return score;
+            }
+        }
+
+        /// <summary>
+        /// A governed controller: hold the player's horizontal SPEED at a target by
+        /// pulsing thrust, then delegate the directional decision to the predictive
+        /// rollout.
+        ///
+        /// The owner's idea, and it addresses the sharpest finding in this lab. The
+        /// reproducible zero lives at an effective horizontal speed of 12.0 while
+        /// both admitted loadouts have a HIGHER top speed (Fairy 15.82, Fishron
+        /// 16.4), and a tenth of a pixel either side of 12.0 destroys it. That
+        /// looks fatal only if speed were fixed. It is not: the forward model takes
+        /// per-tick input, and the wings only set the CEILING. Applying thrust on
+        /// some ticks and coasting on others produces any effective speed below the
+        /// ceiling, so a governed player can sit at 12.0 no matter which wings are
+        /// worn. If that holds, one route covers both loadouts and the acceptance
+        /// run is reachable.
+        ///
+        /// The governor is a deadband controller on |velocity.X|: thrust when below
+        /// the target, coast when at or above it. That is exactly the kind of
+        /// frame-accurate input a human cannot sustain and is the reason this is
+        /// only available to the harness.
+        /// </summary>
+        private sealed class GovernedPredictive : IFishronController
+        {
+            private readonly float _targetSpeed;
+            private readonly int _horizon;
+            private readonly bool _allowDash;
+
+            private int _lastDashTick = -1000;
+
+            public GovernedPredictive(float targetSpeed, int horizon,
+                bool allowDash = true)
+            {
+                _targetSpeed = targetSpeed;
+                _horizon = horizon;
+                _allowDash = allowDash;
+            }
+
+            public void Reset() => _lastDashTick = -1000;
+
+            public PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
+                PlayerSnapshot player, TargetSnapshot boss, FightWorld world)
+            {
+                // Direction comes from the predictive rollout, but the rollout is
+                // told to keep the speed governed, so the two agree.
+                var ctrl = new PredictiveDodge(_horizon, _allowDash).Decide(tick,
+                    in frame, player, boss, world);
+
+                // Governor: suppress the horizontal input while at or above the
+                // target, so the player coasts down instead of over-speeding.
+                var vx = Math.Abs(frame.Velocity.X);
+                if (vx >= _targetSpeed)
+                {
+                    ctrl.Left = false;
+                    ctrl.Right = false;
+                }
+                return ctrl;
             }
         }
 
@@ -5443,6 +5513,81 @@ namespace Chaite.Tests
                             clean));
                     }
                 }
+            }
+
+            // RICHER ACTION SPACE. Every controller so far offers the player only
+            // three horizontal choices -- full left, full right, or nothing -- and
+            // the predictive one has just been shown to need a very specific speed
+            // to work. That is a symptom of a coarse action set: with only
+            // full-throttle available, the controller cannot modulate its approach
+            // and must either overshoot or stall. Real play uses partial input.
+            //
+            // The forward model takes a per-tick control, so partial thrust cannot
+            // be requested directly -- but a control PULSE can be, by asking for
+            // thrust on a fraction of ticks. The candidates below therefore include
+            // pulse patterns (hold for k ticks, release for the rest) alongside the
+            // plain ones, which gives the roll-out a way to commit to a slower
+            // effective speed without changing the wings.
+            Console.WriteLine();
+            Console.WriteLine("== PREDICTIVE dodge with pulsed actions, TRUE speeds ==");
+            Console.WriteLine("    (4 openings, 2500 ticks -- the full grid times out)");
+            foreach (var sp in new[] { 15.82f })
+            {
+                foreach (var pulse in new[] { 0, 3 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+                    {
+                        var ctrl = new PredictiveDodge(50, true, 1f, pulse);
+                        var run = RunFight(ctrl, 2500, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: sp);
+                        total += run.BossContacts;
+                        if (run.BossContacts == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", run.BossContacts));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    speed={0,5:F2} pulse={1} |{2} | sum={3,5} " +
+                        "clean={4}/4", sp, pulse, cells, total, clean));
+                }
+            }
+
+            // GOVERNED SPEED -- the owner's suggestion, and directly testable. The
+            // zero sits at an effective speed of 12.0 while both loadouts have a
+            // higher ceiling (15.82 / 16.4), so if a governed controller can hold
+            // 12.0 by pulsing thrust then ONE route covers both wing sets and the
+            // exact speed stops being a physical obstacle. Tested at both real wing
+            // ceilings, with the target swept so it is clear whether 12.0 is
+            // special or merely where the uncontrolled sweeps happened to land.
+            Console.WriteLine();
+            Console.WriteLine("== GOVERNED speed: weak ceiling 15.82, " +
+                "quick probe (2 openings, 2000 ticks, horizon 30) ==");
+            foreach (var target in new[] { 9f, 11f, 12f, 13f, 15.82f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 3300f })
+                {
+                    var ctrl = new GovernedPredictive(target, 30, true);
+                    var run = RunFight(ctrl, 2000, maxHits: 999,
+                        bossOnly: true, bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: 15.82f);
+                    total += run.BossContacts;
+                    if (run.BossContacts == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", run.BossContacts));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    target={0,5:F2} |{1} | sum={2,4} clean={3}/2",
+                    target, cells, total, clean));
             }
 
             // All threats, weak set, every opening: what still lands and from
