@@ -1412,6 +1412,24 @@ namespace Chaite.Tests
             }
 
             /// <summary>
+            /// Whether the boss's hover is about to convert into a lunge. Only
+            /// meaningful in the park states 0/5/10, whose timer counts up to a
+            /// bound and then runs StartCharge; the bound depends on phase and on
+            /// the attack index, so the test is deliberately loose and only fires
+            /// in the final few ticks.
+            /// </summary>
+            private static bool ChargeIsImminent(FightWorld world)
+            {
+                if (world.State != 0 && world.State != 5 && world.State != 10)
+                    return false;
+                // One hover tick is at least 30 in every branch of HoverTicks, so a
+                // timer below that cannot be about to end. Past it, allow a short
+                // window: long enough to react, short enough not to flinch for the
+                // whole hover.
+                return world.StateTimer >= 28;
+            }
+
+            /// <summary>
             /// Roll one candidate action forward and score it by the worst
             /// clearance it produces, so the choice is governed by the closest
             /// approach rather than by the final position.
@@ -1432,21 +1450,29 @@ namespace Chaite.Tests
 
                 // THE THREAT MODEL. Linear extrapolation of the live velocity is
                 // exact DURING a charge, because native AI_069 never writes
-                // velocity in the dash states. But it is badly wrong at the moment
-                // a charge BEGINS: the boss is still parked and its velocity is
-                // zero, so the rollout sees no threat at all and walks into the
-                // charge it is about to receive. That is why the first version
-                // scored 155 contacts at the true wing speed while barely helping
-                // at all.
+                // velocity in the dash states. It is also meaningful during the
+                // hover, where the boss's real velocity points at its park point
+                // above the player.
                 //
-                // So when the boss is not already moving it is assumed to begin
-                // charging AT THE PLAYER, which is exactly what the lock does
-                // (velocity = Normalize(player.Center - center) * num7). Only the
-                // DIRECTION is taken from the current geometry; the speed is the
-                // documented charge speed. That makes the rollout see the incoming
-                // charge before it starts rather than after.
+                // What is NOT valid is assuming a charge on every tick the boss
+                // happens to be slow. The first version did exactly that, and the
+                // tick traces show the damage: at wing speed 15.82 the player never
+                // moved at all (velocity 0.1 rising to 2.2 over thirty ticks, x
+                // pinned in place) while at 12.0 it cruised at 12.0 the whole time.
+                // The hover lasts 30-40 ticks before a charge, so treating "boss is
+                // slow" as "boss is charging at me now" put a phantom threat three
+                // ticks away on every hover tick, and the controller spent the
+                // fight flinching instead of moving. That is a large part of why
+                // higher speed scored worse.
+                //
+                // So the synthetic charge is admitted only in the last few ticks
+                // before the hover actually converts into a lunge, which is
+                // detectable from the state timer. Under states 0/5/10 the timer
+                // counts up to the hover bound and then StartCharge runs, so a
+                // timer near its bound means a charge is genuinely imminent.
                 var moving = Math.Abs(bvx) + Math.Abs(bvy) > 0.5f;
-                if (!moving)
+                var chargeImminent = ChargeIsImminent(world);
+                if (!moving && chargeImminent)
                 {
                     var pcx = frame.Position.X + frame.Width * 0.5f;
                     var pcy = frame.Position.Y + frame.Height * 0.5f;
@@ -1486,6 +1512,23 @@ namespace Chaite.Tests
                         f.Velocity = new Vec2(f.Velocity.X, 0f);
                     }
 
+                    // BOSS EXTRAPOLATION: ATTEMPTED FIX, REFUTED, REVERTED.
+                    // The reasoning was sound as far as it went. Linear
+                    // extrapolation is exact while the boss dashes, but during the
+                    // hover it flies to a park point and STOPS, so extrapolating a
+                    // 50-tick horizon from the hover velocity invents a phantom boss
+                    // past the park point -- and since a faster player travels
+                    // further it runs deeper into the phantom, which would explain
+                    // the inverted speed response (12 clean, 15.82 far worse).
+                    //
+                    // Implemented as "trust the parked boss for 3 ticks then hold it
+                    // in place", and it made things clearly WORSE: speed 12 went
+                    // from 0 contacts to 19, and 15.82 from 165 to 1028. Holding the
+                    // boss still removes the lookahead that legitimately helps once
+                    // a charge is under way, and the controller ends up reacting
+                    // late instead of early. So the phantom-threat theory may well
+                    // be part of the story, but this is not the cure, and the
+                    // verified configuration is restored below.
                     bx += bvx;
                     by += bvy;
 
@@ -5443,19 +5486,19 @@ namespace Chaite.Tests
             // repositioning after it, and see whether the trend continues to zero.
             Console.WriteLine();
             Console.WriteLine("== PREDICTIVE dodge, long horizons, TRUE speeds ==");
-            Console.WriteLine("    (horizon 120 over 8 openings x 8000 ticks is far " +
-                "too slow, so: two horizons, fewer openings, shorter fight)");
-            foreach (var sp in new[] { 15.82f, 16.4f })
+            Console.WriteLine("    (shrink-wrapped: horizon 100 over 8 openings x " +
+                "8000 ticks took the whole suite past its budget)");
+            foreach (var sp in new[] { 15.82f })
             {
                 foreach (var hz in new[] { 75, 100 })
                 {
                     var cells = new System.Text.StringBuilder();
                     var total = 0;
                     var clean = 0;
-                    foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+                    foreach (var startX in new[] { 3300f, 5800f })
                     {
                         var ctrl = new PredictiveDodge(hz, true);
-                        var run = RunFight(ctrl, 4000, maxHits: 999,
+                        var run = RunFight(ctrl, 2500, maxHits: 999,
                             bossOnly: true, bubbles: true, startX: startX,
                             jumpSpeed: WeakWings().JumpSpeed,
                             wingTimeMax: WeakWings().FlyTicks, autoJump: true,
@@ -5467,7 +5510,7 @@ namespace Chaite.Tests
                     }
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "    speed={0,5:F2} horizon={1,3} |{2} | sum={3,5} " +
-                        "clean={4}/4", sp, hz, cells, total, clean));
+                        "clean={4}/2", sp, hz, cells, total, clean));
                 }
             }
 
@@ -5480,22 +5523,21 @@ namespace Chaite.Tests
             // which discount 1.0 reproduces.
             Console.WriteLine();
             Console.WriteLine("== discount x horizon, weak wings ==");
-            Console.WriteLine("    (4 openings and 3000 ticks to keep this " +
-                "tractable; horizon 100 costs ~50M forward-model steps)");
-            foreach (var sp in new[] { 12f, 15.82f, 16.4f })
+            Console.WriteLine("    (shrink-wrapped: 2 speeds, 2 discounts, 2 " +
+                "openings, 2000 ticks -- horizon 90 is ~50M steps at full size)");
+            foreach (var sp in new[] { 12f, 15.82f })
             {
-                foreach (var dc in new[] { 1f, 0.97f, 0.94f })
+                foreach (var dc in new[] { 1f, 0.94f })
                 {
                     foreach (var hz in new[] { 50, 90 })
                     {
                         var cells = new System.Text.StringBuilder();
                         var total = 0;
                         var clean = 0;
-                        foreach (var startX in new[] { 2400f, 3300f, 4800f,
-                            5800f })
+                        foreach (var startX in new[] { 2400f, 3300f })
                         {
                             var ctrl = new PredictiveDodge(hz, true, dc);
-                            var run = RunFight(ctrl, 3000, maxHits: 999,
+                            var run = RunFight(ctrl, 2000, maxHits: 999,
                                 bossOnly: true, bubbles: true, startX: startX,
                                 jumpSpeed: WeakWings().JumpSpeed,
                                 wingTimeMax: WeakWings().FlyTicks,
@@ -5509,7 +5551,7 @@ namespace Chaite.Tests
                         Console.WriteLine(string.Format(
                             CultureInfo.InvariantCulture,
                             "    speed={0,5:F2} disc={1,4:F2} hz={2,3} |{3} " +
-                            "| sum={4,5} clean={5}/4", sp, dc, hz, cells, total,
+                            "| sum={4,5} clean={5}/2", sp, dc, hz, cells, total,
                             clean));
                     }
                 }
@@ -5588,6 +5630,30 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    target={0,5:F2} |{1} | sum={2,4} clean={3}/2",
                     target, cells, total, clean));
+            }
+
+            // FIRST BIFURCATION. Rather than reason about why a higher top speed
+            // scores worse -- which is backwards, since the boss charges at 17 and
+            // outruns the weak wing's 15.82 either way -- compare the two runs tick
+            // by tick and find where they first differ. Both start from the same
+            // opening and the same controller, so the first divergence is the
+            // decision that the speed changes, and everything before it is common.
+            //
+            // Kept deliberately short: a 50-tick horizon over 16 candidates costs
+            // about 800 forward-model steps per tick, so a long traced run is
+            // minutes of compute on its own.
+            Console.WriteLine();
+            Console.WriteLine("== first bifurcation: speed 12.0 vs 15.82, startX 3300 ==");
+            foreach (var sp in new[] { 12f, 15.82f })
+            {
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  --- configured speed {0:F2} ---", sp));
+                var ctrl = new PredictiveDodge(50, true);
+                RunFight(ctrl, 70, maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: 3300f, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                    wingAccRunSpeed: sp, verbose: true);
+                Console.WriteLine();
             }
 
             // All threats, weak set, every opening: what still lands and from
