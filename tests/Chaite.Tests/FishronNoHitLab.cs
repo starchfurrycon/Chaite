@@ -1258,6 +1258,208 @@ namespace Chaite.Tests
         }
 
         /// <summary>
+        /// Model-predictive dodge: pick the control by rolling the forward model
+        /// forward and scoring the resulting clearance, instead of selecting a
+        /// branch from angle thresholds.
+        ///
+        /// This is the rewrite that thirty-six rounds of parameter search pointed
+        /// at. CorridorEscape decides by comparing the charge normal's components
+        /// against fixed thresholds (climbAbove, dashAim), and the consequence was
+        /// measured directly: its clean result exists only for horizontal speed
+        /// within about 0.1 px/tick of 12.0, and both documented wing speeds
+        /// (15.82 weak, 16.4 strong) sit in the collapsed region. A threshold rule
+        /// partitions the state space with planes and therefore cannot adapt to a
+        /// speed it was not tuned for; scoring candidate actions against the
+        /// predicted future can.
+        ///
+        /// The boss is treated as continuing along its current charge line at its
+        /// current speed, which is faithful because native AI_069 never writes
+        /// velocity during a charge (NPC.cs:49965-49987) -- a charge is a straight
+        /// run at constant speed, so linear extrapolation is exact for as long as
+        /// the state persists.
+        /// </summary>
+        private sealed class PredictiveDodge : IFishronController
+        {
+            private readonly int _horizon;
+            private readonly bool _allowDash;
+            private readonly int _dashCooldown;
+
+            private int _lastDashTick = -1000;
+
+            public PredictiveDodge(int horizon, bool allowDash = true)
+            {
+                _horizon = horizon;
+                _allowDash = allowDash;
+            }
+
+            public void Reset() => _lastDashTick = -1000;
+
+            public PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
+                PlayerSnapshot player, TargetSnapshot boss, FightWorld world)
+            {
+                var best = new PlayerControlFrame();
+                var bestScore = float.MinValue;
+
+                // Candidate actions: horizontal x vertical, plus the dash as a
+                // separate option rather than a rule.
+                var dirs = new[] { -1, 0, 1 };
+                var verts = new[] { -1, 0, 1 };
+                foreach (var dx in dirs)
+                {
+                    foreach (var dv in verts)
+                    {
+                        var c = new PlayerControlFrame
+                        {
+                            Left = dx < 0,
+                            Right = dx > 0,
+                            Down = dv > 0,
+                            Up = dv < 0,
+                        };
+                        if (dv < 0) c.Jump = true;
+                        var score = Rollout(in frame, boss, world, c, false);
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = c;
+                        }
+                    }
+                }
+
+                // The dash, scored the same way. Its i-frames are worth having but
+                // only if the predicted clearance is no worse, so it competes on
+                // the same scale rather than being forced.
+                if (_allowDash && frame.DashReady && frame.Dash.DashDelay >= 0 &&
+                    tick - _lastDashTick > _dashCooldown)
+                {
+                    foreach (var dx in new[] { -1, 1 })
+                    {
+                        var c = new PlayerControlFrame
+                        {
+                            Left = dx < 0,
+                            Right = dx > 0,
+                            Jump = true,
+                            Dash = true,
+                        };
+                        var score = Rollout(in frame, boss, world, c, true);
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = c;
+                            _lastDashTick = tick;
+                        }
+                    }
+                }
+
+                return best;
+            }
+
+            /// <summary>
+            /// Roll one candidate action forward and score it by the worst
+            /// clearance it produces, so the choice is governed by the closest
+            /// approach rather than by the final position.
+            /// </summary>
+            private float Rollout(in PlayerMotionFrame frame, TargetSnapshot boss,
+                FightWorld world, PlayerControlFrame first, bool dashing)
+            {
+                var f = frame;
+                var controls = first;
+                var worst = float.MaxValue;
+                var bvx = boss.Velocity.X;
+                var bvy = boss.Velocity.Y;
+                var bx = boss.Position.X;
+                var by = boss.Position.Y;
+                var bw = boss.Width * 0.5f;
+                var bh = boss.Height * 0.5f;
+
+                // THE THREAT MODEL. Linear extrapolation of the live velocity is
+                // exact DURING a charge, because native AI_069 never writes
+                // velocity in the dash states. But it is badly wrong at the moment
+                // a charge BEGINS: the boss is still parked and its velocity is
+                // zero, so the rollout sees no threat at all and walks into the
+                // charge it is about to receive. That is why the first version
+                // scored 155 contacts at the true wing speed while barely helping
+                // at all.
+                //
+                // So when the boss is not already moving it is assumed to begin
+                // charging AT THE PLAYER, which is exactly what the lock does
+                // (velocity = Normalize(player.Center - center) * num7). Only the
+                // DIRECTION is taken from the current geometry; the speed is the
+                // documented charge speed. That makes the rollout see the incoming
+                // charge before it starts rather than after.
+                var moving = Math.Abs(bvx) + Math.Abs(bvy) > 0.5f;
+                if (!moving)
+                {
+                    var pcx = frame.Position.X + frame.Width * 0.5f;
+                    var pcy = frame.Position.Y + frame.Height * 0.5f;
+                    var dx = pcx - (bx + bw);
+                    var dy = pcy - (by + bh);
+                    var len = (float)Math.Sqrt(dx * dx + dy * dy);
+                    if (len > 0.001f)
+                    {
+                        bvx = dx / len * ChargeSpeed;
+                        bvy = dy / len * ChargeSpeed;
+                    }
+                }
+
+                for (var i = 0; i < _horizon; i++)
+                {
+                    if (!PlayerForwardModel.TryAdvance(in f, in controls, out var nf,
+                            out _))
+                        break;
+                    f = nf;
+
+                    // Arena clamp, mirroring RunFight, so a candidate cannot score
+                    // well by running through a wall.
+                    if (f.Position.X < world.BandLeft)
+                    {
+                        f.Position = new Vec2(world.BandLeft, f.Position.Y);
+                        f.Velocity = new Vec2(0f, f.Velocity.Y);
+                    }
+                    else if (f.Position.X + f.Width > world.BandRight)
+                    {
+                        f.Position = new Vec2(world.BandRight - f.Width,
+                            f.Position.Y);
+                        f.Velocity = new Vec2(0f, f.Velocity.Y);
+                    }
+                    if (f.Position.Y + f.Height > world.FloorY)
+                    {
+                        f.Position = new Vec2(f.Position.X, world.FloorY - f.Height);
+                        f.Velocity = new Vec2(f.Velocity.X, 0f);
+                    }
+
+                    bx += bvx;
+                    by += bvy;
+
+                    // Separating-axis clearance between the two boxes: positive
+                    // means no overlap, and the smallest axis gap is how close a
+                    // touch is.
+                    var px = f.Position.X + f.Width * 0.5f;
+                    var py = f.Position.Y + f.Height * 0.5f;
+                    var gapX = Math.Abs(px - (bx + bw)) - (f.Width * 0.5f + bw);
+                    var gapY = Math.Abs(py - (by + bh)) - (f.Height * 0.5f + bh);
+                    var clear = Math.Max(gapX, gapY);
+                    if (clear < worst) worst = clear;
+
+                    // Hold the horizontal input for the whole horizon: this is a
+                    // decision about which way to commit, not a one-tick nudge.
+                    controls = new PlayerControlFrame
+                    {
+                        Left = first.Left,
+                        Right = first.Right,
+                        Up = first.Up,
+                        Down = first.Down,
+                        Jump = first.Up,
+                    };
+                }
+
+                // Prefer the action that keeps the most clearance, and break ties
+                // toward staying airborne (wing time is cheap, the floor is not).
+                var wing = f.Flight.WingTime;
+                return worst + wing * 0.01f;
+            }
+        }
+
+        /// <summary>
         /// Two policies, one per segment of the guide's 5+1 cycle.
         ///
         /// Charges (hover states 0/5/10 and the dash states) are dodged with an
@@ -4917,6 +5119,113 @@ namespace Chaite.Tests
                 }
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    speed={0,5:F1} |{1} | sum={2,5} clean={3}/8",
+                    sp, cells, total, clean));
+            }
+
+            // PHASE THREE SPEED SENSITIVITY -- an owed check. The phase-three
+            // result (pure escape gives 0 contacts at all eight openings) came from
+            // the counter-dash comparison, which ran at the lab's DEFAULT speed,
+            // never at a documented wing speed. Phase one's clean result turned
+            // out to exist only inside a window narrower than 0.1 px/tick, so the
+            // same question has to be asked of phase three before that result can
+            // be relied on. If it is equally narrow it has to be withdrawn too.
+            Console.WriteLine();
+            Console.WriteLine("== PHASE 3 speed sensitivity (12% HP, escape aim, " +
+                "weak wings) ==");
+            foreach (var sp in new[] { 0f, 6.75f, 11.9f, 12f, 12.1f, 15.82f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 12000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: sp == 0f ? 12f : sp,
+                        startBossLife: 78000f * 0.12f);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                    {
+                        if (!l.Contains("src boss")) continue;
+                        n++;
+                    }
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    speed={0,5:F2} |{1} | sum={2,5} clean={3}/8",
+                    sp == 0f ? 12f : sp, cells, total, clean));
+            }
+
+            // MODEL-PREDICTIVE DODGE. The rewrite the search pointed at. Tested at
+            // BOTH documented wing speeds, because a controller that only works at
+            // one speed is the exact failure being replaced.
+            Console.WriteLine();
+            Console.WriteLine("== PREDICTIVE dodge (weak wings), speeds x horizons ==");
+            foreach (var sp in new[] { 12f, 15.82f })
+            {
+                foreach (var hz in new[] { 20, 35, 50 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new PredictiveDodge(hz, true);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: sp);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    speed={0,5:F2} horizon={1,3} |{2} | sum={3,5} " +
+                        "clean={4}/8", sp, hz, cells, total, clean));
+                }
+            }
+
+            Console.WriteLine("== PREDICTIVE dodge speed response (horizon 50) ==");
+            foreach (var sp in new[] { 10f, 12f, 14f, 15.82f, 18f, 22f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new PredictiveDodge(50, true);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: sp);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    speed={0,5:F2} |{1} | sum={2,5} clean={3}/8",
                     sp, cells, total, clean));
             }
 
