@@ -54,6 +54,13 @@ param(
     # Skip preparing and use this already-prepared run directory.
     [string]$ReuseRun,
 
+    # A reviewed formula route runs the circuit that already exists in
+    # src/Chaite.Core/FishronWingScript.cs instead of the generic planner. The
+    # probe only accepts it on the monitor phase, by its own validation.
+    [ValidateSet('fishron-fairy-wing', 'fishron-strong-wing', 'fishron-trusty-chillet',
+        'fishron-trusty-chillet-ignis', 'fishron-lilith-wolf')]
+    [string]$FormulaRoute,
+
     [switch]$SkipBeam,
     [switch]$StopOnHit
 )
@@ -111,6 +118,7 @@ $arguments = @(
 )
 if ($SkipBeam) { $arguments += '-skipbeam' }
 if ($StopOnHit) { $arguments += '-stoponhit' }
+if ($FormulaRoute) { $arguments += @('-formularoute', $FormulaRoute) }
 
 if ($RouteFile) {
     $resolved = [IO.Path]::GetFullPath($RouteFile)
