@@ -1225,13 +1225,15 @@ namespace Chaite.Tests
             private readonly int _dashAtTimer;
             private readonly bool _climb;
             private readonly float _climbAbove;
+            private readonly float _dashAim;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
 
             public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
-                bool climb = false, float lead = 0f, float climbAbove = 0.75f)
+                bool climb = false, float lead = 0f, float climbAbove = 0.75f,
+                float dashAim = 0.85f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1239,6 +1241,7 @@ namespace Chaite.Tests
                 _climb = climb;
                 _lead = lead;
                 _climbAbove = climbAbove;
+                _dashAim = dashAim;
             }
 
             public void Reset()
@@ -1376,6 +1379,43 @@ namespace Chaite.Tests
                 // earlier. The three px must come from somewhere else.
                 if (escapeDown) controls.Down = true;
                 else controls.Up = true;
+
+                // The dash's 172 px is HORIZONTAL, so it only helps if it is
+                // taken towards the side being escaped. Steering body-left or
+                // body-right purely to get away from the boss can therefore
+                // spend the dash along the charge line, where it buys no
+                // clearance at all, or even straight into the corridor.
+                //
+                // Since the normal is (-uy, ux), its horizontal component is
+                // -uy, so the horizontal direction that increases the escape is
+                // sign(-uy * escapeDir). Splitting the two sources this way is
+                // what closes the arithmetic for the steep family:
+                //
+                //   dash  172 * |uy|   (a 37.9 deg charge: 172*0.615 = 105.8)
+                //   climb  46 * |ux|   (about ten ticks at 4.6:  46*0.788 = 36.2)
+                //   total                       142.0  vs requirement 108
+                //
+                // Neither term alone clears it -- the dash alone is 105.8 and
+                // the climb alone is 36.2 -- but together they do, and only if
+                // the dash is aimed at the escape side rather than merely away
+                // from the boss.
+                // ...and it is only worth aiming on a STEEP charge. The dash
+                // delivers 172*|uy| of clearance and the climb 46*|ux|, so the
+                // two terms swap dominance at |ux| = 0.79 (about 38 deg).
+                // Steering horizontally on a shallow charge spends the dash
+                // where it buys almost nothing while pulling the player off the
+                // vertical line the climb actually needs: applying it to charge
+                // 8 of the run (15.2 deg, requirement 91) dropped its clearance
+                // from a passing value to 59.2 and turned a clean charge into
+                // the run's first contact. Charge 5 (33.7 deg) went the other
+                // way, 142.8 -> 195.6. The gate therefore sits at |ux| < 0.85,
+                // where the dash term starts to dominate.
+                if (Math.Abs(_ux.X) < _dashAim && Math.Abs(_ux.Y) > 0.15f)
+                {
+                    var dashToward = -_ux.Y * escapeDir > 0f;
+                    controls.Right = dashToward;
+                    controls.Left = !dashToward;
+                }
 
                 // Wing ascent and the dash are two independent sources of
                 // perpendicular displacement and they answer opposite charges.
@@ -1836,6 +1876,24 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "  jumpSpeed={0,5:F2} ({1,-16}) firstHit={2,5} charges={3,3}",
                     js, tag, fight.Ticks, fight.Charges));
+            }
+            Console.WriteLine();
+            // The dash is horizontal, so aiming it at the escape side is worth
+            // doing only when the horizontal term dominates. This sweep finds
+            // where that is, using first contact rather than the eighth as the
+            // metric (see the maxHits note below).
+            Console.WriteLine("== dash-alignment gate (aim the dash at the escape) ==");
+            foreach (var gate in new[] { 0f, 0.75f, 0.80f, 0.85f, 0.90f, 1.01f })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, gate), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  gate|ux|<{0:F2} firstHit={1,5} charges={2,3}",
+                    gate, fight.Ticks, fight.Charges));
             }
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
