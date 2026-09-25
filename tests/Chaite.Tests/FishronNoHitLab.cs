@@ -815,7 +815,8 @@ namespace Chaite.Tests
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
             float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false,
-            float wingAccRunSpeed = -1f, float startBossLife = 0f)
+            float wingAccRunSpeed = -1f, float startBossLife = 0f,
+            float startAltitude = 0f, float startBossX = 0f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -846,6 +847,20 @@ namespace Chaite.Tests
             // reached phase 3 at all. Setting the life directly starts the fight
             // in the requested phase.
             if (startBossLife > 0f) world.BossLife = startBossLife;
+            if (startBossX > 0f) world.BossX = startBossX;
+            // Starting altitude. FishronPlayerStart always places the player
+            // standing on the floor, and every sweep in this lab has inherited
+            // that, so the initial height has never been a variable. It matters
+            // because the phase-one failure was diagnosed as a shortage of TIME
+            // to climb out of an incoming horizontal charge: starting higher
+            // reduces that climb directly, so if the fight is winnable at all
+            // this is where it would show.
+            if (startAltitude > 0f)
+            {
+                frame.Position = new Vec2(frame.Position.X,
+                    frame.Position.Y - startAltitude);
+                frame.Grounded = false;
+            }
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -1238,6 +1253,86 @@ namespace Chaite.Tests
             void Reset();
             PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
                 PlayerSnapshot player, TargetSnapshot boss, FightWorld world);
+        }
+
+        /// <summary>
+        /// Two policies, one per segment of the guide's 5+1 cycle.
+        ///
+        /// Charges (hover states 0/5/10 and the dash states) are dodged with an
+        /// alternating vertical leg -- the W -- while the sharknado segment
+        /// (states 2 and 3) is handled purely by pulling horizontal distance, as
+        /// the guide's 拉开水平距离远离鲨鱼龙卷即可 describes. Spending the tornado
+        /// window on horizontal separation rather than on climbing also preserves
+        /// wing time for the charges that follow.
+        /// </summary>
+        private sealed class TwoSegment : IFishronController
+        {
+            private readonly int _period;
+            private int _lastCharge = int.MinValue;
+            private int _index;
+
+            public TwoSegment(int period) => _period = period;
+
+            public void Reset()
+            {
+                _lastCharge = int.MinValue;
+                _index = 0;
+            }
+
+            private static bool IsChargeSegment(int state) =>
+                state == 0 || state == 1 || state == 5 || state == 6 ||
+                state == 10 || state == 11;
+
+            public PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
+                PlayerSnapshot player, TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                var px = frame.Position.X + frame.Width * 0.5f;
+                var py = frame.Position.Y + frame.Height * 0.5f;
+                var bx = boss.Position.X + boss.Width * 0.5f;
+
+                if (!IsChargeSegment(world.State))
+                {
+                    // Tornado or projectile segment: the boss cannot body-check,
+                    // so take horizontal distance and do not burn wing time.
+                    controls.Right = bx < px;
+                    controls.Left = bx >= px;
+                    var alt = world.FloorY - py;
+                    if (alt < 60f)
+                    {
+                        controls.Up = true;
+                        controls.Jump = true;
+                    }
+                    else if (alt > 200f)
+                    {
+                        controls.Down = true;
+                    }
+                    return controls;
+                }
+
+                if (world.AttackCounter != _lastCharge)
+                {
+                    _lastCharge = world.AttackCounter;
+                    _index++;
+                }
+                var goDown = _index % _period == 1 || _index % _period == 2;
+
+                controls.Right = bx < px;
+                controls.Left = bx >= px;
+                var altitude = world.FloorY - py;
+                if (goDown)
+                {
+                    if (altitude > 80f) controls.Down = true;
+                    else controls.Up = true;
+                }
+                else if (altitude < 260f)
+                {
+                    controls.Up = true;
+                    controls.Jump = true;
+                }
+                else controls.Down = true;
+                return controls;
+            }
         }
 
         /// <summary>
@@ -4260,6 +4355,178 @@ namespace Chaite.Tests
                         "    wing={0,5:F2} period={1} |{2} | sum={3,5} clean={4}/8",
                         wing, period, cells, total, clean));
                 }
+            }
+
+            // TWO-SEGMENT CYCLE. The guide describes the phase-one cycle as
+            // "5+1+5+1" and applies a DIFFERENT action to each part: the charges
+            // are dodged with a W-shaped path, while for the tornado it says
+            // 然后拉开水平距离远离鲨鱼龙卷即可 -- pull horizontal distance and the
+            // tornado is a non-event. Every controller tried so far applies ONE
+            // policy across the whole fight, which cannot express that.
+            //
+            // In this lab the segments are identifiable from the boss state:
+            // charges are the hover states 0/5/10 (plus the dash states), the
+            // sharknado is state 2 then 3, and phase two's projectile attacks are
+            // 7 (bubble spray) and 8 (Cthulhunado). During 2/3 the boss is
+            // stationary and harmless on its own, so the player should spend that
+            // time purely on horizontal separation and not waste wing time
+            // climbing.
+            Console.WriteLine();
+            Console.WriteLine("== two-segment cycle: W on charges, horizontal on " +
+                "tornado (weak) ==");
+            foreach (var wing in new[] { 0f, 12f, 15.82f })
+            {
+                foreach (var period in new[] { 2, 3 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new TwoSegment(period);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: wing);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    wing={0,5:F2} period={1} |{2} | sum={3,5} clean={4}/8",
+                        wing, period, cells, total, clean));
+                }
+            }
+
+            // STARTING ALTITUDE. The phase-one failure was closed arithmetically
+            // as a shortage of time to climb clear of an incoming horizontal
+            // charge -- about 18 ticks available against about 31 needed. Every
+            // sweep so far started the player standing on the floor, because
+            // FishronPlayerStart always does, so the initial height was never
+            // varied. If the shortage is real then starting higher should relieve
+            // it in proportion, and the best-known controller (speed 12, lead
+            // 240, aim 0.85) is the right thing to apply it to.
+            Console.WriteLine();
+            Console.WriteLine("== starting altitude sweep (weak, best-known ctrl) ==");
+            foreach (var h0 in new[] { 0f, 60f, 120f, 180f, 240f, 320f, 420f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.85f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: 12f, startAltitude: h0);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    alt0={0,4:F0} |{1} | sum={2,5} clean={3}/8",
+                    h0, cells, total, clean));
+            }
+
+            Console.WriteLine("== starting altitude FINE sweep (weak, " +
+                "best-known ctrl) ==");
+            var bestAlt = float.NaN;
+            var bestClean = -1;
+            foreach (var h0 in new[] { 200f, 220f, 240f, 260f, 280f, 300f, 340f,
+                360f, 380f, 400f, 420f, 440f, 460f, 480f })
+            {
+                foreach (var lead in new[] { 200f, 240f, 280f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, lead, 0, true, 0f,
+                            0.88f, 0.85f, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: 12f, startAltitude: h0);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    if (clean >= 6 || total <= 12)
+                    {
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    alt0={0,4:F0} lead={1,3:F0} |{2} | sum={3,4} " +
+                            "clean={4}/8", h0, lead, cells, total, clean));
+                    }
+                    if (clean > bestClean)
+                    {
+                        bestClean = clean;
+                        bestAlt = h0;
+                    }
+                }
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    best clean={0}/8 at alt0={1:F0}", bestClean, bestAlt));
+
+            // BOSS SPAWN X. After the altitude sweep the two lowest openings still
+            // carry a small residual (3 contacts at 2400, 1 at 2800) while 3300
+            // and everything above it are completely clean. A residual that
+            // depends on where the player starts, and that survives every
+            // controller change, points at the INITIAL GEOMETRY rather than at the
+            // control law. BossX is hard-coded to 2600 in RunFight, which is close
+            // to the 2400 and 2800 openings and far from the rest, so this varies
+            // the boss spawn instead of the player.
+            Console.WriteLine();
+            Console.WriteLine("== boss spawn X sweep at the two residual openings ==");
+            foreach (var bx0 in new[] { 2200f, 2600f, 3000f, 3400f, 4000f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                    4300f, 4800f, 5300f, 5800f })
+                {
+                    var ctrl = new CorridorEscape(true, 240f, 0, true, 0f, 0.88f,
+                        0.85f, 0, WeakWings().ClimbCap, WeakWings().HoverDescend);
+                    var run = RunFight(ctrl, 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        wingAccRunSpeed: 12f, startAltitude: 340f,
+                        startBossX: bx0);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    bossX0={0,5:F0} |{1} | sum={2,4} clean={3}/8",
+                    bx0, cells, total, clean));
             }
 
             // All threats, weak set, every opening: what still lands and from
