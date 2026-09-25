@@ -180,6 +180,14 @@ namespace Chaite.Tests
                 WingTime = 150f,
                 Jump = jump,
                 Flight = flight,
+                // The acceptance loadout wears a Shield of Cthulhu, and the
+                // rollout begins between dashes. Both facts have to be declared
+                // on the frame: without them PlayerForwardModel takes the
+                // ordinary step for a tick that asked to dash, which is why
+                // every dash sweep in this lab used to return one set of
+                // figures regardless of timing.
+                DashIdentity = DashEquipmentIdentity.ShieldOfCthulhuItem3097,
+                DashReady = true,
             };
         }
 
@@ -722,6 +730,7 @@ namespace Chaite.Tests
             var chargePlayer = new Vec2(0f, 0f);
             var hadCharge = false;
             var maxPerpendicular = 0f;
+            var closestPerpendicular = float.MaxValue;
             var chargeOrdinal = 1;
             var chargeStartTick = 0;
             var chargeMaxPerpendicular = 0f;
@@ -765,9 +774,18 @@ namespace Chaite.Tests
                         next.Position.Y);
                     next.Velocity = new Vec2(0f, next.Velocity.Y);
                 }
+                var perpendicular = 0f;
+                var numerator = 0f;
                 frame = next;
 
                 var wasDash = IsDashState(world.State);
+                // A new charge commits its line on this tick, and the line is
+                // what the measurement below is taken against, so it is
+                // established before anything is measured. Doing it the other
+                // way -- measuring with the new direction but the previous
+                // origin -- reported a perpendicular of zero at the closest
+                // approach for every strategy, which is not a measurement at
+                // all.
                 AdvanceBoss(world, frame);
                 var isDash = IsDashState(world.State);
                 if (isDash && !wasDash)
@@ -775,12 +793,11 @@ namespace Chaite.Tests
                     if (chargeOrdinal > 1)
                         chargeEvents.Add(string.Format(
                             CultureInfo.InvariantCulture,
-                            "charge {0,3} start {1,5} from ({2:F0},{3:F0}) " +
-                            "vec ({4:F1},{5:F1}) player ({6:F0},{7:F0}) " +
-                            "maxPerp {8,6:F1} perpAtClosest {9,6:F1} hit={10}",
-                            chargeOrdinal - 1, chargeStartTick, chargeOrigin.X,
-                            chargeOrigin.Y, chargeLine.X, chargeLine.Y,
-                            chargePlayer.X, chargePlayer.Y,
+                            "charge {0,3} start {1,5} angle {2,5:F1}deg " +
+                            "maxPerp {3,6:F1} perpAtClosest {4,6:F1} hit={5}",
+                            chargeOrdinal - 1, chargeStartTick,
+                            Math.Atan2(Math.Abs(chargeLine.Y),
+                                Math.Abs(chargeLine.X)) * 180.0 / Math.PI,
                             chargeMaxPerpendicular, chargeClosestPerpendicular,
                             chargeHit));
                     chargeOrdinal++;
@@ -790,46 +807,52 @@ namespace Chaite.Tests
                     chargePlayer = new Vec2(frame.Position.X + frame.Width * 0.5f,
                         frame.Position.Y + frame.Height * 0.5f);
                     chargeMaxPerpendicular = 0f;
-                    chargeClosestPerpendicular = float.MaxValue;
+                    chargeClosestDistance = float.MaxValue;
+                    chargeClosestPerpendicular = 0f;
                     chargeHit = false;
                     hadCharge = true;
                 }
-                var perpendicular = 0f;
                 if (hadCharge && isDash)
                 {
+                    var playerX = frame.Position.X + frame.Width * 0.5f;
+                    var playerY = frame.Position.Y + frame.Height * 0.5f;
                     var l = (float)Math.Sqrt(chargeLine.X * chargeLine.X +
                         chargeLine.Y * chargeLine.Y);
                     if (l > 0.0001f)
                     {
                         var ux = chargeLine.X / l;
                         var uy = chargeLine.Y / l;
-                        var px = frame.Position.X + frame.Width * 0.5f -
-                            chargeOrigin.X;
-                        var py = frame.Position.Y + frame.Height * 0.5f -
-                            chargeOrigin.Y;
+                        // Signed projection of the player onto the line, and
+                        // the perpendicular distance, both measured from the
+                        // line's own origin.
+                        var px = playerX - chargeOrigin.X;
+                        var py = playerY - chargeOrigin.Y;
+                        numerator = px * ux + py * uy;
                         perpendicular = Math.Abs(px * -uy + py * ux);
                     }
-                }
-                if (isDash && perpendicular > maxPerpendicular)
-                    maxPerpendicular = perpendicular;
-                if (isDash)
-                {
                     if (perpendicular > chargeMaxPerpendicular)
                         chargeMaxPerpendicular = perpendicular;
-                    var bossDistance = (float)Math.Sqrt(
-                        (frame.Position.X + frame.Width * 0.5f -
-                            (world.BossX + BossWidth * 0.5f)) *
-                        (frame.Position.X + frame.Width * 0.5f -
-                            (world.BossX + BossWidth * 0.5f)) +
-                        (frame.Position.Y + frame.Height * 0.5f -
-                            (world.BossY + BossHeight * 0.5f)) *
-                        (frame.Position.Y + frame.Height * 0.5f -
-                            (world.BossY + BossHeight * 0.5f)));
-                    if (bossDistance < chargeClosestDistance)
+                    if (perpendicular > maxPerpendicular)
+                        maxPerpendicular = perpendicular;
+                    // The boss's projection onto the player's path. The closest
+                    // approach is where the two projections meet, not where the
+                    // two bodies happen to be nearest each other in general, so
+                    // this is the figure a dodge has to win.
+                    if (l > 0.0001f)
                     {
-                        chargeClosestDistance = bossDistance;
-                        chargeClosestPerpendicular = perpendicular;
+                        var bossX = world.BossX + BossWidth * 0.5f;
+                        var bossY = world.BossY + BossHeight * 0.5f;
+                        var bossS = ((bossX - chargeOrigin.X) * chargeLine.X +
+                            (bossY - chargeOrigin.Y) * chargeLine.Y) / l;
+                        var approach = Math.Abs(bossS - numerator);
+                        if (approach < chargeClosestDistance)
+                        {
+                            chargeClosestDistance = approach;
+                            chargeClosestPerpendicular = perpendicular;
+                        }
                     }
+                    if (chargeClosestPerpendicular < closestPerpendicular)
+                        closestPerpendicular = chargeClosestPerpendicular;
                 }
                 if (isDash && !wasDash && verbose)
                     Console.WriteLine(string.Format(
@@ -885,6 +908,7 @@ namespace Chaite.Tests
                 HitLog = world.HitLog,
                 Charges = world.ChargeCount,
                 MaxPerpendicular = maxPerpendicular,
+                ClosestPerpendicular = closestPerpendicular,
                 ChargeLog = chargeEvents,
             };
         }
@@ -897,6 +921,14 @@ namespace Chaite.Tests
             public List<string> HitLog = new List<string>();
             public int Charges;
             public float MaxPerpendicular;
+            /// <summary>
+            /// The smallest perpendicular clearance measured at the moment of
+            /// closest approach, over every charge. This is the figure that
+            /// decides a hit; the peak clearance over a whole charge does not,
+            /// and reading the peak instead was the error that made an earlier
+            /// round of this lab look far healthier than it was.
+            /// </summary>
+            public float ClosestPerpendicular;
             public List<string> ChargeLog = new List<string>();
         }
 
@@ -905,6 +937,134 @@ namespace Chaite.Tests
             void Reset();
             PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
                 PlayerSnapshot player, TargetSnapshot boss, FightWorld world);
+        }
+
+        /// <summary>How the dash is aimed on a vertical beat.
+        ///
+        /// There is no choice here, and that is the point. `PlayerControlFrame`
+        /// derives `Direction` from Left/Right, so the only dash this frame can
+        /// ask for is one along its own horizontal input. The engine's own rule
+        /// agrees: `DoCommonDashHandle` writes the dash direction as the player's
+        /// facing, flipped only when the input opposes it, and the dash velocity
+        /// itself is `velocity.X` -- horizontal, never vertical.
+        ///
+        /// So "dash up" and "dash down" are not dashes in a vertical direction.
+        /// They are a horizontal dash held together with a vertical input, and
+        /// the compound motion is the diagonal escape. That is exactly what makes
+        /// a vertical beat able to clear a charge line: the vertical input alone
+        /// leaves parallel to the line, and the dash is what adds the
+        /// perpendicular component.
+        /// </summary>
+        private enum DashAim
+        {
+            /// <summary>Dash along the horizontal run input, away from the Boss,
+            /// while the vertical input supplies the perpendicular component.
+            /// This is the only aim the engine can express.</summary>
+            Flee,
+        }
+
+        /// <summary>The reviewed three-beat cycle, as an explicit script.
+        ///
+        /// The owner's reading of AI_069 is that a charge commits its direction on
+        /// the state-entry tick and never re-aims, so once it is locked the whole
+        /// dodge is "leave the line". The cycle spends one dash on each beat:
+        ///
+        /// <code>
+        ///   beat 0  run away horizontally   + dash away
+        ///   beat 1  ascend                  + dash
+        ///   beat 2  descend                 + dash
+        /// </code>
+        ///
+        /// The ascend and descend beats are the reason a Shield is in the
+        /// loadout: a vertical beat alone leaves along the charge line and never
+        /// clears it, but a vertical beat WITH a dash moves diagonally, and the
+        /// diagonal is what clears the line. This controller exists to test that
+        /// reading rather than assert it -- it is a script, it does not search,
+        /// and its result is whatever the fight reports.
+        /// </summary>
+        private sealed class BeatCycleDodge : IFishronController
+        {
+            private readonly bool _useDash;
+            private readonly DashAim _aim;
+            private readonly int _dashAtTimer;
+            private int _beat;
+            private int _lastState = int.MinValue;
+            private bool _dashIssued;
+
+            public BeatCycleDodge(bool useDash, DashAim aim, int dashAtTimer = 1)
+            {
+                _useDash = useDash;
+                _aim = aim;
+                _dashAtTimer = dashAtTimer;
+            }
+
+            public void Reset()
+            {
+                _beat = 0;
+                _lastState = int.MinValue;
+                _dashIssued = false;
+            }
+
+            public PlayerControlFrame Decide(int tick,
+                in PlayerMotionFrame frame, PlayerSnapshot player,
+                TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                var dashing = IsDashState(world.State);
+                if (dashing && !IsDashState(_lastState))
+                {
+                    // A new charge: it has just committed its line, so this is
+                    // the beat the cycle advances on.
+                    _beat++;
+                    _dashIssued = false;
+                }
+                _lastState = world.State;
+
+                // Horizontal input always points away from the Boss: it is both
+                // the run direction and, on the engine's own terms, the thing
+                // that aims a dash. A remembered Sharknado column outranks the
+                // Boss because it does not move.
+                var away = world.Tornadoes.Count > 0 &&
+                    Math.Abs(player.Center.X - world.Tornadoes[0].X) < 240f
+                    ? (world.Tornadoes[0].X >= player.Center.X ? -1 : 1)
+                    : (boss.Center.X >= player.Center.X ? -1 : 1);
+                if (away > 0) controls.Right = true;
+                else controls.Left = true;
+
+                if (!dashing)
+                {
+                    // Between charges: hold altitude on the wings rather than
+                    // standing on the floor, so the next charge starts from the
+                    // air where the cycle expects it.
+                    if (!frame.Grounded) controls.Up = true;
+                    return controls;
+                }
+
+                switch (_beat % 3)
+                {
+                    case 1:
+                        controls.Up = true;
+                        break;
+                    case 2:
+                        controls.Down = true;
+                        break;
+                }
+
+                // One dash per charge, fired at the locked-in tick rather than
+                // early: the impulse decays over eighteen ticks, so a dash spent
+                // before the charge commits is spent before the closest approach.
+                // The engine also will not take a request while its own cooldown
+                // is running, and this controller does not pretend otherwise --
+                // it asks and lets the model answer.
+                if (_useDash && !_dashIssued && frame.DashReady &&
+                    frame.Dash.DashDelay >= 0 &&
+                    world.StateTimer >= _dashAtTimer)
+                {
+                    controls.Dash = true;
+                    _dashIssued = true;
+                }
+                return controls;
+            }
         }
 
         // ------------------------------------------------------------------ lab
@@ -921,6 +1081,33 @@ namespace Chaite.Tests
             foreach (var line in result.HitLog) Console.WriteLine("  " + line);
             Console.WriteLine();
             RunClimbProbe();
+            Console.WriteLine();
+            Console.WriteLine("== reviewed three-beat cycle ==");
+            Console.WriteLine("  beat 0 run away + dash, beat 1 ascend + dash, " +
+                "beat 2 descend + dash");
+            foreach (var aim in new[] { DashAim.Flee })
+                foreach (var dashAt in new[] { 0, 1, 3, 6, 9, 12, 16 })
+                    foreach (var useDash in new[] { false, true })
+                    {
+                        var fight = RunFight(new BeatCycleDodge(useDash, aim, dashAt),
+                            6000, bossOnly: true);
+                        Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                            "  aim={0,-6} dashAtTimer={1,2} dash={2,-5} " +
+                            "ticks={3,5} hits={4,4} charges={5,3} " +
+                            "perpAtClosest={6,6:F1} maxPerp={7,6:F1} refusal={8}",
+                            aim, dashAt, useDash, fight.Ticks, fight.Hits,
+                            fight.Charges, fight.ClosestPerpendicular,
+                            fight.MaxPerpendicular, fight.Refusal));
+                    }
+            Console.WriteLine();
+            Console.WriteLine("== one charge, tick by tick (dash on the lock tick) ==");
+            var traced = RunFight(new BeatCycleDodge(true, DashAim.Flee, 1), 6000,
+                trace: true, traceTicks: 72, maxHits: 3, bossOnly: true);
+            Console.WriteLine("  hits=" + traced.Hits + " ticks=" + traced.Ticks);
+            foreach (var line in traced.ChargeLog)
+                Console.WriteLine("  " + line);
+            foreach (var line in traced.HitLog)
+                Console.WriteLine("  " + line);
             Console.WriteLine();
             Console.WriteLine("== dodge sweep (lead ticks before charge) ==");
             foreach (var lead in new[] { 0, 5, 10, 15, 20, 25, 30, 40, 60, 120 })
