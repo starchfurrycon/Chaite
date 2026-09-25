@@ -144,6 +144,10 @@ namespace Chaite.Tests
             public float PeakHorizontalSpeed;
             /// <summary>Ticks where the arena clamp fired, see FightResult.</summary>
             public int BandClampTicks;
+            /// <summary>Counter-dash geometry, see FightResult.</summary>
+            public int DashTicks;
+            public int DashStrikes;
+            public float MinDashGap = float.MaxValue;
             // Research switches. Turning a threat class off is how the lab
             // attributes a remaining hit to a mechanism instead of to "the
             // boss" in general.
@@ -199,7 +203,7 @@ namespace Chaite.Tests
                 CanRocket = false,
                 RocketRelease = true,
             };
-            return new PlayerMotionFrame
+            var start = new PlayerMotionFrame
             {
                 Position = new Vec2(x, floorY - 42f),
                 Velocity = new Vec2(0f, 0f),
@@ -231,6 +235,26 @@ namespace Chaite.Tests
                 DashIdentity = DashEquipmentIdentity.ShieldOfCthulhuItem3097,
                 DashReady = true,
             };
+            // THE DASH STATE ITSELF. DashReady and DashIdentity alone are not
+            // enough, and this cost a great deal of confusion before it was found.
+            // PlayerForwardModel only consults those two when the frame carries no
+            // known dash state, and it then BUILDS one via
+            // TryCreateFrameReadyState -- which requires a non-zero direction. A
+            // controller that steers purely vertically leaves Direction at zero, the
+            // build fails, and TryAdvance returns a Dashing refusal, which RunFight
+            // turns into an immediate end of fight. So every configuration in this
+            // lab that asked to dash without also holding a horizontal direction
+            // silently produced a truncated run that reported no dash ticks at all:
+            // the counter-dash grid returned a flat contact count on every row, and
+            // a forced-dash probe could not register a single dash tick in two
+            // thousand. Installing a real ready state up front makes the dash
+            // reachable regardless of the controller's chosen direction.
+            if (EyeShieldDashMotion.TryCreateFrameReadyState(
+                    DashEquipmentIdentity.ShieldOfCthulhuItem3097, 1,
+                    start.Velocity.X, start.Velocity.Y, start.AccRunSpeed,
+                    start.MaxRunSpeed, out var dashState))
+                start.Dash = dashState;
+            return start;
         }
 
         private static PlayerSnapshot PlayerView(in PlayerMotionFrame frame,
@@ -912,18 +936,24 @@ namespace Chaite.Tests
                 // The dash's contact immunity. Native sets eocDash = 15 when a
                 // Shield of Cthulhu dash starts (Player.cs:21641) and the NPC
                 // collision loop skips entirely while eocDash > 0
-                // (Player.cs:31602), so a dash INTO the boss cannot be hit. The
-                // official wiki states the same thing as the core phase-three
-                // survival mechanic: "the Shield of Cthulhu can be used to great
-                // effect, providing brief invincibility frames when dashing into
-                // him".
+                // (Player.cs:31602). The official wiki states the same thing as the
+                // core phase-three survival mechanic: "the Shield of Cthulhu can be
+                // used to great effect, providing brief invincibility frames when
+                // dashing into him".
                 //
-                // ImmuneTicks was declared, decremented and gated on, but never
-                // SET, so this whole mechanic was dead code and every contact
-                // registered regardless. That is why a pure perpendicular-escape
-                // controller could never reach zero: the escape it was missing
-                // was not a geometric one.
-                if (frame.Dashing && !FishronDashImmunityDisabled) world.ImmuneTicks = 15;
+                // CORRECTION (owner, and it matters): the i-frame comes from
+                // actually STRIKING the NPC body, not from dashing as such. A dash
+                // grants no protection against projectiles, and it only protects
+                // while the contact lasts. The previous form here set ImmuneTicks
+                // on ANY dashing tick, which handed the player free immunity for 15
+                // ticks per dash regardless of whether anything was hit -- that is
+                // why dashing INTO the boss measured as catastrophic (1213 contacts
+                // in phase three) while never actually being modelled correctly.
+                //
+                // The grant therefore moved to the contact test below, where it
+                // belongs. ImmuneTicks was once declared, decremented and gated on
+                // but never SET at all, so the whole mechanic was dead code; the
+                // current fix must not swing back to handing it out for free.
                 var playerView = PlayerView(in frame, world);
                 var bossView = BossView(world);
                 var controls = controller.Decide(world.Tick, in frame,
@@ -1180,16 +1210,53 @@ namespace Chaite.Tests
                         isDash ? numerator : 0f, requiredClearance));
                 AdvanceThreats(world, frame);
 
-                if (world.BossContactEnabled && world.ImmuneTicks == 0 &&
+                var overlapping = world.BossContactEnabled &&
                     Overlaps(frame.Position, frame.Width, frame.Height,
                         new Vec2(world.BossX, world.BossY), BossWidth,
-                        BossHeight))
+                        BossHeight);
+                // COUNTER-DASH GEOMETRY DIAGNOSTIC. The counter-dash measured a
+                // flat 1600 contacts at every dashAtContact value, which is the
+                // signature of the dash having no effect on the outcome. That could
+                // mean no strike is landing at all, so record how close the boxes
+                // ever come during a dash: if the minimum separation across the whole
+                // run stays above zero, the dash never touches the body and the
+                // i-frame is never granted, which would explain the flatness without
+                // any timing dependence.
+                if (frame.Dashing)
+                {
+                    var dxg = Math.Abs((frame.Position.X + frame.Width * 0.5f) -
+                        world.BossCenter.X) - (BossWidth + frame.Width) * 0.5f;
+                    var dyg = Math.Abs((frame.Position.Y + frame.Height * 0.5f) -
+                        world.BossCenter.Y) - (BossHeight + frame.Height) * 0.5f;
+                    var gap = Math.Max(dxg, dyg);
+                    if (gap < world.MinDashGap) world.MinDashGap = gap;
+                    world.DashTicks++;
+                    if (gap <= 0f) world.DashStrikes++;
+                }
+                if (overlapping && world.ImmuneTicks == 0)
                 {
                     chargeHit = true;
                     if (chargeHitTick < 0) chargeHitTick = world.Tick;
                     RegisterHit(world, "boss", frame.Position, frame.Width,
                         frame.Height);
+                    // The i-frame is granted BY the strike, per the owner: only
+                    // hitting the NPC body grants it, and it does not protect
+                    // against projectiles. So dashing into the boss converts that
+                    // one contact into immunity rather than avoiding it, and the
+                    // player must still LEAVE -- which is what the lingering rule
+                    // below enforces.
+                    if (frame.Dashing && !FishronDashImmunityDisabled)
+                        world.ImmuneTicks = 15;
                 }
+                // LINGERING IN THE BODY. Owner: remaining inside the NPC's collision
+                // volume for too long is itself damaging, and this is the second half
+                // of the phase-three counter-dash mechanic. The rule is enforced by
+                // the branch above rather than by extra code: overlap is tested every
+                // tick, so the moment the 15 ticks of immunity from a strike expire,
+                // continued overlap lands another contact. A dash THROUGH the boss is
+                // therefore survivable, while parking inside it is not, and a player
+                // can no longer sit in the hitbox after one strike as the lab
+                // previously allowed.
                 if (verbose && world.Tick % 3 == 0)
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "  t={0} state={1} seq={2} timer={3} boss=({4:F0},{5:F0}) " +
@@ -1287,6 +1354,33 @@ namespace Chaite.Tests
             public int BandClampTicks;
             /// <summary>Contacts attributable to the boss body.</summary>
             public int BossContacts;
+            /// <summary>
+            /// Counter-dash geometry: ticks spent dashing, how many of those
+            /// actually overlapped the body, and the closest the boxes ever came
+            /// while dashing. A large positive MinDashGap with zero DashStrikes
+            /// means the dash never reached the body at all.
+            /// </summary>
+            public int DashTicks;
+            public int DashStrikes;
+            public float MinDashGap = float.MaxValue;
+        }
+
+        private sealed class ForcedDashProbe : IFishronController
+        {
+            public void Reset() { }
+            public PlayerControlFrame Decide(int tick,
+                in PlayerMotionFrame frame, PlayerSnapshot player,
+                TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                if (frame.DashReady && frame.Dash.DashDelay >= 0)
+                {
+                    controls.Dash = true;
+                    controls.Right = true;
+                }
+                controls.Jump = true;
+                return controls;
+            }
         }
 
         private interface IFishronController
@@ -2435,21 +2529,39 @@ namespace Chaite.Tests
                     // the option mean what its name says.
                     if (_counterDash)
                     {
+                        // Aim the dash at the boss, and -- new -- close the
+                        // VERTICAL gap as well. The dash itself is horizontal, so
+                        // heading at the boss is necessary but not sufficient: the
+                        // strike only lands if the player is level with the body
+                        // when the dash fires. Under the corrected i-frame rule a
+                        // dash that misses the body grants nothing at all, so an
+                        // aimed but level-mismatched dash is a wasted dash and a
+                        // free contact. Steering vertically toward the boss's centre
+                        // is what turns the dash into an actual strike.
                         var toward = boss.Center.X >= player.Center.X;
                         controls.Right = toward;
                         controls.Left = !toward;
+                        if (boss.Center.Y < player.Center.Y - 6f) controls.Up = true;
+                        else if (boss.Center.Y > player.Center.Y + 6f)
+                            controls.Down = true;
                     }
 
                     // DASH-THROUGH SEPARATION: ATTEMPTED AND REFUTED.
-                    // The reasoning was that the i-frame is granted by
-                    // frame.Dashing alone (the lab never requires striking the
-                    // boss), so 15 immune ticks cover at most ONE contact per
-                    // roughly 35-tick dash cycle, while dashing into the boss
-                    // parks the player inside the hitbox for the rest of the
-                    // charge -- hence 1213 phase-three contacts. So the player
-                    // ought to leave immediately after the dash.
+                    // The reasoning was that the i-frame is granted by dashing as
+                    // such (the lab then never required striking the boss), so 15
+                    // immune ticks cover at most ONE contact per roughly 35-tick
+                    // dash cycle, while dashing into the boss parks the player
+                    // inside the hitbox for the rest of the charge -- hence 1213
+                    // phase-three contacts. So the player ought to leave
+                    // immediately after the dash.
                     //
-                    // Implemented exactly that, and it does not work: the result
+                    // The PREMISE is now known to be wrong: the owner confirms the
+                    // i-frame comes from STRIKING the NPC body, not from dashing,
+                    // and the lab has been corrected accordingly. The refutation
+                    // below is kept on the record but should be read as a refutation
+                    // of a measurement taken under the wrong rule.
+                    //
+                    // Implemented exactly that, and it did not work: the result
                     // moved only from 1213 to 1367 and stayed IDENTICAL across
                     // every dashAtContact value, the same signature as before.
                     // The cause is visible in the control flow rather than in the
@@ -2639,6 +2751,40 @@ namespace Chaite.Tests
                         controls.Down = false;
                         if (dashTicks > ticksToContact)
                             controls.Dash = true;
+                    }
+                }
+
+                // COUNTER-DASH STRIKE TRIGGER. The escape scheduler below issues the
+                // dash as a way of clearing a charge, which is the wrong job for a
+                // counter-dash: a strike has to be timed so the player ENTERS the
+                // body, and the diagnostic showed the scheduler never dashed at all
+                // in the counter configuration (dashTicks=0 on every row), which is
+                // why that whole grid returned a flat 1600 regardless of timing.
+                //
+                // So the counter-dash gets its own trigger: fire when the boss is
+                // genuinely charging and close, aim level at it (set above), and let
+                // the strike land. Under the corrected rule the immunity then comes
+                // from the strike itself, and because the boss is moving toward the
+                // player while the player dashes into it, the two separate rather
+                // than the player being parked inside the hitbox.
+                if (_counterDash)
+                {
+                    var bossDashing = boss.Velocity.X * boss.Velocity.X +
+                        boss.Velocity.Y * boss.Velocity.Y > 100f;
+                    var closingNow = (boss.Velocity.X - frame.Velocity.X) * _ux.X +
+                        (boss.Velocity.Y - frame.Velocity.Y) * _ux.Y;
+                    if (bossDashing && closingNow > 0.1f && -toBoss < 200f)
+                    {
+                        var leadTicks = _dashAtContact > 0 ? _dashAtContact : 4;
+                        var ticksToContact = -toBoss / closingNow;
+                        if (ticksToContact <= leadTicks && frame.DashReady &&
+                            frame.Dash.DashDelay >= 0 && !_dashIssued)
+                        {
+                            controls.Dash = true;
+                            _dashIssued = true;
+                            DashIssues++;
+                        }
+                        return controls;
                     }
                 }
 
@@ -4629,6 +4775,31 @@ namespace Chaite.Tests
             // this lab were made in PHASE ONE, and were additionally invalidated
             // by the early-return bug that stopped the dash being issued at all.
             // So the mechanism has never actually been tested in its own phase.
+            // CAN A DASH FIRE IN PHASE 3 AT ALL? The counter-dash grid reported
+            // dashTicks=0 on every row, including the rows with counter=False, which
+            // means the diagnostic never saw frame.Dashing true even once. Before
+            // concluding anything about the counter-dash mechanic, establish whether
+            // the dash is reachable at all in this fight: run a controller that
+            // asks to dash on the very first tick it is ready and report the
+            // resulting dashTicks.
+            Console.WriteLine();
+            Console.WriteLine("== dash reachability (phase 3) ==");
+            foreach (var sp in new[] { 12f, 15.82f })
+            {
+                var ctrl = new ForcedDashProbe();
+                var run = RunFight(ctrl, 2000, maxHits: 999, bossOnly: true,
+                    bubbles: true, startX: 3300f,
+                    jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                    wingAccRunSpeed: sp, startBossLife: 78000f * 0.12f);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    speed={0,5:F2} dashTicks={1,5} strikes={2,4} " +
+                    "minGap={3,8:F1} bossContacts={4,5} ticks={5} " +
+                    "refusal='{6}'", sp, run.DashTicks,
+                    run.DashStrikes, run.MinDashGap, run.BossContacts,
+                    run.Ticks, run.Refusal));
+            }
+
             // Phase 3 is state 10/11/12 with its own park offset of 360.
             // Count contacts by phase so the phase-3 share is visible directly.
             Console.WriteLine();
@@ -4644,6 +4815,9 @@ namespace Chaite.Tests
                     var p3 = 0;
                     var total = 0;
                     var clean = 0;
+                    var dashTicks = 0;
+                    var dashStrikes = 0;
+                    var minDashGap = float.MaxValue;
                     foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
                         4300f, 4800f, 5300f, 5800f })
                     {
@@ -4667,11 +4841,16 @@ namespace Chaite.Tests
                             else p3++;
                         }
                         if (n == 0) clean++;
+                        dashTicks += run.DashTicks;
+                        dashStrikes += run.DashStrikes;
+                        if (run.MinDashGap < minDashGap) minDashGap = run.MinDashGap;
                     }
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "    counter={0,-5} at={1} | total={2,4}  p1={3,3} " +
-                        "p2={4,3} p3={5,4}  cleanOpenings={6}/8", counter, at,
-                        total, p1, p2, p3, clean));
+                        "p2={4,3} p3={5,4}  cleanOpenings={6}/8  " +
+                        "dashTicks={7} strikes={8} minGap={9:F1}", counter, at,
+                        total, p1, p2, p3, clean, dashTicks, dashStrikes,
+                        minDashGap));
                 }
             }
 
@@ -5719,6 +5898,82 @@ namespace Chaite.Tests
                             "    speed={0,5:F2} hz={1,3} pulse={2} |{3} | " +
                             "sum={4,4} clean={5}/4", sp, hz, pulse, cells,
                             total, clean));
+                    }
+                }
+            }
+
+            // DASH ISOLATION. Everything above tests the dash through a full fight,
+            // where a refusal is swallowed into a truncated run and the reported dash
+            // ticks stay zero either way. This takes the dash out of the fight and
+            // asks the forward model directly: build the start frame, then ask for a
+            // dash, and print exactly what came back. That distinguishes "the dash
+            // state was never valid" from "the fight wrapper hides the refusal".
+            Console.WriteLine();
+            Console.WriteLine("== dash isolation (no fight) ==");
+            {
+                var f0 = FishronPlayerStart(3300f, 6000f, WeakWings().JumpSpeed,
+                    WeakWings().FlyTicks, true, 15.82f);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    start.Dash.Known={0} DashDelay={1} EocDash={2} " +
+                    "EocHit={3} ReleaseDash={4} Facing={5} AccRun={6:F2} " +
+                    "MaxRun={7:F2} Equip={8}",
+                    f0.Dash.Known, f0.Dash.DashDelay, f0.Dash.EocDash,
+                    f0.Dash.EocHit, f0.Dash.ReleaseDash,
+                    f0.Dash.FacingDirection, f0.Dash.AccRunSpeed,
+                    f0.Dash.MaxRunSpeed, f0.Dash.EquipmentIdentity));
+                Console.WriteLine("    IsSupported=" +
+                    ReviewedDashIdentity.IsSupported(f0.Dash.EquipmentIdentity) +
+                    " IsValidState=" +
+                    EyeShieldDashMotion.IsSupportedState(in f0.Dash));
+                // THE BLOCKER, PINNED DOWN. Installing a valid ready dash state on
+                // the start frame is necessary but NOT sufficient: the model still
+                // never starts a dash. The probe below reports why. The state itself
+                // is fine -- known, normal path, supported equipment, ready delay,
+                // no contact, no mount, solid probe known and unblocked -- and the
+                // only failing guard is ControlDash, which TryApplyNativeInputCopy
+                // leaves FALSE even when handed rawControlDash = true. Since
+                // TryCreateDedicatedCandidate requires ControlDash, no dash can
+                // start, and TryAdvance then silently takes the ordinary branch: the
+                // tick's velocity is 0.08, one step of run acceleration, with
+                // DashDelay still zero and Dashing false.
+                //
+                // The consequence for this lab is significant and is why the
+                // counter-dash mechanic is still unverified: every dash-dependent
+                // configuration -- the counter-dash grid, the forced-dash probe, and
+                // the earlier dash sweeps -- was measuring a fight in which the dash
+                // could not fire at all. Their reported zero dash ticks were not a
+                // controller choice. Fixing this needs a look at how ControlDash is
+                // meant to be armed in GravityDashMotion, which is production code
+                // rather than lab code and is out of scope for a lab-only change.
+                var probe = f0.Dash;
+                EyeShieldDashMotion.TryApplyNativeInputCopy(ref probe, true);
+                probe.ControlLeft = false;
+                probe.ControlRight = true;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    probe: ControlDash={0} (all other guards pass) -> " +
+                    "candidateCtor={1}", probe.ControlDash,
+                    EyeShieldDashMotion.TryCreateDedicatedCandidate(in probe,
+                        out _)));
+                foreach (var dir in new[] { "R", "L", "none" })
+                {
+                    var c0 = new PlayerControlFrame
+                    {
+                        Dash = true,
+                        Right = dir == "R",
+                        Left = dir == "L",
+                    };
+                    if (PlayerForwardModel.TryAdvance(in f0, in c0, out var f1,
+                            out var r1))
+                    {
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    dir={0,-4} Dashing={1} DashDelay={2} " +
+                            "EocDash={3} vx={4:F2}", dir, f1.Dashing,
+                            f1.Dash.DashDelay, f1.Dash.EocDash, f1.Velocity.X));
+                    }
+                    else
+                    {
+                        Console.WriteLine("    dir=" + dir + " dash REFUSED: " + r1);
                     }
                 }
             }
