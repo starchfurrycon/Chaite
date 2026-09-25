@@ -761,7 +761,7 @@ namespace Chaite.Tests
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
-            bool autoJump = false)
+            bool autoJump = false, string hoverVariant = "none")
         {
             const float floorY = 6000f;
             var bandLeft = 1000f;
@@ -1236,6 +1236,8 @@ namespace Chaite.Tests
             private readonly int _jumpPulse;
             private readonly float _climbCap;
             private readonly float _hoverDescend;
+            private readonly int _preposition;
+            private readonly string _hoverVariant;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
@@ -1244,7 +1246,8 @@ namespace Chaite.Tests
             public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
                 bool climb = false, float lead = 0f, float climbAbove = 0.75f,
                 float dashAim = 0.85f, int jumpPulse = 0, float climbCap = 420f,
-                float hoverDescend = 160f)
+                float hoverDescend = 160f, int preposition = 0,
+                string hoverVariant = "none")
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1256,6 +1259,8 @@ namespace Chaite.Tests
                 _jumpPulse = jumpPulse;
                 _climbCap = climbCap;
                 _hoverDescend = hoverDescend;
+                _preposition = preposition;
+                _hoverVariant = hoverVariant;
             }
 
             public void Reset()
@@ -1350,6 +1355,59 @@ namespace Chaite.Tests
                     if (!frame.Grounded &&
                         player.Center.Y > world.FloorY - _hoverDescend)
                         controls.Up = true;
+
+                    // The surviving contacts sit in the hover's last frames
+                    // (state 0, seq 10, timer 14-18), which is the transition
+                    // into a charge rather than the charge itself. During those
+                    // frames the controller has no _ux yet -- it only learns the
+                    // lock direction on the state change -- so the entire
+                    // hover escape is this branch. Pre-positioning is therefore
+                    // the only thing that can act here, and it is what the
+                    // contact cluster says is missing.
+                    //
+                    // The charge will lock along the boss-to-player direction,
+                    // and the escape is perpendicular to that, so the useful
+                    // move is to stand off the boss's approach line: put the
+                    // player on whichever side of it already has more room.
+                    if (_preposition > 0 || !string.IsNullOrEmpty(_hoverVariant) &&
+                        _hoverVariant != "none")
+                    {
+                        var ax = boss.Center.X - player.Center.X;
+                        var ay = boss.Center.Y - player.Center.Y;
+                        var al = (float)Math.Sqrt(ax * ax + ay * ay);
+                        if (al > 1f)
+                        {
+                            // Approach direction, the future charge line.
+                            var ux = ax / al;
+                            var uy = ay / al;
+                            // Signed distance from that line, normal (-uy, ux).
+                            var sd = (player.Center.X - boss.Center.X) * -uy +
+                                (player.Center.Y - boss.Center.Y) * ux;
+                            var want = sd >= 0f ? 1f : -1f;
+                            var mode = _preposition > 0
+                                ? (_preposition >= 2 ? "both" : "horiz")
+                                : _hoverVariant;
+                            var gain = Math.Abs(ux) * want;
+                            if (mode == "horizFlip") gain = -gain;
+                            if (mode == "horiz" || mode == "horizFlip" ||
+                                mode == "both")
+                            {
+                                controls.Right = gain > 0f;
+                                controls.Left = gain < 0f;
+                            }
+                            if (mode == "vert" || mode == "both")
+                            {
+                                var vertical = Math.Abs(uy) * want;
+                                if (vertical < 0f) controls.Down = true;
+                                else if (vertical > 0f) controls.Up = true;
+                            }
+                            if (mode == "away")
+                            {
+                                controls.Right = ux < 0f;
+                                controls.Left = ux > 0f;
+                            }
+                        }
+                    }
                     return controls;
                 }
 
@@ -1855,6 +1913,60 @@ namespace Chaite.Tests
                 "    zero-contact: {0} of 100", wide));
             Console.WriteLine("    first clean: " + wideLabel);
             Console.WriteLine("    longest run: " + wideBestLabel);
+
+            // Pre-positioning is the one action available in the hover's last
+            // frames, where the surviving contacts actually are, so it is
+            // measured against the no-prepositioning baseline on the same
+            // parameters.
+            Console.WriteLine();
+            Console.WriteLine("  hover pre-positioning (weak set, contacts counted):");
+            foreach (var prep in new[] { 0, 1, 2 })
+            {
+                var run = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                    0.88f, 0.85f, 0, 420f, 160f, prep), 8000, maxHits: 999,
+                    bossOnly: true, bubbles: true, jumpSpeed: 8.91f,
+                    wingTimeMax: 100f, autoJump: true);                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    preposition={0} ticks={1,5} charges={2,3} " +
+                    "bossContacts={3,4}", prep, run.Ticks, run.Charges, n));
+            }
+
+            // Pre-positioning regressed 7 contacts to 200, which is a large
+            // enough change that the sign or the axis is likely wrong rather
+            // than merely unhelpful. These variants isolate that: pure
+            // horizontal steering, the opposite horizontal sign, and vertical
+            // only.
+            Console.WriteLine();
+            Console.WriteLine("  pre-positioning variants:");
+            foreach (var variant in new[] { "none", "horiz", "horizFlip",
+                "vert", "away" })
+            {
+                var run = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                    0.88f, 0.85f, 0, 420f, 160f, 0, variant), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    jumpSpeed: 8.91f, wingTimeMax: 100f, autoJump: true);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    variant={0,-10} ticks={1,5} charges={2,3} " +
+                    "bossContacts={3,4}", variant, run.Ticks, run.Charges, n));
+            }
+
+            // Where the baseline's contacts sit, since "8009 ticks" alone does
+            // not say whether the run is clean early and dies late or dies
+            // immediately. Printing the first few is what makes the comparison
+            // against the variants meaningful.
+            Console.WriteLine();
+            Console.WriteLine("  baseline contact detail (preposition=0):");
+            var baseRun = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                0.88f, 0.85f, 0, 420f, 160f, 0), 8000, maxHits: 999,
+                bossOnly: true, bubbles: true, jumpSpeed: 8.91f,
+                wingTimeMax: 100f, autoJump: true);
+            foreach (var line in baseRun.HitLog)
+                Console.WriteLine("    " + line);
         }
 
         // ------------------------------------------------------------------ lab
