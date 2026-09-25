@@ -1243,6 +1243,7 @@ namespace Chaite.Tests
             {
                 _lastState = int.MinValue;
                 _dashIssued = false;
+
                 _ux = new Vec2(1f, 0f);
             }
 
@@ -1255,6 +1256,7 @@ namespace Chaite.Tests
                 if (dashing && !IsDashState(_lastState))
                 {
                     _dashIssued = false;
+
                     _ux = Normalize(world.BossVx, world.BossVy);
                 }
                 _lastState = world.State;
@@ -1360,6 +1362,16 @@ namespace Chaite.Tests
                 // travel below the ground, so a downward need that large is
                 // really an upward one.
                 if (escapeDown && need > altitude * 0.5f) escapeDown = false;
+
+                // Committing the side once per charge was tried twice and is
+                // WORSE, so it is not done. Holding the first tick's side took
+                // the bubble-free run from 921 ticks to 116, and holding a
+                // side chosen by which has legal room took it to 114. The flip
+                // this was meant to cure -- the steep charge turning from
+                // L-U-J to L--D- at tick 508 and landing three px short -- is
+                // therefore adaptive rather than harmful: recomputing follows
+                // the player as it crosses, and freezing it strands the run far
+                // earlier. The three px must come from somewhere else.
                 if (escapeDown) controls.Down = true;
                 else controls.Up = true;
 
