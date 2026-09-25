@@ -948,12 +948,13 @@ namespace Chaite.Tests
                             CultureInfo.InvariantCulture,
                             "    c{0} t{1,3} along {2,7:F1} boss {3,7:F1} " +
                             "perp {4,6:F1} req {5,4:F0} room {6,7:F1} " +
-                            "ply=({7:F0},{8:F0}) v=({9:F1},{10:F1})",
+                            "ply=({7:F0},{8:F0}) v=({9:F1},{10:F1}) gnd={11} " +
+                            "ctrl={12}",
                             chargeOrdinal, world.Tick, numerator, bossAlong,
                             perpendicular, requiredClearance,
                             perpendicular - requiredClearance,
                             playerX, playerY, frame.Velocity.X,
-                            frame.Velocity.Y));
+                            frame.Velocity.Y, frame.Grounded, controls));
                     // The closest approach is where the player's and the boss's
                     // projections onto the charge line meet -- not where the two
                     // bodies happen to be nearest each other in general, which
@@ -1325,14 +1326,35 @@ namespace Chaite.Tests
                     return controls;
                 }
 
-                // Which way along the normal the player is already leaving.
-                // Being exactly on the line means there is no side yet; the
-                // shallow-charge answer (climb) is the tie-break.
+                // Which way along the normal to leave, chosen by which side
+                // needs LESS travel rather than by which side happens to be
+                // positive. The corridor is symmetric about the charge line and
+                // |signed| is exactly how far the player already is from it, so
+                // the near side always costs less:
+                //
+                //   need = requiredClearance - |signed|
+                //
+                // Taking the sign of `signed` instead makes the player travel
+                // the LONG way round whenever it is on the far side, and that is
+                // what broke charge 8 of the bubble-free run. That charge was
+                // shallow (15.2 deg, |ux|=0.965, requirement 91 px) and there
+                // were only nine ticks before impact, so a 91 px ascent needed
+                // 10 px/tick; escaping the long way round, about 101 px, needed
+                // more than the available time outright.
+                //
+                // Being exactly on the line has no near side, so the sign of
+                // the existing displacement is used as the tie-break.
                 var dx = player.Center.X - boss.Center.X;
                 var dy = player.Center.Y - boss.Center.Y;
                 var signed = dx * -_ux.Y + dy * _ux.X;
-                var escapeDown = signed >= 0f;
+                var need = RequiredClearance(_ux.X, _ux.Y) - Math.Abs(signed);
+                var escapeDir = Math.Abs(signed) > 0.5f ? Math.Sign(signed) : 1f;
+                var escapeDown = escapeDir > 0f;
                 var altitude = world.FloorY - player.Center.Y;
+                // The floor truncates the downward escape: the player cannot
+                // travel below the ground, so a downward need that large is
+                // really an upward one.
+                if (escapeDown && need > altitude * 0.5f) escapeDown = false;
                 if (escapeDown) controls.Down = true;
                 else controls.Up = true;
 
@@ -1614,8 +1636,7 @@ namespace Chaite.Tests
             // late the ascent starts (a shallow charge wants it immediately).
             Console.WriteLine("== full search (climb x dash lead x dash tick) ==");
             var fullBest = int.MaxValue;
-            var fullBestLabel = "none";
-            foreach (var climb in new[] { false, true })
+            var fullBestLabel = "none";            foreach (var climb in new[] { false, true })
             foreach (var dl in new[] { 120f, 160f, 200f, 240f, 280f, 340f })
             foreach (var at in new[] { 0, 4, 8, 12, 16, 20 })
             {
@@ -1653,7 +1674,7 @@ namespace Chaite.Tests
             Console.WriteLine("== corridor escape with wing ascent held ==");
             TraceCharge = true;
             var climbing = RunFight(new CorridorEscape(true, 240f, 8, true), 12000,
-                bossOnly: false, maxHits: 6);
+                maxHits: 6, bossOnly: false, bubbles: true);
             TraceCharge = false;
             Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks +
                 " charges=" + climbing.Charges);
@@ -1690,11 +1711,14 @@ namespace Chaite.Tests
             // time so the remaining work is attributable to a named source
             // rather than to "projectiles".
             Console.WriteLine("== threat-class isolation (charges always live) ==");
+            // A full phase one is ten charges (ai[0] 0..9) plus the phase-two
+            // states, so the charge run is given enough hits and ticks to get
+            // well past that before it is judged.
             foreach (var bubbles2 in new[] { false, true })
             foreach (var tornados2 in new[] { false, true })
             {
                 var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
-                    4000, maxHits: 6, bossOnly: false, bubbles: bubbles2,
+                    8000, maxHits: 8, bossOnly: false, bubbles: bubbles2,
                     tornados: tornados2);
                 var contacts = 0;
                 var bubbleHits = 0;
