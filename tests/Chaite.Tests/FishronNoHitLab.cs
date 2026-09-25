@@ -54,6 +54,9 @@ namespace Chaite.Tests
         private const float SkyEnrageCeiling = 800f;
         private const int BossWidth = 150;
         private const int BossHeight = 100;
+        // The player's box, from PlayerSnapshot's own default in the fixture.
+        private const float PlayerHalfWidth = 10f;
+        private const float PlayerHalfHeight = 21f;
 
         private enum FightPhase { One, Two, Three }
 
@@ -736,6 +739,23 @@ namespace Chaite.Tests
             var chargeMaxPerpendicular = 0f;
             var chargeClosestDistance = float.MaxValue;
             var chargeClosestPerpendicular = 0f;
+            var chargeCorridorFirst = -1;
+            var chargeCorridorLast = -1;
+            var chargeDangerTicks = 0;
+            // Charge geometry that has to survive from tick to tick. These are
+            // deliberately declared out here: as loop-body locals they were
+            // re-zeroed on every tick, so the direction read back as zero on
+            // every tick after the one that set it.
+            var chargeUx = 0f;
+            var chargeUy = 0f;
+            var chargeLength = 0f;
+            var bossAlong = 0f;
+            var requiredClearance = 0f;
+            var chargeNearTick = -1;
+            var chargeNearBossX = 0f;
+            var chargeNearBossY = 0f;
+            var chargeNearPlayerX = 0f;
+            var chargeNearPlayerY = 0f;
             var chargeHit = false;
             var chargeEvents = new List<string>();
 
@@ -790,19 +810,39 @@ namespace Chaite.Tests
                 var isDash = IsDashState(world.State);
                 if (isDash && !wasDash)
                 {
+                    // Log the charge that has just ended, then start the new
+                    // one. The angle, the required clearance and the corridor
+                    // window are all facts about that charge, so they are
+                    // captured before the new line overwrites them.
                     if (chargeOrdinal > 1)
+                    {
+                        var angleRad = Math.Atan2(Math.Abs(chargeLine.Y),
+                            Math.Abs(chargeLine.X));
+                        var endedRequired = RequiredClearance(chargeUx, chargeUy);
                         chargeEvents.Add(string.Format(
                             CultureInfo.InvariantCulture,
                             "charge {0,3} start {1,5} angle {2,5:F1}deg " +
-                            "maxPerp {3,6:F1} perpAtClosest {4,6:F1} hit={5}",
+                            "req {3,5:F0} maxPerp {4,6:F1} perpAtClosest " +
+                            "{5,6:F1} closest {6,5:F0} hit={7,-5} danger={8,3} " +
+                            "corridor=[{9},{10}] near tick {11} " +
+                            "boss=({12:F0},{13:F0}) ply=({14:F0},{15:F0})",
                             chargeOrdinal - 1, chargeStartTick,
-                            Math.Atan2(Math.Abs(chargeLine.Y),
-                                Math.Abs(chargeLine.X)) * 180.0 / Math.PI,
+                            angleRad * 180.0 / Math.PI, endedRequired,
                             chargeMaxPerpendicular, chargeClosestPerpendicular,
-                            chargeHit));
+                            chargeClosestDistance, chargeHit, chargeDangerTicks,
+                            chargeCorridorFirst, chargeCorridorLast, chargeNearTick,
+                            chargeNearBossX, chargeNearBossY, chargeNearPlayerX,
+                            chargeNearPlayerY));
+                        if (chargeClosestPerpendicular < closestPerpendicular)
+                            closestPerpendicular = chargeClosestPerpendicular;
+                    }
                     chargeOrdinal++;
                     chargeLine = new Vec2(world.BossVx, world.BossVy);
                     chargeOrigin = world.BossCenter;
+                    chargeLength = (float)Math.Sqrt(chargeLine.X * chargeLine.X +
+                        chargeLine.Y * chargeLine.Y);
+                    chargeUx = chargeLength > 0.0001f ? chargeLine.X / chargeLength : 0f;
+                    chargeUy = chargeLength > 0.0001f ? chargeLine.Y / chargeLength : 0f;
                     chargeStartTick = world.Tick;
                     chargePlayer = new Vec2(frame.Position.X + frame.Width * 0.5f,
                         frame.Position.Y + frame.Height * 0.5f);
@@ -810,49 +850,80 @@ namespace Chaite.Tests
                     chargeClosestDistance = float.MaxValue;
                     chargeClosestPerpendicular = 0f;
                     chargeHit = false;
+                    chargeCorridorFirst = -1;
+                    chargeCorridorLast = -1;
+                    chargeDangerTicks = 0;
                     hadCharge = true;
                 }
                 if (hadCharge && isDash)
                 {
+                    // The player's position AFTER this tick's movement. The
+                    // frame is advanced above, so reading it before that would
+                    // measure the previous tick's geometry against this tick's
+                    // boss position -- which silently reported the closest
+                    // approach as zero while the peak read correctly.
                     var playerX = frame.Position.X + frame.Width * 0.5f;
                     var playerY = frame.Position.Y + frame.Height * 0.5f;
-                    var l = (float)Math.Sqrt(chargeLine.X * chargeLine.X +
-                        chargeLine.Y * chargeLine.Y);
-                    if (l > 0.0001f)
+                    if (chargeLength > 0.0001f)
                     {
-                        var ux = chargeLine.X / l;
-                        var uy = chargeLine.Y / l;
                         // Signed projection of the player onto the line, and
                         // the perpendicular distance, both measured from the
                         // line's own origin.
                         var px = playerX - chargeOrigin.X;
                         var py = playerY - chargeOrigin.Y;
-                        numerator = px * ux + py * uy;
-                        perpendicular = Math.Abs(px * -uy + py * ux);
+                        numerator = px * chargeUx + py * chargeUy;
+                        perpendicular = Math.Abs(px * -chargeUy + py * chargeUx);
+                        bossAlong = ((world.BossX + BossWidth * 0.5f - chargeOrigin.X) *
+                            chargeUx +
+                            (world.BossY + BossHeight * 0.5f - chargeOrigin.Y) * chargeUy);
+                        requiredClearance = RequiredClearance(chargeUx, chargeUy);
                     }
                     if (perpendicular > chargeMaxPerpendicular)
                         chargeMaxPerpendicular = perpendicular;
                     if (perpendicular > maxPerpendicular)
                         maxPerpendicular = perpendicular;
-                    // The boss's projection onto the player's path. The closest
-                    // approach is where the two projections meet, not where the
-                    // two bodies happen to be nearest each other in general, so
-                    // this is the figure a dodge has to win.
-                    if (l > 0.0001f)
+                    // The closest approach is where the player's and the boss's
+                    // projections onto the charge line meet -- not where the two
+                    // bodies happen to be nearest each other in general, which
+                    // can be somewhere the charge never reaches.
+                    var approach = Math.Abs(bossAlong - numerator);
+                    if (approach < chargeClosestDistance)
                     {
-                        var bossX = world.BossX + BossWidth * 0.5f;
-                        var bossY = world.BossY + BossHeight * 0.5f;
-                        var bossS = ((bossX - chargeOrigin.X) * chargeLine.X +
-                            (bossY - chargeOrigin.Y) * chargeLine.Y) / l;
-                        var approach = Math.Abs(bossS - numerator);
-                        if (approach < chargeClosestDistance)
-                        {
-                            chargeClosestDistance = approach;
-                            chargeClosestPerpendicular = perpendicular;
-                        }
+                        chargeClosestDistance = approach;
+                        chargeClosestPerpendicular = perpendicular;
+                        // The exact state at the moment of closest approach: the
+                        // one tick that decides the charge. Recorded because a
+                        // clearance figure alone cannot say whether the player
+                        // was beside the boss or in front of it.
+                        chargeNearTick = world.Tick;
+                        chargeNearBossX = world.BossX;
+                        chargeNearBossY = world.BossY;
+                        chargeNearPlayerX = frame.Position.X;
+                        chargeNearPlayerY = frame.Position.Y;
                     }
                     if (chargeClosestPerpendicular < closestPerpendicular)
                         closestPerpendicular = chargeClosestPerpendicular;
+                    // Note: the fight-wide figure is NOT the minimum over every
+                    // tick. On the tick a charge commits, the player is on the
+                    // line by construction, so the perpendicular is zero there
+                    // and a running minimum over ticks is always zero. The
+                    // meaningful fight-wide figure is the smallest
+                    // per-charge clearance AT the closest approach, which is
+                    // what each charge contributes to.
+                    // The collision corridor: the set of ticks on which the
+                    // player's box can touch the boss's box at all. A dodge does
+                    // not have to keep clearance for the whole charge, only
+                    // through this window, so the window -- not the peak and not
+                    // the global minimum -- is what a dash has to be timed
+                    // against. Measured with the engine's own SAT clearance for
+                    // two axis-aligned boxes, not with a hand-picked number.
+                    if (InsideCollisionCorridor(perpendicular, chargeUx, chargeUy,
+                            numerator, bossAlong))
+                    {
+                        chargeDangerTicks++;
+                        if (chargeCorridorFirst < 0) chargeCorridorFirst = world.Tick;
+                        chargeCorridorLast = world.Tick;
+                    }
                 }
                 if (isDash && !wasDash && verbose)
                     Console.WriteLine(string.Format(
@@ -868,14 +939,19 @@ namespace Chaite.Tests
                         "  T{0,3} st={1,2} tm={2,2} boss=({3,7:F1},{4,7:F1}) " +
                         "bv=({5,6:F1},{6,6:F1}) ply=({7,7:F1},{8,7:F1}) " +
                         "pv=({9,6:F2},{10,6:F2}) ctrl={11}{12}{13}{14} " +
-                        "perp={15,6:F1}",
+                        "perp={15,6:F1} sgn={16,7:F1} need={17,5:F0} req={18,5:F0}",
                         world.Tick, world.State, world.StateTimer,
                         world.BossCenter.X, world.BossCenter.Y, world.BossVx,
                         world.BossVy, frame.Position.X + frame.Width * 0.5f,
                         frame.Position.Y + frame.Height * 0.5f, frame.Velocity.X,
                         frame.Velocity.Y, controls.Left ? "L" : "-",
                         controls.Right ? "R" : "-", controls.Jump ? "J" : "-",
-                        controls.Dash ? "D" : "-", perpendicular));
+                        controls.Dash ? "D" : "-", perpendicular,
+                        isDash ? (frame.Position.X + frame.Width * 0.5f -
+                            (world.BossX + BossWidth * 0.5f)) * -chargeUy +
+                            (frame.Position.Y + frame.Height * 0.5f -
+                            (world.BossY + BossHeight * 0.5f)) * chargeUx : 0f,
+                        isDash ? numerator : 0f, requiredClearance));
                 AdvanceThreats(world, frame);
 
                 if (world.BossContactEnabled && world.ImmuneTicks == 0 &&
@@ -900,6 +976,24 @@ namespace Chaite.Tests
                         world.Sharkrons.Count));
                 world.Tick++;
             }
+            // The charge the fight ended on never gets a "next charge" to log
+            // it, and that is precisely the charge that took the hit. Recorded
+            // here so the account of a losing fight is complete.
+            if (chargeOrdinal > 1)
+            {
+                var angleRad = Math.Atan2(Math.Abs(chargeLine.Y),
+                    Math.Abs(chargeLine.X));
+                chargeEvents.Add(string.Format(CultureInfo.InvariantCulture,
+                    "charge {0,3} start {1,5} angle {2,5:F1}deg req {3,5:F0} " +
+                    "maxPerp {4,6:F1} perpAtClosest {5,6:F1} closest {6,5:F0} " +
+                    "hit={7,-5} danger={8,3} corridor=[{9},{10}] (final)",
+                    chargeOrdinal - 1, chargeStartTick, angleRad * 180.0 / Math.PI,
+                    RequiredClearance(chargeUx, chargeUy), chargeMaxPerpendicular,
+                    chargeClosestPerpendicular, chargeClosestDistance, chargeHit,
+                    chargeDangerTicks, chargeCorridorFirst, chargeCorridorLast));
+                if (chargeClosestPerpendicular < closestPerpendicular)
+                    closestPerpendicular = chargeClosestPerpendicular;
+            }
             return new FightResult
             {
                 Ticks = world.Tick,
@@ -908,7 +1002,8 @@ namespace Chaite.Tests
                 HitLog = world.HitLog,
                 Charges = world.ChargeCount,
                 MaxPerpendicular = maxPerpendicular,
-                ClosestPerpendicular = closestPerpendicular,
+                ClosestPerpendicular = closestPerpendicular == float.MaxValue
+                    ? 0f : closestPerpendicular,
                 ChargeLog = chargeEvents,
             };
         }
@@ -939,6 +1034,50 @@ namespace Chaite.Tests
                 PlayerSnapshot player, TargetSnapshot boss, FightWorld world);
         }
 
+        /// <summary>
+        /// Whether the player's box can touch the boss's box on this tick, given
+        /// the charge line and the player's position relative to it.
+        ///
+        /// This is the collision corridor, and it is what a dash actually has to
+        /// be timed against. The player is 20x42 and the boss 150x100, both
+        /// axis-aligned, so "can they touch" is the engine's own separating-axis
+        /// test on the two axis projections. Writing it out rather than using a
+        /// rule of thumb matters: a hand-picked clearance number would bake the
+        /// answer into the measurement.
+        ///
+        /// Along the charge line the boss's own 150-wide box means a touch is
+        /// possible for a window wider than the player's body, which is why the
+        /// danger window is not simply "the ticks where the projections are
+        /// equal". Across the line, the boss half-extent projected onto the
+        /// normal is what sets the required clearance, and it grows as the
+        /// charge gets steeper -- the half-width dominates a shallow charge and
+        /// the half-height a steep one.
+        /// </summary>
+        private static bool InsideCollisionCorridor(float perpendicular,
+            float ux, float uy, float playerAlong, float bossAlong)
+        {
+            // Across the line: the boss's half-extent projected onto the normal
+            // is |halfWidth * uy| + |halfHeight * ux| for an axis-aligned box
+            // under a separating axis along that normal, plus the player's own
+            // half-extent along the same axis.
+            var bossHalfAcross = Math.Abs(BossWidth * 0.5f * uy) +
+                Math.Abs(BossHeight * 0.5f * ux);
+            var playerHalfAcross = Math.Abs(PlayerHalfWidth * uy) +
+                Math.Abs(PlayerHalfHeight * ux);
+            if (perpendicular >= bossHalfAcross + playerHalfAcross) return false;
+            // Along the line: both bodies are point centres on this axis, so the
+            // test compares their two projections and their two half-extents.
+            // Comparing the player against the charge ORIGIN instead would be
+            // wrong the moment the boss has flown past it, which on a 476px
+            // charge is almost immediately.
+            var bossHalfAlong = Math.Abs(BossWidth * 0.5f * ux) +
+                Math.Abs(BossHeight * 0.5f * uy);
+            var playerHalfAlong = Math.Abs(PlayerHalfWidth * ux) +
+                Math.Abs(PlayerHalfHeight * uy);
+            return Math.Abs(playerAlong - bossAlong) <=
+                bossHalfAlong + playerHalfAlong;
+        }
+
         /// <summary>How the dash is aimed on a vertical beat.
         ///
         /// There is no choice here, and that is the point. `PlayerControlFrame`
@@ -963,7 +1102,119 @@ namespace Chaite.Tests
             Flee,
         }
 
-        /// <summary>The reviewed three-beat cycle, as an explicit script.
+        /// <summary>The clearance a charge demands, on the engine's own terms.
+        ///
+        /// The boss is a 150x100 axis-aligned box moving along the charge
+        /// direction; the player is a 20x42 box. A contact is possible while the
+        /// player's centre is within the sum of the two boxes' half-extents
+        /// projected onto the line's normal. That sum is the entire requirement:
+        /// nothing here is a tuned threshold. A shallow charge is governed by the
+        /// boss's half-width, a steep one by its half-height, and the crossing
+        /// point is at about 54 degrees.
+        /// </summary>
+        private static float RequiredClearance(float ux, float uy)
+        {
+            var bossHalf = Math.Abs(BossWidth * 0.5f * uy) +
+                Math.Abs(BossHeight * 0.5f * ux);
+            var playerHalf = Math.Abs(PlayerHalfWidth * uy) +
+                Math.Abs(PlayerHalfHeight * ux);
+            return bossHalf + playerHalf;
+        }
+
+        /// <summary>Closed-loop escape from a committed charge.
+        ///
+        /// The owner's reading is that a charge commits its line and never
+        /// re-aims, so the only thing that matters is the player's displacement
+        /// along the line's normal. This controller therefore steers on that
+        /// coordinate directly instead of walking a fixed beat schedule: it works
+        /// out which way along the normal the player is already leaving, and then
+        /// pushes that way for the whole charge -- up if the clearance grows
+        /// upward, down if it grows downward.
+        ///
+        /// The vertical input is what moves along the normal; the horizontal
+        /// input is free to keep running away from the boss, which is also what
+        /// aims the dash, so the two do not fight each other. A dash is spent
+        /// once per charge, timed by how far away the boss still is rather than
+        /// by a fixed tick, because its impulse decays over eighteen ticks and
+        /// what matters is that the decay covers the closest approach.
+        /// </summary>
+        private sealed class CorridorEscape : IFishronController
+        {
+            private readonly bool _useDash;
+            private readonly float _dashLead;
+            private int _lastState = int.MinValue;
+            private bool _dashIssued;
+            private Vec2 _ux = new Vec2(1f, 0f);
+
+            public CorridorEscape(bool useDash, float dashLead)
+            {
+                _useDash = useDash;
+                _dashLead = dashLead;
+            }
+
+            public void Reset()
+            {
+                _lastState = int.MinValue;
+                _dashIssued = false;
+                _ux = new Vec2(1f, 0f);
+            }
+
+            public PlayerControlFrame Decide(int tick,
+                in PlayerMotionFrame frame, PlayerSnapshot player,
+                TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                var dashing = IsDashState(world.State);
+                if (dashing && !IsDashState(_lastState))
+                {
+                    _dashIssued = false;
+                    _ux = Normalize(world.BossVx, world.BossVy);
+                }
+                _lastState = world.State;
+
+                var away = boss.Center.X >= player.Center.X ? -1 : 1;
+                if (away > 0) controls.Right = true;
+                else controls.Left = true;
+
+                if (!dashing)
+                {
+                    if (!frame.Grounded) controls.Up = true;
+                    return controls;
+                }
+
+                // Which way along the normal is the player already leaving?
+                // Being exactly on the line means there is no side yet, so the
+                // cycle's own preference for climbing is used as the tie-break.
+                var dx = player.Center.X - boss.Center.X;
+                var dy = player.Center.Y - boss.Center.Y;
+                var signed = dx * -_ux.Y + dy * _ux.X;
+                var escape = signed > 0.5f ? 1 : (signed < -0.5f ? -1 : -1);
+                if (escape > 0) controls.Down = true;
+                else controls.Up = true;
+
+                if (!_useDash || _dashIssued || !frame.DashReady ||
+                    frame.Dash.DashDelay < 0) return controls;
+
+                // Distance along the line still to run before the closest
+                // approach. The dash is spent once that is inside the lead, so
+                // the eighteen-tick decay is still live when the boss arrives.
+                var toBoss = (frame.Position.X + frame.Width * 0.5f -
+                    boss.Center.X) * _ux.X + (frame.Position.Y + frame.Height * 0.5f -
+                    boss.Center.Y) * _ux.Y;
+                if (toBoss > _dashLead) return controls;
+                controls.Dash = true;
+                _dashIssued = true;
+                return controls;
+            }
+
+            private static Vec2 Normalize(float x, float y)
+            {
+                var length = (float)Math.Sqrt(x * x + y * y);
+                return length > 0.0001f ? new Vec2(x / length, y / length)
+                    : new Vec2(1f, 0f);
+            }
+        }
+
         ///
         /// The owner's reading of AI_069 is that a charge commits its direction on
         /// the state-entry tick and never re-aims, so once it is locked the whole
@@ -1099,6 +1350,21 @@ namespace Chaite.Tests
                             fight.Charges, fight.ClosestPerpendicular,
                             fight.MaxPerpendicular, fight.Refusal));
                     }
+            Console.WriteLine();
+            Console.WriteLine("== corridor escape (closed loop, dash led by px) ==");
+            foreach (var lead in new[] { -1f, 60f, 120f, 180f, 240f, 300f, 380f,
+                460f, 560f, 700f })
+            {
+                var fight = RunFight(new CorridorEscape(lead > 0f, lead),
+                    8000, bossOnly: true);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  dashLead={0,6:F0} dash={1,-5} ticks={2,5} hits={3,4} " +
+                    "charges={4,3} perpAtClosest={5,6:F1} maxPerp={6,6:F1} " +
+                    "refusal={7}",
+                    lead, lead > 0f, fight.Ticks, fight.Hits, fight.Charges,
+                    fight.ClosestPerpendicular, fight.MaxPerpendicular,
+                    fight.Refusal));
+            }
             Console.WriteLine();
             Console.WriteLine("== one charge, tick by tick (dash on the lock tick) ==");
             var traced = RunFight(new BeatCycleDodge(true, DashAim.Flee, 1), 6000,
