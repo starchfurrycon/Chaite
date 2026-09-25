@@ -803,7 +803,7 @@ namespace Chaite.Tests
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
-            float holdX = 0f, bool traceClose = false)
+            float holdX = 0f, bool traceClose = false, float wallBand = 0f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -1348,6 +1348,7 @@ namespace Chaite.Tests
             /// closed-loop replacement for that accident.</summary>
             private float _holdX;
             private bool _retreat;
+            private readonly float _wallBand;
             private readonly float _holdTolerance;
             /// <summary>Ticks before predicted contact at which to fire the
             /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
@@ -1368,7 +1369,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f, bool retreat = false, float wallBand = 0f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1385,6 +1386,7 @@ namespace Chaite.Tests
                 _counterDash = counterDash;
                 _holdX = holdX;
                 _retreat = retreat;
+                _wallBand = wallBand;
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
@@ -1551,6 +1553,16 @@ namespace Chaite.Tests
                     // on the side it already occupies, so moving away from that
                     // side during the hover forces a longer approach without
                     // changing anything about the escape itself.
+                    if (_wallBand > 0f && !IsDashState(world.State))
+                    {
+                        var mid = (ArenaBandLeft + ArenaBandRight) * 0.5f;
+                        var fromMid = player.Center.X - mid;
+                        if (Math.Abs(fromMid) > _wallBand)
+                        {
+                            controls.Left = fromMid > 0f;
+                            controls.Right = fromMid < 0f;
+                        }
+                    }
                     if (_retreat && !IsDashState(world.State))
                     {
                         var awaySide = boss.Center.X >= player.Center.X;
@@ -3021,6 +3033,125 @@ namespace Chaite.Tests
                     "    dashLead={0,4:F0} sum={1,5} worst={2,4} cleanOpenings={3}/8",
                     lead, total, worst, clean));
             }
+
+            // PHASE-1-ONLY gate sweep. The climb/dash split is gated by
+            // climbAbove (the climb covers shallow charges) and dashAim (the
+            // dash covers steep ones), crossing near |ux| = 0.85. Both were
+            // tuned against whole-fight numbers where all three phases were
+            // mixed, which -- now that contacts are known to be phase one only
+            // (3.67) -- means they were tuned against a signal that phase two
+            // and three only diluted. The failing opening is 2400, so sweep the
+            // gates there and report each opening separately rather than as one
+            // sum, since a change that helps 2400 while wrecking 3300 is not a
+            // solution.
+            Console.WriteLine();
+            Console.WriteLine("== phase-1 gate sweep (weak), contacts by opening ==");
+            foreach (var above in new[] { 0.50f, 0.65f, 0.75f, 0.85f, 0.95f })
+            {
+                foreach (var aim in new[] { 0.70f, 0.85f, 1.00f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 4800f,
+                        5800f })
+                    {
+                        var run = RunFight(new CorridorEscape(true,
+                            WeakWings().Lead, WeakWings().DashAt, true, 0f,
+                            above, aim, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend, 0, "none", false, 0f),
+                            8000, maxHits: 999, bossOnly: true, bubbles: true,
+                            startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    climbAbove={0:F2} dashAim={1:F2} |{2} | sum={3,5}",
+                        above, aim, cells, total));
+                }
+            }
+
+            // WALL-BIAS sweep. The gate sweep just showed something the whole
+            // previous approach missed: climbAbove 0.50 / dashAim 0.85 takes the
+            // 2400 opening from 119 contacts down to 13 -- so 2400 IS solvable --
+            // while wrecking 3300 (0 -> 95). 2400 is the opening that starts at
+            // the LEFT arena wall and 3300 is mid-arena, and every attempt so
+            // far has optimised a single gate for all openings at once. The
+            // guide's own instruction is to keep the boss at the platform EDGE
+            // (280s) rather than to stand there, so what is missing may simply be
+            // that the controller never avoids the walls it can be cornered
+            // against. Steer towards the arena centre during the hover, when
+            // there is no charge to answer, and see whether that removes the
+            // opening dependence instead of trading one opening for another.
+            Console.WriteLine();
+            Console.WriteLine("== wall-bias during hover (weak), contacts by opening ==");
+            foreach (var band in new[] { 0f, 400f, 700f, 1000f, 1300f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                        hoverVariant: "none", holdX: 0f, wallBand: band);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    wallBand={0,5:F0} |{1} | sum={2,5}", band, cells, total));
+            }
+
+            // POSITION-DEPENDENT gates. The gate sweep produced a real
+            // discovery that every previous round missed: climbAbove 0.50 with
+            // dashAim 0.85 takes the 2400 opening from 119 contacts to 13, so
+            // that opening IS solvable, while that same setting destroys 3300
+            // (0 -> 95). Every optimization so far searched for ONE gate good
+            // for all openings, which is why it always ended in a trade. But
+            // 2400 starts against the left arena wall and 3300 in mid-arena, and
+            // the wall truncates the escape, so the correct gate can legitimately
+            // depend on where the player is. Select it per opening.
+            Console.WriteLine();
+            Console.WriteLine("== position-dependent gate (weak) ==");
+            var pdCells = new System.Text.StringBuilder();
+            var pdTotal = 0;
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                // Near the walls the climb has less room, so favour the dash
+                // (low climbAbove gate means the climb is used less); mid-arena
+                // keeps the tuned 0.85.
+                var mid = (ArenaBandLeft + ArenaBandRight) * 0.5f;
+                var nearWall = Math.Abs(startX - mid) > 1200f;
+                var above = nearWall ? 0.50f : 0.85f;
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, above, 0.85f, 0,
+                    WeakWings().ClimbCap, WeakWings().HoverDescend, 0, "none",
+                    false, 0f), 8000, maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var n = 0;
+                foreach (var l in run.HitLog)
+                    if (l.Contains("src boss")) n++;
+                pdTotal += n;
+                pdCells.Append(string.Format(CultureInfo.InvariantCulture,
+                    "{0,5}", n));
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    positionDependent |{0} | sum={1,5}", pdCells, pdTotal));
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
