@@ -140,6 +140,10 @@ namespace Chaite.Tests
             public int ChargeCount;
             public int Tick;
             public int TicksSinceBubbleDamage;
+            /// <summary>Peak realised |velocity.X| this fight, see FightResult.</summary>
+            public float PeakHorizontalSpeed;
+            /// <summary>Ticks where the arena clamp fired, see FightResult.</summary>
+            public int BandClampTicks;
             // Research switches. Turning a threat class off is how the lab
             // attributes a remaining hit to a mechanism instead of to "the
             // boss" in general.
@@ -953,6 +957,14 @@ namespace Chaite.Tests
                 }
                 var perpendicular = 0f;
                 var numerator = 0f;
+                // Instrumentation for the speed-ceiling investigation: did the
+                // clamp just fire, and how fast is the player really going?
+                if (next.Position.X <= bandLeft + 0.01f ||
+                    next.Position.X >= bandRight - next.Width - 0.01f)
+                    world.BandClampTicks++;
+                var absVx = Math.Abs(next.Velocity.X);
+                if (absVx > world.PeakHorizontalSpeed)
+                    world.PeakHorizontalSpeed = absVx;
                 frame = next;
                 if (frame.Position.X < world.MinPlayerX)
                     world.MinPlayerX = frame.Position.X;
@@ -1224,7 +1236,18 @@ namespace Chaite.Tests
                 MinPlayerX = world.MinPlayerX,
                 MaxPlayerX = world.MaxPlayerX,
                 FinalPlayerX = frame.Position.X,
+                PeakHorizontalSpeed = world.PeakHorizontalSpeed,
+                BandClampTicks = world.BandClampTicks,
+                BossContacts = CountBossContacts(world.HitLog),
             };
+        }
+
+        private static int CountBossContacts(List<string> log)
+        {
+            var n = 0;
+            foreach (var l in log)
+                if (l.Contains("src boss")) n++;
+            return n;
         }
 
         private sealed class FightResult
@@ -1248,6 +1271,22 @@ namespace Chaite.Tests
             /// </summary>
             public float ClosestPerpendicular;
             public List<string> ChargeLog = new List<string>();
+            /// <summary>
+            /// Largest |velocity.X| the player actually reached. The configured
+            /// wing speed is an input to the forward model, not an outcome, so this
+            /// says whether a speed sweep was measuring the wings or something
+            /// upstream of them.
+            /// </summary>
+            public float PeakHorizontalSpeed;
+            /// <summary>
+            /// Ticks on which the arena band clamp moved the player. At higher
+            /// speed the player reaches BandLeft/BandRight sooner and the clamp
+            /// zeroes horizontal velocity, so a speed sweep can end up measuring
+            /// the wall instead of the wings.
+            /// </summary>
+            public int BandClampTicks;
+            /// <summary>Contacts attributable to the boss body.</summary>
+            public int BossContacts;
         }
 
         private interface IFishronController
@@ -5228,6 +5267,78 @@ namespace Chaite.Tests
                     "    speed={0,5:F2} |{1} | sum={2,5} clean={3}/8",
                     sp, cells, total, clean));
             }
+
+            // WHAT DOES THE PLAYER'S VELOCITY ACTUALLY DO? Both controllers stall
+            // at a ceiling near speed 12 while the physics says faster should be
+            // easier, and 12 is suspiciously round. If the configured speed is not
+            // being realised, or if the player is spending the fight pinned against
+            // the arena band with its velocity zeroed, then the speed sweeps have
+            // been measuring the clamp rather than the wings. This samples the
+            // forward model directly: the peak horizontal speed reached, how often
+            // the band clamp fires, and the min/max X visited.
+            Console.WriteLine();
+            Console.WriteLine("== realised horizontal motion vs configured speed ==");
+            foreach (var sp in new[] { 6.75f, 10f, 12f, 12.1f, 14f, 15.82f, 16.4f,
+                20f })
+            {
+                var ctrl = new PredictiveDodge(50, true);
+                var run = RunFight(ctrl, 4000, maxHits: 999, bossOnly: true,
+                    bubbles: true, startX: 3300f, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                    wingAccRunSpeed: sp);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    cfg={0,5:F2} peakVx={1,6:F2} clampTicks={2,5} " +
+                    "minX={3,7:F0} maxX={4,7:F0} boss={5,4}",
+                    sp, run.PeakHorizontalSpeed, run.BandClampTicks, run.MinPlayerX,
+                    run.MaxPlayerX, run.BossContacts));
+            }
+
+            // WIDE ARENA. The clamp counts just measured make the diagnosis
+            // concrete: at the documented wing speeds the player spends roughly a
+            // third to a half of the fight pressed against the arena band with its
+            // horizontal velocity zeroed, which is exactly why "faster" has been
+            // scoring worse. The lab's band is 5000 px wide, and the openings
+            // tested run from 2400 to 5800 -- only 3400 px of usable room. The real
+            // fight is a long straight ocean platform, so widen the band and re-run
+            // the speed response. If the ceiling moves, it was the arena and not
+            // the wings.
+            Console.WriteLine();
+            Console.WriteLine("== PREDICTIVE dodge at TRUE wing speeds, wide arena ==");
+            var savedBandL = ArenaBandLeft;
+            var savedBandR = ArenaBandRight;
+            foreach (var wide in new[] { false, true })
+            {
+                if (wide) { ArenaBandLeft = -20000f; ArenaBandRight = 30000f; }
+                else { ArenaBandLeft = 1000f; ArenaBandRight = 6000f; }
+                foreach (var sp in new[] { 12f, 15.82f, 16.4f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    var clampTotal = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new PredictiveDodge(50, true);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: sp);
+                        total += run.BossContacts;
+                        clampTotal += run.BandClampTicks;
+                        if (run.BossContacts == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", run.BossContacts));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    arena={0,-5} speed={1,5:F2} |{2} | sum={3,5} " +
+                        "clean={4}/8 clamp={5,6}", wide ? "wide" : "lab",
+                        sp, cells, total, clean, clampTotal));
+                }
+            }
+            ArenaBandLeft = savedBandL;
+            ArenaBandRight = savedBandR;
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
