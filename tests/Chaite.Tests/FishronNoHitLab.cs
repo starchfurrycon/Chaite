@@ -1322,13 +1322,24 @@ namespace Chaite.Tests
             private readonly int _horizon;
             private readonly bool _allowDash;
             private readonly int _dashCooldown;
+            /// <summary>
+            /// Per-tick discount applied to clearance as the rollout goes forward.
+            /// Maximising the unweighted minimum over a long horizon makes the
+            /// controller sacrifice the immediate tick to protect a distant one,
+            /// which is the wrong trade during a 28-tick charge; discounting keeps
+            /// the near future dominant while still penalising a lookup that leads
+            /// into trouble. 1.0 means no discount at all.
+            /// </summary>
+            private readonly float _discount;
 
             private int _lastDashTick = -1000;
 
-            public PredictiveDodge(int horizon, bool allowDash = true)
+            public PredictiveDodge(int horizon, bool allowDash = true,
+                float discount = 1f)
             {
                 _horizon = horizon;
                 _allowDash = allowDash;
+                _discount = discount;
             }
 
             public void Reset() => _lastDashTick = -1000;
@@ -1403,6 +1414,7 @@ namespace Chaite.Tests
                 var f = frame;
                 var controls = first;
                 var worst = float.MaxValue;
+                var rawWorst = float.MaxValue;
                 var bvx = boss.Velocity.X;
                 var bvy = boss.Velocity.Y;
                 var bx = boss.Position.X;
@@ -1477,7 +1489,15 @@ namespace Chaite.Tests
                     var gapX = Math.Abs(px - (bx + bw)) - (f.Width * 0.5f + bw);
                     var gapY = Math.Abs(py - (by + bh)) - (f.Height * 0.5f + bh);
                     var clear = Math.Max(gapX, gapY);
-                    if (clear < worst) worst = clear;
+                    // At discount 1 this is exactly the worst clearance over the
+                    // rollout, which is what scored zero at speed 12. Below 1 the
+                    // near future is weighted more heavily; the "weighted" value can
+                    // no longer be compared against zero as a collision test, so the
+                    // raw clearance still drives that while the weighted figure only
+                    // breaks ties between two candidates that both stay clear.
+                    var weighted = clear * (float)Math.Pow(_discount, i);
+                    if (weighted < worst) worst = weighted;
+                    if (clear < rawWorst) rawWorst = clear;
 
                     // Hold the horizontal input for the whole horizon: this is a
                     // decision about which way to commit, not a one-tick nudge.
@@ -1494,7 +1514,12 @@ namespace Chaite.Tests
                 // Prefer the action that keeps the most clearance, and break ties
                 // toward staying airborne (wing time is cheap, the floor is not).
                 var wing = f.Flight.WingTime;
-                return worst + wing * 0.01f;
+                // A candidate that actually collides during the rollout is put
+                // strictly below every candidate that does not, whatever the
+                // discount did to its weighted score.
+                var score = worst + wing * 0.01f;
+                if (rawWorst <= 0f) score -= 100000f;
+                return score;
             }
         }
 
@@ -5339,6 +5364,86 @@ namespace Chaite.Tests
             }
             ArenaBandLeft = savedBandL;
             ArenaBandRight = savedBandR;
+
+            // LONGER HORIZONS AT TRUE SPEED. The horizon trend was monotonic at the
+            // true wing speed (1026 -> 879 -> 165 for horizons 20, 35, 50), which
+            // is the signature of a controller that simply needs to look further
+            // ahead rather than one that cannot work. Push the horizon well past
+            // the 28-tick charge length so a rollout covers a whole charge plus the
+            // repositioning after it, and see whether the trend continues to zero.
+            Console.WriteLine();
+            Console.WriteLine("== PREDICTIVE dodge, long horizons, TRUE speeds ==");
+            Console.WriteLine("    (horizon 120 over 8 openings x 8000 ticks is far " +
+                "too slow, so: two horizons, fewer openings, shorter fight)");
+            foreach (var sp in new[] { 15.82f, 16.4f })
+            {
+                foreach (var hz in new[] { 75, 100 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+                    {
+                        var ctrl = new PredictiveDodge(hz, true);
+                        var run = RunFight(ctrl, 4000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: sp);
+                        total += run.BossContacts;
+                        if (run.BossContacts == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", run.BossContacts));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    speed={0,5:F2} horizon={1,3} |{2} | sum={3,5} " +
+                        "clean={4}/4", sp, hz, cells, total, clean));
+                }
+            }
+
+            // DISCOUNTED SCORING. Unweighted worst-case scoring keeps improving as
+            // the horizon grows (165 at 50, 119 at 75, 59 at 100 for speed 15.82),
+            // which means it is using the extra lookahead to trade the immediate
+            // tick against a distant one. Discounting makes the near future
+            // dominate, so a long horizon can be used without that trade. First
+            // confirm the discount does not destroy the known zero at speed 12,
+            // which discount 1.0 reproduces.
+            Console.WriteLine();
+            Console.WriteLine("== discount x horizon, weak wings ==");
+            Console.WriteLine("    (4 openings and 3000 ticks to keep this " +
+                "tractable; horizon 100 costs ~50M forward-model steps)");
+            foreach (var sp in new[] { 12f, 15.82f, 16.4f })
+            {
+                foreach (var dc in new[] { 1f, 0.97f, 0.94f })
+                {
+                    foreach (var hz in new[] { 50, 90 })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var clean = 0;
+                        foreach (var startX in new[] { 2400f, 3300f, 4800f,
+                            5800f })
+                        {
+                            var ctrl = new PredictiveDodge(hz, true, dc);
+                            var run = RunFight(ctrl, 3000, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: WeakWings().JumpSpeed,
+                                wingTimeMax: WeakWings().FlyTicks,
+                                autoJump: true, wingAccRunSpeed: sp);
+                            total += run.BossContacts;
+                            if (run.BossContacts == 0) clean++;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,5}",
+                                run.BossContacts));
+                        }
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    speed={0,5:F2} disc={1,4:F2} hz={2,3} |{3} " +
+                            "| sum={4,5} clean={5}/4", sp, dc, hz, cells, total,
+                            clean));
+                    }
+                }
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
