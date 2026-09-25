@@ -1334,6 +1334,12 @@ namespace Chaite.Tests
             /// closed-loop replacement for that accident.</summary>
             private float _holdX;
             private readonly float _holdTolerance;
+            /// <summary>Ticks before predicted contact at which to fire the
+            /// dash, so the 15 immune ticks cover the arrival (3.50). Zero
+            /// restores the old fire-on-lead behaviour.</summary>
+            private readonly int _dashAtContact;
+            /// <summary>Dash only when the committed line would actually hit.</summary>
+            private readonly bool _gateDashOnPrediction;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
@@ -1343,7 +1349,8 @@ namespace Chaite.Tests
                 float dashAim = 0.85f, int jumpPulse = 0, float climbCap = 420f,
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
-                float holdX = 0f)
+                float holdX = 0f, int dashAtContact = 0,
+                bool gateDashOnPrediction = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1360,6 +1367,8 @@ namespace Chaite.Tests
                 _counterDash = counterDash;
                 _holdX = holdX;
                 _holdTolerance = 40f;
+                _dashAtContact = dashAtContact;
+                _gateDashOnPrediction = gateDashOnPrediction;
             }
 
             public void Reset()
@@ -1686,6 +1695,48 @@ namespace Chaite.Tests
                     boss.Center.X) * _ux.X + (frame.Position.Y + frame.Height * 0.5f -
                     boss.Center.Y) * _ux.Y;
                 if (toBoss > _dashLead) return controls;
+
+                // Scheduled i-frames. The 3.50 trace showed the run survives by
+                // eating charges through the dash's 15 immune ticks rather than
+                // by out-clearing them, so those ticks are the resource to
+                // spend and spending them early wastes them. The boss closes
+                // along the committed line at a known speed, so how many ticks
+                // remain before it reaches the player is computable, and the
+                // dash should fire when that count is small enough for the 15
+                // immune ticks to still cover the arrival.
+                if (_dashAtContact > 0)
+                {
+                    // Closing speed along the line: the boss's own velocity
+                    // projected on the line, plus the player's, which is what
+                    // decides whether the gap is shrinking.
+                    var closing = (boss.Velocity.X - frame.Velocity.X) * _ux.X +
+                        (boss.Velocity.Y - frame.Velocity.Y) * _ux.Y;
+                    if (closing > 0.1f)
+                    {
+                        var ticksToContact = -toBoss / closing;
+                        if (ticksToContact > _dashAtContact) return controls;
+                    }
+                }
+
+                // Prediction-error gating. The boss locks onto the player's
+                // position at commit and never re-aims, so once the player is
+                // clear of the committed LINE by RequiredClearance, that charge
+                // cannot hit whatever the boss does afterwards. Dashing then is
+                // worse than wasted: it burns 15 immune ticks and a 20-tick
+                // cooldown that the next charge may need. RequiredClearance is
+                // exactly "how far off the line the centre must be for the two
+                // rectangles not to overlap", so it is the right quantity to
+                // gate on rather than a tuned distance.
+                if (_gateDashOnPrediction)
+                {
+                    var offX = frame.Position.X + frame.Width * 0.5f - boss.Center.X;
+                    var offY = frame.Position.Y + frame.Height * 0.5f - boss.Center.Y;
+                    var gateNeed = RequiredClearance(_ux.X, _ux.Y);
+                    var reach = 75f + 10f;
+                    if (offX * offX + offY * offY >
+                        (gateNeed + reach) * (gateNeed + reach))
+                        return controls;
+                }
                 controls.Dash = true;
                 _dashIssued = true;
                 return controls;
@@ -2427,6 +2478,113 @@ namespace Chaite.Tests
                 jumpSpeed: WeakWings().JumpSpeed,
                 wingTimeMax: WeakWings().FlyTicks, autoJump: true,
                 traceClose: true);
+
+            // Scheduled i-frames (3.50). Instead of spending the dash as soon
+            // as the charge closes inside the lead, fire it a fixed number of
+            // ticks before the boss is predicted to arrive, so the fifteen
+            // immune ticks cover the contact. Swept over openings, because the
+            // whole question is whether scheduling makes the result independent
+            // of where the fight starts -- which nothing so far has.
+            Console.WriteLine();
+            Console.WriteLine("== scheduled i-frames: dashAtContact x opening ==");
+            foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+            {
+                var line = new System.Text.StringBuilder(string.Format(
+                    CultureInfo.InvariantCulture, "    startX={0,5:F0} :", startX));
+                var best = 9999;
+                var bestAt = -1;
+                foreach (var dac in new[] { 0, 2, 4, 6, 8, 10, 12, 14, 16 })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f, dac), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    line.Append(string.Format(CultureInfo.InvariantCulture,
+                        " {0}:{1}", dac, n));
+                    if (n < best) { best = n; bestAt = dac; }
+                }
+                Console.WriteLine(line.ToString());
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "                   best={0} at dashAtContact={1}", best,
+                    bestAt));
+            }
+
+            // dashAtContact had NO effect, which is itself informative: the
+            // dash fires early enough (dashLead 240) that predicted contact is
+            // never inside the scheduled window, so the schedule never binds.
+            // Native confirms the size of the waste -- eocDash starts at 15 and
+            // decrements once per tick while dashDelay runs 15 down to zero, so
+            // roughly 15 ticks of immunity are spent before the boss is close.
+            // Sweeping the lead alongside the schedule is what lets the
+            // schedule actually decide anything.
+            Console.WriteLine();
+            Console.WriteLine("== lead x schedule (weak set, startX 3300 and 5800) ==");
+            foreach (var startX in new[] { 3300f, 5800f })
+            {
+                foreach (var lead in new[] { 40f, 80f, 120f, 160f, 240f })
+                {
+                    var line = new System.Text.StringBuilder(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "    startX={0,5:F0} lead={1,3:F0} :", startX, lead));
+                    foreach (var dac in new[] { 0, 3, 6, 9, 12 })
+                    {
+                        var run = RunFight(new CorridorEscape(true, lead,
+                            WeakWings().DashAt, true, 0f,
+                            WeakWings().ClimbAbove, WeakWings().DashAim, 0,
+                            WeakWings().ClimbCap, WeakWings().HoverDescend, 0,
+                            "none", false, 0f, dac), 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        line.Append(string.Format(CultureInfo.InvariantCulture,
+                            " dac{0}:{1}", dac, n));
+                    }
+                    Console.WriteLine(line.ToString());
+                }
+            }
+
+            // Prediction-error gating: dash only when the committed line would
+            // actually hit. If the surviving run's fragility comes from spending
+            // i-frames on charges that were already misses, this should show up
+            // as a large improvement at the openings that previously failed.
+            Console.WriteLine();
+            Console.WriteLine("== prediction-gated dash (weak set) ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var off = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f, 0, false),
+                    8000, maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var on = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f, 0, true),
+                    8000, maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var nOff = 0;
+                foreach (var l in off.HitLog)
+                    if (l.Contains("src boss")) nOff++;
+                var nOn = 0;
+                foreach (var l in on.HitLog)
+                    if (l.Contains("src boss")) nOn++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} gateOff={1,4} gateOn={2,4}", startX,
+                    nOff, nOn));
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
