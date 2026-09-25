@@ -135,7 +135,7 @@ DIRECT_PLAYER_UPDATE completed defense=48 accRun=6.75
 
 ---
 
-## 3. 逐 tick 回放接口（状态机的交付通道）
+## 3. 逐 tick 回放接口（状态机的交付通道）— **已实测跑通**
 
 `RouteReplay` 从 `CHAITE_ROUTE_FILE` 读控制序列，两种格式：
 
@@ -145,7 +145,31 @@ DIRECT_PLAYER_UPDATE completed defense=48 accRun=6.75
 
 `CHAITE_ROUTE_SKIP` 声明"接管 tick"与"路线起点 tick"之差。
 
-> **验收口径：用真实引擎逐 tick 驱动状态机，读 `result.json` 的 `hits == 0`。**
+### 3.1 回放确实在驱动玩家（`game-probe-route-right`）
+
+用一条**恒定向右**的 8000 行路线（`tick,1,0,0,0`）跑 `monitor` 阶段：
+
+| 项目 | 实测 |
+|---|---|
+| 路线文件 | 已加载（`Route replay:` 打印） |
+| **有效战斗** | **`validBattle=True`，`bossSeen=True`** |
+| tick | 3000 |
+| **hits** | **5** |
+| 场地 | 399 格，`beach=True` |
+| **克盾冲刺** | **`dash started: 23`**，`dash-active ticks: 370` |
+| **冲刺撞到 NPC** | **`npc contact: 3`** |
+| 玩家 x 范围 | **640 .. 65,343**（确实在被驱动） |
+| **max \|vx\|** | **14.50** |
+
+> **这条路打通了原生验收的最后一环**：
+> **路线文件 → 真实引擎逐 tick 驱动 → 读 `hits`。**
+> 而且 `npc contact: 3` 证明**"冲刺撞到本体"这一事件在原生里可观测**，
+> 正是三阶段克盾反冲机制所需要的信号。
+
+### 3.2 验收判据
+
+> **`validBattle=True` 且 `hits == 0`** ⇒ 原生无伤。
+> 这是唯一可称为无伤的结果。
 
 ---
 
@@ -164,10 +188,21 @@ DIRECT_PLAYER_UPDATE completed defense=48 accRun=6.75
 
 ## 5. 待办
 
-1. **取得完整有效阶段名清单**（`GameProbe.cs:1697` 附近），
-   确认哪个阶段让路线接管走位并跑满全场；
-2. **生成第一条原生路线文件**并跑通 `CHAITE_ROUTE_FILE` 回放；
-3. **按 6.75 重新设计状态机**——实验台的全部结论建立在一个错误速度上，
-   **"12.0 窗口""幻影 boss"等结论需要在新速度下重新评估**；
-4. **两套配装各写一套**（弱翼 761 / 强翼猪鲨翅膀），
-   并确认强翼套的原生 `accRunSpeed` 实测值。
+1. **写路线生成器**：用一条可复现的离线状态机生成
+   `tick,direction,up,down,dash` 路线文件，交给原生回放。
+   这是下一步的主要工作，也是"状态机"这一交付物的载体。
+   - 起点：`tests/Chaite.Tests/FishronNoHitLab.cs` 里已有的控制器
+     （`PredictiveDodge` / `CorridorEscape`）可以复用为**假设生成器**，
+     但**必须知道它们的结论建立在错误的速度与错误的无敌帧上**（见 §0）；
+   - 更好的是**重写一套面向原生观测的状态机**，输入直接取
+     `charge-observations.jsonl` / `prehit-observations.jsonl` 的字段；
+2. **按 13.87 / 14.50 重新评估全部旧结论**——实验台用 12.0，
+   **低于真实速度**；
+3. **两套配装各写一套**：弱翼 761 已确认；
+   **强翼套（猪鲨翅膀）的原生 `accRunSpeed` 与实测峰值尚未测**，
+   需一次原生运行补齐；
+4. **三阶段克盾反冲**：现在 `npc contact` 可观测，
+   且原生链路证明冲刺可用，**这一机制终于可以在原生里真正验证**；
+5. **场地与环境的鲁棒性**：用户明确警告"场地或环境问题会导致状态机失效"，
+   所以每一条被接受的路线都应**至少在两种开局长边（left/right）各跑一次**。
+
