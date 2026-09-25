@@ -3213,7 +3213,7 @@ namespace Chaite.Tests
             Console.WriteLine("== adaptive vs fixed gates (weak), contacts by opening ==");
             for (var mode = 0; mode < 3; mode++)
             {
-                var label = mode == 0 ? "fixed 0.85/0.85 (baseline)"
+                var label = mode == 0 ? "fixed 0.88/0.85 (real baseline)"
                     : mode == 1 ? "fixed 0.50/0.85 (best for 2400)"
                     : "adaptive (state-driven)";
                 var cells = new System.Text.StringBuilder();
@@ -3241,6 +3241,63 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    {0,-26} |{1} | sum={2,5} clean={3}/8", label, cells,
                     total, clean));
+            }
+
+            // CAPABILITY question, made testable. For a HORIZONTAL charge the
+            // perpendicular is vertical, so the dash's 172 px -- which is
+            // horizontal -- contributes nothing to clearance; only the climb
+            // helps, and at 4.6 px/tick it needs ~23 ticks against ~18
+            // available. So a horizontal charge is UNREACHABLE by dodging, and
+            // the fix cannot be a better escape choice. The way out is to stop
+            // horizontal charges happening at all: the boss parks 200 px above
+            // the player, so if the player stays LOW the charge is steep, the
+            // perpendicular is nearly horizontal, and the dash -- 172 px of it
+            // -- does the work. climbAbove is the gate that decides whether the
+            // climb is attempted, so setting it above 1.0 disables climbing
+            // entirely, which is NOT the same as the 0.50 tested in 3.85: that
+            // still climbed on steep charges, i.e. still flew, which is what
+            // makes the next charge shallow.
+            Console.WriteLine();
+            Console.WriteLine("== never-climb vs climb (weak), contacts by opening ==");
+            foreach (var above in new[] { 0.50f, 0.88f, 1.01f, 1.50f, 9.00f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                var steep = 0;
+                var shallow = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, above, WeakWings().DashAim,
+                        0, WeakWings().ClimbCap, WeakWings().HoverDescend, 0,
+                        "none", false, 0f), 8000, maxHits: 999,
+                        bossOnly: true, bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                    // How steep are the charges this setting actually produces?
+                    foreach (var e in run.ChargeLog)
+                    {
+                        var m = System.Text.RegularExpressions.Regex.Match(e,
+                            @"angle\s+([0-9.]+)deg");
+                        if (!m.Success) continue;
+                        var ang = float.Parse(m.Groups[1].Value,
+                            CultureInfo.InvariantCulture);
+                        if (ang >= 60f) steep++; else shallow++;
+                    }
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    climbAbove={0,4:F2} |{1} | sum={2,5} clean={3}/8 " +
+                    "steep(>=60deg)={4,4} shallow={5,4}", above, cells, total,
+                    clean, steep, shallow));
             }
 
             // All threats, weak set, every opening: what still lands and from
