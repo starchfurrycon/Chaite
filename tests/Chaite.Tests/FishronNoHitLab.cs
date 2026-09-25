@@ -3373,6 +3373,90 @@ namespace Chaite.Tests
                 }
             }
 
+            // CLIMB-RATE SENSITIVITY. 4.3 turned up a live discrepancy: native
+            // WingMovement cancels part of gravity and floors the ascent at
+            // -jumpSpeed * 3, while the lab's DemonThrust has no cancellation and
+            // floors at -jumpSpeed * 1.5. The lab's measured ascent is 4.6 px/tick
+            // against a bare jumpSpeed of 5.01, and the LoadoutProfile carries
+            // ClimbRate 8.5 for this set -- a value recorded but never used by the
+            // motion code.
+            //
+            // Instead of editing the thrust model on a guess, measure how much the
+            // outcome depends on climb rate at all. RunFight drives ascent through
+            // jumpSpeed, so sweeping it tells us both whether ascent is the
+            // bottleneck and how much of the gap closing the discrepancy would
+            // buy. The weak set's own profile already uses 8.91 here, so 5.01 ->
+            // 8.91 is exactly the shot in question.
+            Console.WriteLine();
+            Console.WriteLine("== climb-rate sensitivity (weak), contacts by opening ==");
+            foreach (var js in new[] { 5.01f, 6.00f, 7.00f, 8.00f, 8.91f, 10.00f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: js,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    jumpSpeed={0,5:F2} |{1} | sum={2,5} clean={3}/8", js,
+                    cells, total, clean));
+            }
+
+            // DASH-AIM BOUNDARY. The close trace shows why phase one stalls: perp
+            // grows at only ~3.3 px/tick because the controller presses only L
+            // and never U. For a ~50 deg charge the normal is MOSTLY HORIZONTAL,
+            // so the dash's 172 px is the right instrument and the climb is the
+            // wrong one -- yet _dashAim = 0.85 withholds the dash-aiming branch
+            // from any charge shallower than |ux| = 0.85 (about 32 deg). Charges
+            // at 33-60 deg therefore get neither the dash aimed along the normal
+            // nor any vertical input, which is precisely the 34-44 deg family the
+            // lab's own notes say it kept dying to. Sweep the boundary upward.
+            Console.WriteLine();
+            Console.WriteLine("== dash-aim boundary (weak), contacts by opening ==");
+            foreach (var aim in new[] { 0.60f, 0.70f, 0.80f, 0.85f, 0.90f, 0.95f,
+                1.01f })
+            {
+                var cells = new System.Text.StringBuilder();
+                var total = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        aim, 0, WeakWings().ClimbCap, WeakWings().HoverDescend,
+                        0, "none", false, 0f), 8000, maxHits: 999,
+                        bossOnly: true, bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n == 0) clean++;
+                    cells.Append(string.Format(CultureInfo.InvariantCulture,
+                        "{0,5}", n));
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    dashAim={0,5:F2} |{1} | sum={2,5} clean={3}/8", aim,
+                    cells, total, clean));
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
