@@ -1671,17 +1671,25 @@ namespace Chaite.Tests
                 else controls.Up = true;
 
                     // Counter-dash: aim the dash INTO the boss rather than at
-                    // the escape side. This is the wiki's stated phase-three
-                    // answer -- the i-frames from dashing into him -- and it is
-                    // a different action from the geometric escape, not a
-                    // setting of it. Aiming into the boss is taken as the
-                    // direction along which the boss is closing on the player.
+                    // the escape side. This is the guide's stated mechanism for
+                    // trading the dash for i-frames.
+                    //
+                    // This deliberately does NOT return here. It used to, and
+                    // that silently disabled the whole option: controls.Dash is
+                    // only ever set at the end of this method, so an early
+                    // return meant the dash was NEVER issued. Every
+                    // "counter-dash" measurement before this fix was really
+                    // measuring "walk straight at the boss and never dash",
+                    // which is why all of them returned an identical 200
+                    // contacts per opening regardless of dashAtContact -- the
+                    // timing had nothing to act on. Setting only the heading and
+                    // letting control fall through to the trigger is what makes
+                    // the option mean what its name says.
                     if (_counterDash)
                     {
                         var toward = boss.Center.X >= player.Center.X;
                         controls.Right = toward;
                         controls.Left = !toward;
-                        return controls;
                     }
 
                     // The dash's 172 px is HORIZONTAL, so it only helps if it is
@@ -1723,7 +1731,8 @@ namespace Chaite.Tests
                 // the run's first contact. Charge 5 (33.7 deg) went the other
                 // way, 142.8 -> 195.6. The gate therefore sits at |ux| < 0.85,
                 // where the dash term starts to dominate.
-                if (Math.Abs(_ux.X) < _dashAim && Math.Abs(_ux.Y) > 0.15f)
+                if (!_counterDash && Math.Abs(_ux.X) < _dashAim &&
+                    Math.Abs(_ux.Y) > 0.15f)
                 {
                     var dashToward = -_ux.Y * escapeDir > 0f;
                     controls.Right = dashToward;
