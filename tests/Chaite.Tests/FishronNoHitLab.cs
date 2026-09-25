@@ -142,13 +142,14 @@ namespace Chaite.Tests
         // pinned build, whose measured constants are num2=.95 num5=.15 num4=1
         // num3=4.5 with an up-hover of 0.4. Horizontal run speed with boots is
         // accRunSpeed 6; the base sprint ceiling is 6.75.
-        private static PlayerMotionFrame FishronPlayerStart(float x, float floorY)
+        private static PlayerMotionFrame FishronPlayerStart(float x, float floorY,
+            float jumpSpeed = 5.01f)
         {
             var jump = new JumpSnapshot
             {
                 Known = true,
                 RemainingTicks = 15,
-                Speed = 5.01f,
+                Speed = jumpSpeed,
                 Height = 15,
                 ReleaseReady = true,
                 CloudAvailable = false,
@@ -754,7 +755,8 @@ namespace Chaite.Tests
         private static FightResult RunFight(IFishronController controller,
             int maxTicks, bool verbose = false, bool trace = false,
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
-            bool bubbles = false, bool? tornados = null, float startX = 3300f)
+            bool bubbles = false, bool? tornados = null, float startX = 3300f,
+            float jumpSpeed = 5.01f)
         {
             const float floorY = 6000f;
             var bandLeft = 1000f;
@@ -775,7 +777,7 @@ namespace Chaite.Tests
                 TornadoesEnabled = tornados ?? !bossOnly,
                 BossContactEnabled = true,
             };
-            var frame = FishronPlayerStart(startX, floorY);
+            var frame = FishronPlayerStart(startX, floorY, jumpSpeed);
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -1809,6 +1811,31 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "  climbAbove={0:F2} ticks={1,5} charges={2,3} bossHits={3,3}",
                     th, fight.Ticks, fight.Charges, contacts));
+            }
+            Console.WriteLine();
+            // jump.Speed is the ONE input that directly raises the climb
+            // ceiling, because DemonThrust clamps to exactly it. The native
+            // values are not guesses -- Player.cs line 2513 sets the base to
+            // 5.01 and line 19759 does `jumpSpeed += jumpSpeedBoost`, where the
+            // Frog Leg adds 2.4 (line 19741) and the Empress Brooch adds 1.8
+            // (line 19737). The lab fixture had been running the bare 5.01,
+            // i.e. no Frog Leg, so this sweep asks whether the item the fight
+            // is actually fought with changes the answer.
+            Console.WriteLine("== jump speed (wing climb ceiling) ==");
+            foreach (var js in new[] { 5.01f, 6.61f, 7.41f, 9.21f, 10.41f })
+            {
+                var tag = js < 5.02f ? "bare"
+                    : js < 7.4f ? "base+1.6"
+                    : js < 9.2f ? "frog leg" : "frog leg+brooch+";
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
+                    8000, maxHits: 1, bossOnly: true, bubbles: true,
+                    jumpSpeed: js);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  jumpSpeed={0,5:F2} ({1,-16}) firstHit={2,5} charges={3,3}",
+                    js, tag, fight.Ticks, fight.Charges));
             }
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
