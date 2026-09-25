@@ -45,6 +45,10 @@ namespace Chaite.Tests
         private const float EnragedChargeSpeed = 23f;
         private const float HoverAccel = 0.55f;
         private const float HoverMaxSpeed = 8.5f;
+        /// <summary>Native parks the hover at player.Center + (360 * sign, -200)
+        /// (NPC.cs:50098-50100). The lab used 300, which shifts where the boss
+        /// can get to inside the 30-tick hover and therefore the lock angle.</summary>
+        private const float HoverParkOffset = 360f;
         private const float HoverAccelPhase2 = 0.6f;
         private const float HoverMaxSpeedPhase2 = 10f;
         private const float HoverAccelPhase3 = 0.7f;
@@ -353,7 +357,7 @@ namespace Chaite.Tests
                 case 10:
                 {
                     if (world.HoverOffset == 0f)
-                        world.HoverOffset = 300f * Math.Sign(bc.X - pc.X);
+                        world.HoverOffset = HoverParkOffset * Math.Sign(bc.X - pc.X);
                     var target = new Vec2(pc.X + world.HoverOffset, pc.Y - 200f);
                     var toTarget = new Vec2(target.X - bc.X, target.Y - bc.Y);
                     var length = (float)Math.Sqrt(toTarget.X * toTarget.X +
@@ -437,7 +441,7 @@ namespace Chaite.Tests
                     if (world.StateTimer == 15)
                     {
                         if (world.HoverOffset == 0f)
-                            world.HoverOffset = 300f * Math.Sign(bc.X - pc.X);
+                            world.HoverOffset = HoverParkOffset * Math.Sign(bc.X - pc.X);
                         var landing = new Vec2(pc.X - world.HoverOffset, pc.Y - 200f);
                         world.BossX = landing.X - BossWidth * 0.5f;
                         world.BossY = landing.Y - BossHeight * 0.5f;
@@ -2703,6 +2707,55 @@ namespace Chaite.Tests
                 }
                 Console.WriteLine(line.ToString() + string.Format(
                     CultureInfo.InvariantCulture, "   clean={0}/8", clean));
+            }
+
+            // LOCK ANGLE DISTRIBUTION. 3.54 read the native hover as parking the
+            // boss at player + (360*sign, -200), which should make the lock
+            // direction almost purely horizontal. If that holds, the whole
+            // difficulty is explained in one number: RequiredClearance for a
+            // horizontal charge is 50 + 21 = 71 px measured VERTICALLY, and the
+            // player's climb is vertical, so climbing does buy that -- but only
+            // 71 px of it in a window of about 13 ticks. Measuring the actual
+            // angle distribution turns that from an argument into a number.
+            Console.WriteLine();
+            Console.WriteLine("== lock angle distribution (weak set, startX 3300) ==");
+
+            var angleRun = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                WeakWings().HoverDescend, 0, "none", false, 0f), 3000,
+                maxHits: 999, bossOnly: true, bubbles: true,
+                jumpSpeed: WeakWings().JumpSpeed,
+                wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+
+            var angles = new List<double>();
+            var angleRe = new System.Text.RegularExpressions.Regex(
+                @"angle\s+([0-9]+\.[0-9]+)deg");
+            foreach (var entry in angleRun.ChargeLog)
+            {
+                var m = angleRe.Match(entry);
+                if (!m.Success) continue;
+                double a;
+                if (double.TryParse(m.Groups[1].Value, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out a))
+                    angles.Add(a);
+            }
+            if (angles.Count > 0)
+            {
+                angles.Sort();
+                var near = 0;
+                foreach (var a in angles)
+                    if (a >= 75.0) near++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    n={0} min={1:F1} median={2:F1} max={3:F1} " +
+                    "atOrAbove75deg={4} ({5:F0}%)",
+                    angles.Count, angles[0], angles[angles.Count / 2],
+                    angles[angles.Count - 1], near,
+                    100.0 * near / angles.Count));
+            }
+            else
+            {
+                Console.WriteLine("    (no angle entries parsed)");
             }
 
             // All threats, weak set, every opening: what still lands and from
