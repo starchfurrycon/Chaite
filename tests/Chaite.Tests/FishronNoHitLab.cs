@@ -120,6 +120,10 @@ namespace Chaite.Tests
             public readonly List<Tornado> Tornadoes = new List<Tornado>();
             public readonly List<Sharkron> Sharkrons = new List<Sharkron>();
             public int Hits;
+            /// <summary>Player x extent over the run, for the drift analysis.</summary>
+            public float MinPlayerX = float.MaxValue;
+            public float MaxPlayerX = float.MinValue;
+            public float FinalPlayerX;
             public readonly List<string> HitLog = new List<string>();
             public int ImmuneTicks;
             /// <summary>Set only by the A/B check that the immunity matters.</summary>
@@ -840,6 +844,8 @@ namespace Chaite.Tests
             var chargeLockAlong = 0f;
             var chargeLockGap = 0f;
             var chargeEvents = new List<string>();
+            world.MinPlayerX = world.MaxPlayerX = startX;
+            world.MinPlayerX = world.MaxPlayerX = startX;
 
             while (world.Tick < maxTicks &&
                 (maxHits < 0 || world.Hits < maxHits))
@@ -895,6 +901,10 @@ namespace Chaite.Tests
                 var perpendicular = 0f;
                 var numerator = 0f;
                 frame = next;
+                if (frame.Position.X < world.MinPlayerX)
+                    world.MinPlayerX = frame.Position.X;
+                if (frame.Position.X > world.MaxPlayerX)
+                    world.MaxPlayerX = frame.Position.X;
 
                 var wasDash = IsDashState(world.State);
                 // A new charge commits its line on this tick, and the line is
@@ -1130,6 +1140,9 @@ namespace Chaite.Tests
                 ClosestPerpendicular = closestPerpendicular == float.MaxValue
                     ? 0f : closestPerpendicular,
                 ChargeLog = chargeEvents,
+                MinPlayerX = world.MinPlayerX,
+                MaxPlayerX = world.MaxPlayerX,
+                FinalPlayerX = frame.Position.X,
             };
         }
 
@@ -1137,6 +1150,10 @@ namespace Chaite.Tests
         {
             public int Ticks;
             public int Hits;
+            /// <summary>Player x extent over the run, for the drift analysis.</summary>
+            public float MinPlayerX = float.MaxValue;
+            public float MaxPlayerX = float.MinValue;
+            public float FinalPlayerX;
             public string Refusal;
             public List<string> HitLog = new List<string>();
             public int Charges;
@@ -2262,6 +2279,108 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    startX={0,5:F0} charges={1,3} bossContacts={2,4}",
                     startX, run.Charges, n));
+            }
+
+            // WHAT MAKES 3300 SPECIAL. The previous two rounds established that
+            // the result depends on the opening but not why. This records where
+            // the player actually is across the run and where each contact
+            // happens, which distinguishes the two candidate stories: the run
+            // settles into a favourable formation, or it drifts into the arena
+            // wall and is pinned there.
+            Console.WriteLine();
+            Console.WriteLine("== opening x-position and contact locations (weak set) ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var n = 0;
+                var first = "";
+                var last = "";
+                foreach (var line in run.HitLog)
+                {
+                    if (!line.Contains("src boss")) continue;
+                    n++;
+                    // The player coordinate is the last parenthesised pair.
+                    var at = line.LastIndexOf("player (");
+                    var coords = at >= 0 ? line.Substring(at + 8).TrimEnd(')') : "?";
+                    if (n == 1) first = "tick " + line.Split(' ')[1] + " at " + coords;
+                    last = "tick " + line.Split(' ')[1] + " at " + coords;
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} contacts={1,4} first=[{2}] last=[{3}]",
+                    startX, n, first, last));
+            }
+
+            // How far the run actually travels. The failing openings put their
+            // first and last contacts at the band edges (x 1014 and x 5483 for a
+            // runway of [1000, 6000]), which says the controller is not merely
+            // drifting but commuting the full width and taking hits at the
+            // turnarounds. The excursion is measured here instead of inferred.
+            Console.WriteLine();
+            Console.WriteLine("== x excursion per opening (weak set) ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} minX={1,8:F1} maxX={2,8:F1} " +
+                    "excursion={3,8:F1} finalX={4,8:F1} contacts={5,4}",
+                    startX, run.MinPlayerX, run.MaxPlayerX,
+                    run.MaxPlayerX - run.MinPlayerX, run.FinalPlayerX, n));
+            }
+
+            // The excursion result kills the spatial story: every opening
+            // traverses the full runway (min 1000, max 5980, span 4980), so
+            // 3300 does not avoid the walls at all. What differs between the
+            // openings is only WHEN the oscillation reaches the charge lines,
+            // i.e. a phase offset. If that is the mechanism, then a delay on
+            // the first dash -- the only phase knob the controller has -- should
+            // substitute for the opening, and every opening should have a
+            // working delay.
+            Console.WriteLine();
+            Console.WriteLine("== phase sweep: first-dash delay x opening ==");
+            Console.WriteLine("  (a working delay per opening means phase, not place)");
+            foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+            {
+                var line = new System.Text.StringBuilder(string.Format(
+                    CultureInfo.InvariantCulture, "    startX={0,5:F0} :", startX));
+                var best = 9999;
+                var bestAt = -1;
+                foreach (var delay in new[] { 0, 2, 4, 6, 8, 10, 12, 14, 16, 18,
+                    20, 24, 28, 32 })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        delay, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    line.Append(string.Format(CultureInfo.InvariantCulture,
+                        " {0}:{1}", delay, n));
+                    if (n < best) { best = n; bestAt = delay; }
+                }
+                Console.WriteLine(line.ToString());
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "                   best={0} at delay={1}", best, bestAt));
             }
 
             // All threats, weak set, every opening: what still lands and from
