@@ -754,7 +754,7 @@ namespace Chaite.Tests
         private static FightResult RunFight(IFishronController controller,
             int maxTicks, bool verbose = false, bool trace = false,
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
-            bool bubbles = false, bool? tornados = null)
+            bool bubbles = false, bool? tornados = null, float startX = 3300f)
         {
             const float floorY = 6000f;
             var bandLeft = 1000f;
@@ -775,7 +775,7 @@ namespace Chaite.Tests
                 TornadoesEnabled = tornados ?? !bossOnly,
                 BossContactEnabled = true,
             };
-            var frame = FishronPlayerStart(3300f, floorY);
+            var frame = FishronPlayerStart(startX, floorY);
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -1540,6 +1540,48 @@ namespace Chaite.Tests
         }
 
         // ------------------------------------------------------------------ lab
+        /// <summary>
+        /// Fine sweep of the opening position, looking for a start whose locked
+        /// charge angles all fall where the movement model can clear them. The
+        /// hover tracks the player, so the start is the only place the fight's
+        /// angle sequence can be chosen at all: a single zero-hit start would
+        /// demonstrate the escape end to end, and a sweep with none shows the
+        /// steep band is a property of the fight rather than of the tuning.
+        /// Run with --fishron-start-sweep [first] [last] [step].
+        /// </summary>
+        public static void FishronStartSweep(float first, float last, float step)
+        {
+            Console.WriteLine("== fine opening-position sweep ==");
+            var best = int.MaxValue;
+            var zeros = 0;
+            for (var sx = first; sx <= last; sx += step)
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
+                    8000, maxHits: 8, bossOnly: false, bubbles: false,
+                    startX: sx);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                if (contacts < best)
+                {
+                    best = contacts;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "  startX={0,7:F1} ticks={1,5} charges={2,3} " +
+                        "bossHits={3,3}   <- best so far", sx, fight.Ticks,
+                        fight.Charges, contacts));
+                }
+                if (contacts == 0)
+                {
+                    zeros++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "  ZERO-HIT START startX={0:F1} ticks={1} charges={2}",
+                        sx, fight.Ticks, fight.Charges));
+                }
+            }
+            Console.WriteLine("  zero-hit starts: " + zeros + ", best bossHits=" +
+                best);
+        }
+
         private static void FishronNoHitLab()
         {
             Console.WriteLine("== fishron no-hit lab ==");
