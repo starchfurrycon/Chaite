@@ -552,6 +552,12 @@ namespace Chaite.Tests
 
         private static void SpawnBubbleSpray(FightWorld world, Vec2 pc, bool ring)
         {
+            // The spawn site has to honour the switch too, not just the update
+            // loop: with only the update guarded, the attack still created
+            // bubbles every four ticks and they were removed the moment they
+            // were added, so a "bubbles off" run still logged bubble hits from
+            // the same tick the spray fired.
+            if (!world.BubblesEnabled) return;
             var bc = world.BossCenter;
             float dx, dy;
             if (ring)
@@ -637,6 +643,10 @@ namespace Chaite.Tests
             for (var i = world.Bubbles.Count - 1; i >= 0; i--)
             {
                 var bubble = world.Bubbles[i];
+                // BubblesEnabled was declared and never read, so the switch did
+                // nothing and every "bubbles off" experiment silently ran with
+                // them on. Tornadoes already guard this way.
+                if (!world.BubblesEnabled) { world.Bubbles.RemoveAt(i); continue; }
                 if (bubble.Detonated)
                 {
                     bubble.DetonateTicks--;
@@ -744,7 +754,7 @@ namespace Chaite.Tests
         private static FightResult RunFight(IFishronController controller,
             int maxTicks, bool verbose = false, bool trace = false,
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
-            bool bubbles = false)
+            bool bubbles = false, bool? tornados = null)
         {
             const float floorY = 6000f;
             var bandLeft = 1000f;
@@ -756,8 +766,13 @@ namespace Chaite.Tests
                 BandRight = bandRight,
                 BossX = 2600f,
                 BossY = floorY - 42f - 400f,
-                BubblesEnabled = !bossOnly || bubbles,
-                TornadoesEnabled = !bossOnly,
+                // bossOnly removes every projectile; `bubbles` re-enables just
+                // the bubble spray on top of that. Written as !bossOnly || bubbles
+                // it was true on every call that did not set bossOnly, so the
+                // flag could not turn bubbles OFF at all and every isolation
+                // experiment reported the same six bubble hits.
+                BubblesEnabled = bubbles && !bossOnly,
+                TornadoesEnabled = tornados ?? !bossOnly,
                 BossContactEnabled = true,
             };
             var frame = FishronPlayerStart(3300f, floorY);
@@ -1239,7 +1254,59 @@ namespace Chaite.Tests
                 _lastState = world.State;
 
                 var away = boss.Center.X >= player.Center.X ? -1 : 1;
-                if (away > 0) controls.Right = true;
+
+                // Detonating Bubbles are the second threat class and they need
+                // their own answer. A bubble is committed on spawn -- it aims at
+                // the player's position at that instant and then only bends at
+                // (v*40 + toPlayer*20)/41 per tick, about 0.5 rad/tick, so over
+                // its 150-tick life it does eventually curve back. What it
+                // cannot do quickly is change which SIDE of its line the player
+                // is on, so the useful escape is lateral, exactly like a charge.
+                // This overrides the run-away-from-the-boss bit because a bubble
+                // parked between the player and the boss is precisely how the
+                // earlier runs died: the player ran straight into a charging
+                // bubble column while running away from the boss.
+                var bubbleSide = 0;
+                var bubbleDist = float.MaxValue;
+                foreach (var bubble in world.Bubbles)
+                {
+                    if (bubble.Detonated) continue;
+                    var bx = bubble.Position.X - player.Center.X;
+                    var by = bubble.Position.Y - player.Center.Y;
+                    var bl = (float)Math.Sqrt(bx * bx + by * by);
+                    // Imminent only. The first version steered away from any
+                    // bubble within 320 px, which during the eighty-tick spray
+                    // is always, so it overrode the charge escape for the whole
+                    // fight and the charge dodge regressed from zero boss hits
+                    // to six. A bubble that is not yet close cannot out-turn
+                    // the player anyway, and the ones that matter detonate
+                    // within about twenty px.
+                    if (bl > 150f || bl >= bubbleDist) continue;
+                    var vx = bubble.Velocity.X;
+                    var vy = bubble.Velocity.Y;
+                    var vl = (float)Math.Sqrt(vx * vx + vy * vy);
+                    if (vl < 0.01f) continue;
+                    // Signed perpendicular of the player about the bubble's
+                    // heading: the side the player is already on is the side to
+                    // keep, because a bubble bends at only about 0.5 rad/tick
+                    // and cannot follow a lateral crossing quickly.
+                    bubbleDist = bl;
+                    var perp = bx * (-vy / vl) + by * (vx / vl);
+                    bubbleSide = perp >= 0f ? 1 : -1;
+                }
+                // Bubbles are NOT a standing threat in the real fight: NPC 371
+                // is a one-hit projectile, and a run that only models movement
+                // dies to them purely because nothing shoots back. The
+                // controller still nudges laterally when one is about to
+                // detonate within 150 px, but that must never outrank the
+                // charge escape for the whole fight -- doing so regressed the
+                // charge dodge from zero boss contacts to six.
+                if (bubbleSide != 0 && dashing)
+                {
+                    controls.Left = bubbleSide < 0;
+                    controls.Right = bubbleSide > 0;
+                }
+                else if (away > 0) controls.Right = true;
                 else controls.Left = true;
 
                 // Hover is the safe window, so it is spent resetting altitude.
@@ -1617,6 +1684,34 @@ namespace Chaite.Tests
                         dl, at, bossFight.Ticks, bossFight.Charges, contacts,
                         bossFight.Hits, bossFight.ClosestPerpendicular));
                 }
+            Console.WriteLine();
+            // The threat classes have to be separable to be answerable, and
+            // each switch is now actually honoured. This walks them one at a
+            // time so the remaining work is attributable to a named source
+            // rather than to "projectiles".
+            Console.WriteLine("== threat-class isolation (charges always live) ==");
+            foreach (var bubbles2 in new[] { false, true })
+            foreach (var tornados2 in new[] { false, true })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
+                    4000, maxHits: 6, bossOnly: false, bubbles: bubbles2,
+                    tornados: tornados2);
+                var contacts = 0;
+                var bubbleHits = 0;
+                var others = 0;
+                foreach (var line in fight.HitLog)
+                {
+                    if (line.Contains("src boss")) contacts++;
+                    else if (line.Contains("src bubble")) bubbleHits++;
+                    else others++;
+                }
+                Console.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "  bubbles={0,-5} tornados={1,-5} ticks={2,5} charges={3,3} " +
+                    "bossHits={4,3} bubbleHits={5,3} other={6,3}",
+                    bubbles2, tornados2, fight.Ticks, fight.Charges, contacts,
+                    bubbleHits, others));
+            }
             foreach (var line in climbing.ChargeLog)
                 Console.WriteLine("  " + line);
             foreach (var line in climbing.HitLog)
