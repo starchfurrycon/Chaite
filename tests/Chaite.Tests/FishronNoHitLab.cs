@@ -1241,6 +1241,83 @@ namespace Chaite.Tests
         }
 
         /// <summary>
+        /// A "W" shaped dodge: the vertical escape direction alternates with the
+        /// charge's ordinal rather than being chosen from the charge's angle.
+        ///
+        /// The guide draws the method as a W across successive charges, and a W is
+        /// an alternation. Driving the vertical direction from the charge index
+        /// makes vertical movement take part at a fixed duty cycle without letting
+        /// it dominate, which is the balance the climbAbove sweeps kept failing to
+        /// hit from the angle side.
+        /// </summary>
+        private sealed class WPattern : IFishronController
+        {
+            private readonly int _period;
+            private int _lastCharge = int.MinValue;
+            private int _index;
+
+            public WPattern(int period) => _period = period;
+
+            public void Reset()
+            {
+                _lastCharge = int.MinValue;
+                _index = 0;
+            }
+
+            public PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
+                PlayerSnapshot player, TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                var px = frame.Position.X + frame.Width * 0.5f;
+                var py = frame.Position.Y + frame.Height * 0.5f;
+                var bx = boss.Position.X + boss.Width * 0.5f;
+
+                // One increment per charge, so the parity is stable for the whole
+                // charge rather than flipping tick to tick.
+                if (world.AttackCounter != _lastCharge)
+                {
+                    _lastCharge = world.AttackCounter;
+                    _index++;
+                }
+                var leg = _index % _period;
+                var goDown = leg == 1 || leg == 2;
+
+                // Sideways: always away from the boss, so the horizontal leg of
+                // the W is never wasted.
+                controls.Right = bx < px;
+                controls.Left = bx >= px;
+
+                var altitude = world.FloorY - py;
+                if (goDown)
+                {
+                    // Down leg of the W. The floor truncates it, so a low player
+                    // goes up instead of pressing into the ground.
+                    if (altitude > 80f) controls.Down = true;
+                    else controls.Up = true;
+                }
+                else
+                {
+                    if (altitude < 260f)
+                    {
+                        controls.Up = true;
+                        controls.Jump = true;
+                    }
+                    else controls.Down = true;
+                }
+                return controls;
+            }
+        }
+
+        ///
+        /// This follows the owner's round-5 statement that bubbles are only a
+        /// problem if horizontal speed lapses, and the guide's W-shaped path with
+        /// horizontal distance pulled from the tornado. Every CorridorEscape
+        /// variant instead spends its effort climbing away from the charge line,
+        /// and both the climbAbove sweeps and the state-feedback attempt showed
+        /// that helping or harming. So this controller treats horizontal speed as
+        /// the durable resource and altitude as something merely to be maintained.
+        /// </summary>
+        /// <summary>
         /// Hold horizontal speed at its maximum and never stop moving sideways,
         /// using vertical input only to stay near the platform.
         ///
@@ -4136,6 +4213,52 @@ namespace Chaite.Tests
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "    wing={0,5:F2} dir={1,-13} |{2} | sum={3,5} " +
                         "clean={4}/8", wing, dir, cells, total, clean));
+                }
+            }
+
+            // W-SHAPED PATH, BY CHARGE INDEX. Every gate in this lab so far has
+            // been a function of the charge's ANGLE. The guide describes the
+            // method as a "W" instead: 再次w形走位躲开冲撞, with the shape drawn
+            // across SUCCESSIVE charges. A W is an alternating pattern -- down,
+            // up, down, up -- so the vertical direction should follow the charge's
+            // ORDINAL, not its geometry. That is a different axis of control from
+            // everything tried so far, and the error message it addresses is real:
+            // the climb sweeps showed vertical work must take part but must not
+            // dominate, and an alternating scheme is exactly the way to make it
+            // take part at a fixed duty cycle without letting it lead.
+            //
+            // The parity comes from the world's attack counter, which the lab
+            // already maintains per charge. Phase one is five charges, so a
+            // five-beat alternation repeats with the cycle's own period.
+            Console.WriteLine();
+            Console.WriteLine("== W-shaped path by charge index (weak) ==");
+            foreach (var wing in new[] { 0f, 12f, 15.82f })
+            {
+                foreach (var period in new[] { 2, 4 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new WPattern(period);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: wing);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    wing={0,5:F2} period={1} |{2} | sum={3,5} clean={4}/8",
+                        wing, period, cells, total, clean));
                 }
             }
 
