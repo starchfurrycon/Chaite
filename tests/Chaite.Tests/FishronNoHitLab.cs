@@ -282,11 +282,24 @@ namespace Chaite.Tests
 
         private static int HoverTicks(FightWorld world)
         {
+            // num3, per the native cascade. Difficulty is expert throughout.
+            //
+            // State 0 is only ever observed with ai[0] == 0, so flag3
+            // (ai[0] > 4) is false and flag5 && !flag3 reduces to
+            // ai[3] < 10. For the dash sequences 0..8 that is the 30-tick
+            // reduced cadence; sequences 10 and 11 are the attack markers
+            // that follow the dash group, where flag5 is false and the base
+            // 40 applies. Both arms used to be written out as 30.
+            //
+            // State 5 is the phase-two hover and carries ai[0] == 5, so
+            // flag3 is true: flag3 && flag5 gives expert 40 for the dash
+            // sequences 0..5, and the base 40 for the two attack markers.
+            // State 10 carries ai[0] == 10, so flag4 makes num3 a flat 30.
             if (world.Enraged) return EnragedHoverTicks;
             switch (world.State)
             {
-                case 0: return world.AttackCounter < 10 ? 30 : 30;
-                case 5: return world.AttackCounter < 6 ? 40 : 40;
+                case 0: return world.AttackCounter < 10 ? 30 : 40;
+                case 5: return 40;
                 case 10: return 30;
                 default: return 30;
             }
@@ -722,6 +735,12 @@ namespace Chaite.Tests
 
         /// <summary>Runs one deterministic fight with a supplied controller and
         /// reports the outcome. No randomness anywhere.</summary>
+        /// <summary>When set, every tick of a charge prints its along-line
+        /// projection, the boss's, the perpendicular clearance and the room
+        /// left over. A per-charge summary cannot say WHICH tick went wrong,
+        /// and the interesting failures are one or two ticks wide.</summary>
+        private static bool TraceCharge;
+
         private static FightResult RunFight(IFishronController controller,
             int maxTicks, bool verbose = false, bool trace = false,
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
@@ -772,6 +791,9 @@ namespace Chaite.Tests
             var chargeNearPlayerX = 0f;
             var chargeNearPlayerY = 0f;
             var chargeHit = false;
+            var chargeHitTick = -1;
+            var chargeLockAlong = 0f;
+            var chargeLockGap = 0f;
             var chargeEvents = new List<string>();
 
             while (world.Tick < maxTicks &&
@@ -838,7 +860,9 @@ namespace Chaite.Tests
                             CultureInfo.InvariantCulture,
                             "charge {0,3} start {1,5} angle {2,5:F1}deg " +
                             "req {3,5:F0} maxPerp {4,6:F1} perpAtClosest " +
-                            "{5,6:F1} closest {6,5:F0} hit={7,-5} danger={8,3} " +
+                            "{5,6:F1} closest {6,5:F0} hit={7,-5} at {16,4} " +
+                            "lockAlong {17,6:F0} lockGap {18,6:F0} " +
+                            "danger={8,3} " +
                             "corridor=[{9},{10}] near tick {11} " +
                             "boss=({12:F0},{13:F0}) ply=({14:F0},{15:F0})",
                             chargeOrdinal - 1, chargeStartTick,
@@ -847,7 +871,8 @@ namespace Chaite.Tests
                             chargeClosestDistance, chargeHit, chargeDangerTicks,
                             chargeCorridorFirst, chargeCorridorLast, chargeNearTick,
                             chargeNearBossX, chargeNearBossY, chargeNearPlayerX,
-                            chargeNearPlayerY));
+                            chargeNearPlayerY, chargeHitTick, chargeLockAlong,
+                            chargeLockGap));
                         if (chargeClosestPerpendicular < closestPerpendicular)
                             closestPerpendicular = chargeClosestPerpendicular;
                     }
@@ -861,10 +886,16 @@ namespace Chaite.Tests
                     chargeStartTick = world.Tick;
                     chargePlayer = new Vec2(frame.Position.X + frame.Width * 0.5f,
                         frame.Position.Y + frame.Height * 0.5f);
+                    chargeLockAlong = (chargePlayer.X - chargeOrigin.X) * chargeUx +
+                        (chargePlayer.Y - chargeOrigin.Y) * chargeUy;
+                    chargeLockGap = chargeLength -
+                        Math.Abs(chargePlayer.X - chargeOrigin.X) * Math.Abs(chargeUx) -
+                        Math.Abs(chargePlayer.Y - chargeOrigin.Y) * Math.Abs(chargeUy);
                     chargeMaxPerpendicular = 0f;
                     chargeClosestDistance = float.MaxValue;
                     chargeClosestPerpendicular = 0f;
                     chargeHit = false;
+                    chargeHitTick = -1;
                     chargeCorridorFirst = -1;
                     chargeCorridorLast = -1;
                     chargeDangerTicks = 0;
@@ -897,6 +928,17 @@ namespace Chaite.Tests
                         chargeMaxPerpendicular = perpendicular;
                     if (perpendicular > maxPerpendicular)
                         maxPerpendicular = perpendicular;
+                    if (TraceCharge)
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "    c{0} t{1,3} along {2,7:F1} boss {3,7:F1} " +
+                            "perp {4,6:F1} req {5,4:F0} room {6,7:F1} " +
+                            "ply=({7:F0},{8:F0}) v=({9:F1},{10:F1})",
+                            chargeOrdinal, world.Tick, numerator, bossAlong,
+                            perpendicular, requiredClearance,
+                            perpendicular - requiredClearance,
+                            playerX, playerY, frame.Velocity.X,
+                            frame.Velocity.Y));
                     // The closest approach is where the player's and the boss's
                     // projections onto the charge line meet -- not where the two
                     // bodies happen to be nearest each other in general, which
@@ -975,6 +1017,7 @@ namespace Chaite.Tests
                         BossHeight))
                 {
                     chargeHit = true;
+                    if (chargeHitTick < 0) chargeHitTick = world.Tick;
                     RegisterHit(world, "boss", frame.Position, frame.Width,
                         frame.Height);
                 }
@@ -1001,11 +1044,12 @@ namespace Chaite.Tests
                 chargeEvents.Add(string.Format(CultureInfo.InvariantCulture,
                     "charge {0,3} start {1,5} angle {2,5:F1}deg req {3,5:F0} " +
                     "maxPerp {4,6:F1} perpAtClosest {5,6:F1} closest {6,5:F0} " +
-                    "hit={7,-5} danger={8,3} corridor=[{9},{10}] (final)",
+                    "hit={7,-5} at {11,4} danger={8,3} corridor=[{9},{10}] (final)",
                     chargeOrdinal - 1, chargeStartTick, angleRad * 180.0 / Math.PI,
                     RequiredClearance(chargeUx, chargeUy), chargeMaxPerpendicular,
                     chargeClosestPerpendicular, chargeClosestDistance, chargeHit,
-                    chargeDangerTicks, chargeCorridorFirst, chargeCorridorLast));
+                    chargeDangerTicks, chargeCorridorFirst, chargeCorridorLast,
+                    chargeHitTick));
                 if (chargeClosestPerpendicular < closestPerpendicular)
                     closestPerpendicular = chargeClosestPerpendicular;
             }
@@ -1157,14 +1201,21 @@ namespace Chaite.Tests
         {
             private readonly bool _useDash;
             private readonly float _dashLead;
+            private readonly int _dashAtTimer;
+            private readonly bool _climb;
+            private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
 
-            public CorridorEscape(bool useDash, float dashLead)
+            public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
+                bool climb = false, float lead = 0f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
+                _dashAtTimer = dashAtTimer;
+                _climb = climb;
+                _lead = lead;
             }
 
             public void Reset()
@@ -1191,10 +1242,67 @@ namespace Chaite.Tests
                 if (away > 0) controls.Right = true;
                 else controls.Left = true;
 
+                // Build longitudinal separation BEFORE the lock, and keep it.
+                // The measured lock geometry is the whole story of this fight:
+                // a charge only 476 px long, locked when the player is 241 px
+                // along the line, reaches the player's position with sixteen
+                // ticks to spare, so the closest approach lands on the first
+                // tick of the charge and no escape can start early enough. The
+                // single charge this lab has ever dodged was locked at
+                // lockAlong=562 -- beyond the charge's own reach. Separation is
+                // therefore the primary objective and the perpendicular escape
+                // is the secondary one.
                 if (!dashing)
                 {
+                    if (_lead > 0f)
+                    {
+                        var leadX = player.Center.X - boss.Center.X;
+                        var leadY = player.Center.Y - boss.Center.Y;
+                        var need = (float)Math.Sqrt(leadX * leadX + leadY * leadY) < _lead;
+                        if (need)
+                        {
+                            if (away > 0) controls.Right = true;
+                            else controls.Left = true;
+                        }
+                    }
                     if (!frame.Grounded) controls.Up = true;
                     return controls;
+                }
+
+                // Wing ascent and the dash are two independent sources of
+                // perpendicular displacement, and they answer opposite cases.
+                // The dash is a horizontal impulse, so it carries its whole
+                // 172 px along the normal of a STEEP charge; a shallow charge
+                // is escaped by gaining height instead. Without this the
+                // shallow second charge had the player's vertical velocity
+                // pinned at zero for the entire charge, which is why every
+                // dash timing in the search returned the same peak.
+                //
+                // Both bits are required and they are NOT the same input:
+                // FlightMotion.ApplyJump tests controls.Jump for the impulse
+                // and controls.Up only for sustained ascent. Setting Up alone
+                // left the player grounded with velocity.Y at exactly zero for
+                // the whole charge, which is what the earlier "climb changed
+                // nothing" result was actually measuring.
+                //
+                // Climbing the whole charge is also self-defeating: gaining the
+                // 190 px needed for a shallow charge leaves the player high
+                // above the boss, which is the worst place to be when the next
+                // charge locks (the lock aims at the player, so a charge taken
+                // from below is steep). The ascent is therefore capped, and the
+                // hover spends the safe window coming back down. -380 is one
+                // boss-height and a half: enough to clear the ~104 px the
+                // separating-axis test demands for the shallow angles without
+                // climbing out of the boss's reach.
+                if (_climb)
+                {
+                    var climbCap = -380f;
+                    if (player.Center.Y < climbCap) controls.Down = true;
+                    else
+                    {
+                        controls.Jump = true;
+                        controls.Up = true;
+                    }
                 }
 
                 // Which way along the normal is the player already leaving?
@@ -1209,6 +1317,7 @@ namespace Chaite.Tests
 
                 if (!_useDash || _dashIssued || !frame.DashReady ||
                     frame.Dash.DashDelay < 0) return controls;
+                if (world.StateTimer < _dashAtTimer) return controls;
 
                 // Distance along the line still to run before the closest
                 // approach. The dash is spent once that is inside the lead, so
@@ -1381,13 +1490,87 @@ namespace Chaite.Tests
                     fight.Refusal));
             }
             Console.WriteLine();
+            // The lead decides how much of the dash's eighteen-tick decay is
+            // still live when the boss arrives, and the timer decides which
+            // tick of the charge spends it. Both matter and they interact:
+            // a long lead spent on tick zero is the same as a short one.
+            // Searching only the lead (as the sweep above does) cannot tell
+            // those apart, so the two are searched together here.
+            Console.WriteLine("== corridor search (dash lead x dash tick) ==");
+            var bestHits = int.MaxValue;
+            var bestLabel = "none";
+            foreach (var climb in new[] { false, true })
+            foreach (var lead in new[] { 40f, 80f, 120f, 160f, 200f, 260f,
+                320f, 380f, 440f, 500f })
+                foreach (var at in new[] { 0, 2, 4, 6, 8, 10, 12, 14 })
+                {
+                    var fight = RunFight(new CorridorEscape(true, lead, at, climb),
+                        8000, bossOnly: true);
+                    if (fight.Hits < bestHits)
+                    {
+                        bestHits = fight.Hits;
+                        bestLabel = string.Format(CultureInfo.InvariantCulture,
+                            "climb={0} lead={1:F0} at={2}", climb, lead, at);
+                    }
+                    if (fight.Hits <= 1 && climb)
+                        Console.WriteLine(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "  climb={0,-5} lead={1,6:F0} at={2,2} ticks={3,5} " +
+                            "hits={4,3} charges={5,3} perpAtClosest={6,6:F1} " +
+                            "maxPerp={7,6:F1}",
+                            climb, lead, at, fight.Ticks, fight.Hits,
+                            fight.Charges, fight.ClosestPerpendicular,
+                            fight.MaxPerpendicular));
+                }
+            Console.WriteLine("  best: hits=" + bestHits + " at " + bestLabel);
+            Console.WriteLine();
+            // Separation is the primary objective (see the lock-geometry note
+            // in CorridorEscape), so it is searched on its own axis rather than
+            // folded into the dash sweep above.
+            Console.WriteLine("== separation search (range held before the lock) ==");
+            var bestSep = int.MaxValue;
+            var bestSepLabel = "none";
+            foreach (var keep in new[] { 420f, 460f, 500f, 540f, 580f, 620f,
+                700f, 800f })
+            foreach (var climb in new[] { false, true })
+            {
+                var fight = RunFight(new CorridorEscape(true, 200f, 2, climb, keep),
+                    8000, bossOnly: true);
+                if (fight.Hits < bestSep)
+                {
+                    bestSep = fight.Hits;
+                    bestSepLabel = string.Format(CultureInfo.InvariantCulture,
+                        "keep={0:F0} climb={1}", keep, climb);
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  keep={0,6:F0} climb={1,-5} ticks={2,5} hits={3,3} " +
+                    "charges={4,3} perpAtClosest={5,6:F1} maxPerp={6,6:F1}",
+                    keep, climb, fight.Ticks, fight.Hits, fight.Charges,
+                    fight.ClosestPerpendicular, fight.MaxPerpendicular));
+            }
+            Console.WriteLine("  best: hits=" + bestSep + " at " + bestSepLabel);
+            Console.WriteLine();
             Console.WriteLine("== one charge, tick by tick (dash on the lock tick) ==");
+            TraceCharge = true;
             var traced = RunFight(new BeatCycleDodge(true, DashAim.Flee, 1), 6000,
                 trace: true, traceTicks: 72, maxHits: 3, bossOnly: true);
+            TraceCharge = false;
             Console.WriteLine("  hits=" + traced.Hits + " ticks=" + traced.Ticks);
             foreach (var line in traced.ChargeLog)
                 Console.WriteLine("  " + line);
             foreach (var line in traced.HitLog)
+                Console.WriteLine("  " + line);
+            Console.WriteLine();
+            // Same closed-loop escape, but with the wing ascent held. Printed
+            // tick by tick because "climb changed nothing" is only meaningful
+            // once it is visible whether the vertical velocity ever left zero.
+            Console.WriteLine("== corridor escape with wing ascent held ==");
+            TraceCharge = true;
+            var climbing = RunFight(new CorridorEscape(true, 200f, 6, true), 6000,
+                bossOnly: true);
+            TraceCharge = false;
+            Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks);
+            foreach (var line in climbing.ChargeLog)
                 Console.WriteLine("  " + line);
             Console.WriteLine();
             Console.WriteLine("== dodge sweep (lead ticks before charge) ==");
