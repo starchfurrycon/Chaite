@@ -782,7 +782,8 @@ namespace Chaite.Tests
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
-            bool autoJump = false, string hoverVariant = "none")
+            bool autoJump = false, string hoverVariant = "none",
+            float holdX = 0f)
         {
             const float floorY = 6000f;
             var bandLeft = ArenaBandLeft;
@@ -1277,6 +1278,14 @@ namespace Chaite.Tests
             private readonly string _hoverVariant;
             private readonly bool _counterDash;
             private readonly float _lead;
+            /// <summary>When positive, the controller maintains an anchor X
+            /// instead of drifting. 3.43 showed the drift is the reason the
+            /// zero-contact result does not generalise: with a bounded runway a
+            /// wall happens to stop the drift in the right place, and widening
+            /// the runway made every opening worse. Holding a position is the
+            /// closed-loop replacement for that accident.</summary>
+            private float _holdX;
+            private readonly float _holdTolerance;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
@@ -1285,7 +1294,8 @@ namespace Chaite.Tests
                 bool climb = false, float lead = 0f, float climbAbove = 0.75f,
                 float dashAim = 0.85f, int jumpPulse = 0, float climbCap = 420f,
                 float hoverDescend = 160f, int preposition = 0,
-                string hoverVariant = "none", bool counterDash = false)
+                string hoverVariant = "none", bool counterDash = false,
+                float holdX = 0f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1300,6 +1310,8 @@ namespace Chaite.Tests
                 _preposition = preposition;
                 _hoverVariant = hoverVariant;
                 _counterDash = counterDash;
+                _holdX = holdX;
+                _holdTolerance = 40f;
             }
 
             public void Reset()
@@ -1394,6 +1406,28 @@ namespace Chaite.Tests
                     if (!frame.Grounded &&
                         player.Center.Y > world.FloorY - _hoverDescend)
                         controls.Up = true;
+
+                    // Position hold, the closed-loop replacement for the drift
+                    // that 3.43 identified. The controller steers back towards
+                    // an anchor X during the hover, when there is no charge to
+                    // answer, so the run cannot wander into a bad configuration
+                    // over a hundred charges. Only the horizontal axis is
+                    // corrected here; the anchor is a standoff, not a full
+                    // formation, so this is deliberately one-dimensional.
+                    if (_holdX > 0f)
+                    {
+                        var offset = player.Center.X - _holdX;
+                        if (offset > _holdTolerance)
+                        {
+                            controls.Left = true;
+                            controls.Right = false;
+                        }
+                        else if (offset < -_holdTolerance)
+                        {
+                            controls.Right = true;
+                            controls.Left = false;
+                        }
+                    }
 
                     // The surviving contacts sit in the hover's last frames
                     // (state 0, seq 10, timer 14-18), which is the transition
@@ -2180,6 +2214,55 @@ namespace Chaite.Tests
             }
             ArenaBandLeft = savedLeft;
             ArenaBandRight = savedRight;
+
+            // Position hold: the closed-loop answer to the drift. Each opening
+            // holds its own anchor, so zero contact across openings would mean
+            // the strategy no longer depends on a wall stopping the drift.
+            Console.WriteLine();
+            Console.WriteLine("== position hold, weak set ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, startX), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                    holdX: startX);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    holdX={0,5:F0} charges={1,3} bossContacts={2,4}",
+                    startX, run.Charges, n));
+            }
+
+            // The null hypothesis: the hover branch's horizontal bits may
+            // simply be harmful, in which case the best hover input is none at
+            // all. _hoverDead makes the controller hold no horizontal direction
+            // while not dashing, which is different from every variant so far
+            // (they all assigned Left/Right there).
+            Console.WriteLine();
+            Console.WriteLine("== hover horizontal input removed (null hypothesis) ==");
+            foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                4800f, 5300f, 5800f })
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} charges={1,3} bossContacts={2,4}",
+                    startX, run.Charges, n));
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
