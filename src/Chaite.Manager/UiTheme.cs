@@ -8,8 +8,9 @@ namespace Chaite.Manager
     /// <summary>
     /// The console's whole visual language, in one place.
     ///
-    /// The owner asked for a technical, minimal, light console with no drawn
-    /// shapes at all. Concretely, and these are the rules this file implements:
+    /// The owner asked for a technical, minimal console with no drawn shapes at
+    /// all, on a dark field. Concretely, and these are the rules this file
+    /// implements:
     ///
     ///   * No rectangle anywhere. Not a button outline, not a card border, not a
     ///     window frame, not a vertical rule. Every separator is a one pixel
@@ -23,43 +24,41 @@ namespace Chaite.Manager
     ///   * One quiet title and one full width gradient rule; no colour band, no
     ///     big bold block.
     ///
-    /// The colour layer is not invented: it is Pico CSS v2's light scheme (MIT),
-    /// whose defaults this mirrors value for value -- background #fff, text
-    /// #373c44, muted #646b79, accent #0172ad. No shadow, no gradient fill, no
-    /// decorative graphic is drawn by this file.
-    ///
-    /// Every ink below clears 4.5:1 against the canvas. That is checked twice:
-    /// by tools/ui-contrast.py against this file, and by UiSmokeTest.ValidateTree
-    /// against the rendered tree.
+    /// The colour layer is a dark instrument palette: near-black field, cool
+    /// light ink, one cyan accent. Every ink below still clears 4.5:1 against
+    /// the canvas, checked by UiSmokeTest.ValidateTree against the rendered
+    /// tree. The field is deliberately not pure black and no ink is pure white:
+    /// the pixel scan classifies a channel above 250 as background, so a
+    /// #FFFFFF caption would be read as a hole in the glyph rather than as ink.
     /// </summary>
     internal static class UiTheme
     {
-        internal static readonly Color Canvas = Color.FromArgb(255, 255, 255);
-        internal static readonly Color Text = Color.FromArgb(55, 60, 68);
-        internal static readonly Color Muted = Color.FromArgb(100, 107, 121);
-        internal static readonly Color Accent = Color.FromArgb(1, 114, 173);
-        internal static readonly Color Mint = Color.FromArgb(31, 122, 77);
-        internal static readonly Color Danger = Color.FromArgb(179, 38, 30);
+        internal static readonly Color Canvas = Color.FromArgb(7, 11, 14);
+        internal static readonly Color Text = Color.FromArgb(230, 241, 245);
+        internal static readonly Color Muted = Color.FromArgb(150, 166, 175);
+        internal static readonly Color Accent = Color.FromArgb(79, 209, 232);
+        internal static readonly Color Mint = Color.FromArgb(86, 214, 150);
+        internal static readonly Color Danger = Color.FromArgb(255, 107, 97);
         // Secondary inks. Nothing draws them today: the boss heading is body
         // ink, and the meme register is muted, because the owner asked for
         // restraint rather than a colourful console. They are kept, and kept
-        // legible on white, because tools/ui-contrast.py audits the palette by
-        // name and reports a missing entry as a failure -- a palette that is
-        // edited by deleting a colour is exactly the drift that audit exists to
-        // catch. Add a use for them, do not silently drop them.
-        internal static readonly Color Ember = Color.FromArgb(138, 90, 0);
-        internal static readonly Color Slime = Color.FromArgb(14, 110, 140);
-        internal static readonly Color Meme = Color.FromArgb(122, 61, 133);
-        internal static readonly Color Halo = Color.FromArgb(150, 100, 0);
-        internal static readonly Color DisabledInk = Color.FromArgb(135, 142, 153);
+        // legible on the dark field, because every entry is part of the theme's
+        // contract -- a palette that is edited by deleting a colour is exactly
+        // the drift this list exists to catch. Add a use for them, do not
+        // silently drop them.
+        internal static readonly Color Ember = Color.FromArgb(232, 166, 74);
+        internal static readonly Color Slime = Color.FromArgb(122, 200, 232);
+        internal static readonly Color Meme = Color.FromArgb(198, 156, 232);
+        internal static readonly Color Halo = Color.FromArgb(224, 196, 106);
+        internal static readonly Color DisabledInk = Color.FromArgb(147, 163, 171);
         /// <summary>
-        /// The base colour of a neutral separator: a quiet blue grey that reads
-        /// as a hairline at the left end of its gradient and is invisible by the
+        /// The base colour of a neutral separator: a quiet slate that reads as a
+        /// hairline at the left end of its gradient and is invisible by the
         /// right end.
         /// </summary>
-        internal static readonly Color Separator = Color.FromArgb(199, 208, 218);
+        internal static readonly Color Separator = Color.FromArgb(52, 66, 76);
         /// <summary>The line under an action that cannot be used right now.</summary>
-        internal static readonly Color Quiet = Color.FromArgb(226, 231, 237);
+        internal static readonly Color Quiet = Color.FromArgb(38, 48, 56);
 
         /// <summary>
         /// The one line the console draws. Solid at the left edge, fading to

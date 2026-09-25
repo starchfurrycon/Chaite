@@ -94,6 +94,7 @@
     <Compile Include="RocketProductionTests.cs" />
     <Compile Include="MeleeProjectileProfileTests.cs" />
     <Compile Include="RouteCatalogContractTests.cs" />
+    <Compile Include="FishronNoHitLab.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Chaite.Core\Chaite.Core.csproj">

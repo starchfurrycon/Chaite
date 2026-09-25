@@ -914,6 +914,9 @@ namespace Chaite.Manager
 
             var longest = 0;
             var column = -1;
+            var fieldB = UiTheme.Canvas.B;
+            var fieldG = UiTheme.Canvas.G;
+            var fieldR = UiTheme.Canvas.R;
             for (var x = 0; x < width; x++)
             {
                 var run = 0;
@@ -921,8 +924,17 @@ namespace Chaite.Manager
                 {
                     if (excluded[y * width + x]) { run = 0; continue; }
                     var offset = y * data.Stride + x * 4;
-                    if (buffer[offset] > 250 && buffer[offset + 1] > 250 &&
-                        buffer[offset + 2] > 250) { run = 0; continue; }
+                    // The field is dark, so "background" can no longer be
+                    // spelled as "near white". A pixel counts as background when
+                    // it matches the canvas ink exactly, which covers both the
+                    // themed canvas and the white gutter a native control paints
+                    // outside its own client area.
+                    var blue = buffer[offset];
+                    var green = buffer[offset + 1];
+                    var red = buffer[offset + 2];
+                    if ((red > 250 && green > 250 && blue > 250) ||
+                        (red == fieldR && green == fieldG && blue == fieldB))
+                    { run = 0; continue; }
                     run++;
                     if (run <= longest) continue;
                     longest = run;
