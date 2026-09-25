@@ -815,7 +815,7 @@ namespace Chaite.Tests
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
             float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false,
-            float wingAccRunSpeed = -1f)
+            float wingAccRunSpeed = -1f, float startBossLife = 0f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -839,6 +839,13 @@ namespace Chaite.Tests
             };
             var frame = FishronPlayerStart(startX, floorY, jumpSpeed, wingTimeMax,
                 autoJump, wingAccRunSpeed);
+            // Starting boss HP. Transitions are HP-driven: the hover decision
+            // moves One -> Two at 50% and Two -> Three at 15%. Without this the
+            // fight always begins at full health and the boss never leaves phase
+            // one, which is why a phase-3 counter-dash test could never have
+            // reached phase 3 at all. Setting the life directly starts the fight
+            // in the requested phase.
+            if (startBossLife > 0f) world.BossLife = startBossLife;
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -3945,6 +3952,59 @@ namespace Chaite.Tests
             Console.WriteLine("    configurations with zero contacts everywhere: " +
                 found.Count);
             foreach (var f in found) Console.WriteLine("    ZERO ->" + f);
+
+            // COUNTER-DASH IN PHASE THREE -- where the guide says it belongs.
+            // The guide states that a Shield of Cthulhu counter-dash taken INTO
+            // the boss for i-frames is the core survival mechanic for phase 3,
+            // with a fixed 1-2-3 rhythm. The earlier counter-dash measurements in
+            // this lab were made in PHASE ONE, and were additionally invalidated
+            // by the early-return bug that stopped the dash being issued at all.
+            // So the mechanism has never actually been tested in its own phase.
+            // Phase 3 is state 10/11/12 with its own park offset of 360.
+            // Count contacts by phase so the phase-3 share is visible directly.
+            Console.WriteLine();
+            Console.WriteLine("== counter-dash in PHASE 3 (guide's stated mechanic) ==");
+            Console.WriteLine("    12% HP start so the fight begins in phase Three; " +
+                "HitLog phase labels counted, p1/p2 should be 0");
+            foreach (var counter in new[] { false, true })
+            {
+                foreach (var at in new[] { 0, 1, 2, 3, 6 })
+                {
+                    var p1 = 0;
+                    var p2 = 0;
+                    var p3 = 0;
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, WeakWings().Lead,
+                            WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                            WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend, 0, "none", counter, 0f, at);
+                        var run = RunFight(ctrl, 12000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            startBossLife: 78000f * 0.12f);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                        {
+                            if (!l.Contains("src boss")) continue;
+                            n++;
+                            total++;
+                            if (l.Contains("phase One")) p1++;
+                            else if (l.Contains("phase Two")) p2++;
+                            else p3++;
+                        }
+                        if (n == 0) clean++;
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    counter={0,-5} at={1} | total={2,4}  p1={3,3} " +
+                        "p2={4,3} p3={5,4}  cleanOpenings={6}/8", counter, at,
+                        total, p1, p2, p3, clean));
+                }
+            }
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
