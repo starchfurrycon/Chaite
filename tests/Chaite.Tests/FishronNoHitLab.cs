@@ -108,6 +108,14 @@ namespace Chaite.Tests
             public float FloorY;
             public float BandLeft, BandRight;
             public bool Enraged;
+            /// <summary>Right edge of the enraged band: maxTilesX*16 - 6400 in
+            /// the native predicate. The fixture runway sits well inside the
+            /// middle of a world, so the native X term never fires here; it is
+            /// carried explicitly rather than implied, because the predicate is
+            /// what the enraged charge speed is gated on.</summary>
+            public float EnrageBandRight = 9999999f;
+            /// <summary>worldSurface * 16 in the native predicate.</summary>
+            public float EnrageSurfaceY = 9999999f;
             public readonly List<Bubble> Bubbles = new List<Bubble>();
             public readonly List<Tornado> Tornadoes = new List<Tornado>();
             public readonly List<Sharkron> Sharkrons = new List<Sharkron>();
@@ -290,10 +298,17 @@ namespace Chaite.Tests
                 player.Position.Y + player.Height * 0.5f);
             var bc = world.BossCenter;
 
-            // Enrage: the pinned three-term predicate.
+            // Enrage, transcribed from the native predicate. The pinned form is
+            //   y < 800 || y > worldSurface*16 ||
+            //   (x > 6400 && x < maxTilesX*16 - 6400)
+            // -- the X term is an AND, meaning "inside the far-from-spawn
+            // band", not an OR. The earlier form here had it as an OR against
+            // the fixture's own runway, which made the boss permanently enraged
+            // on a runway where the native predicate never fires at all.
+            var enragedByX = player.Position.X > OceanBandPixels &&
+                player.Position.X < world.EnrageBandRight;
             var flag6 = player.Position.Y < SkyEnrageCeiling ||
-                player.Position.X < world.BandLeft ||
-                player.Position.X > world.BandRight;
+                player.Position.Y > world.EnrageSurfaceY || enragedByX;
             world.Enraged = flag6;
 
             if (IsDashState(world.State))
