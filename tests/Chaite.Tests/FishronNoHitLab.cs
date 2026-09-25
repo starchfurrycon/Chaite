@@ -2983,6 +2983,45 @@ namespace Chaite.Tests
                     startX, n, m));
             }
 
+            // DASH-LEAD sweep. _dashLead is compared against toBoss, the boss's
+            // remaining travel along the committed line, and the dash fires when
+            // that drops inside the lead. The close trace showed it firing at
+            // dist = 95 with a lead of 240, which is much later than the comment
+            // intends ("the eighteen-tick decay is still live when the boss
+            // arrives"). The reason is that the boss only starts about 184 px
+            // away, so toBoss is ALREADY inside any lead near 240 at the moment
+            // the charge begins -- the comparison cannot hold it back, and the
+            // dash ends up last-moment. Raising the lead should make it fire on
+            // time, which is exactly the 5-13 tick shortfall 3.76 derived.
+            Console.WriteLine();
+            Console.WriteLine("== dashLead sweep, phase 1 (weak) ==");
+            foreach (var lead in new[] { 240f, 320f, 400f, 480f, 560f, 700f })
+            {
+                var total = 0;
+                var worst = 0;
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                        maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    total += n;
+                    if (n > worst) worst = n;
+                    if (n == 0) clean++;
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    dashLead={0,4:F0} sum={1,5} worst={2,4} cleanOpenings={3}/8",
+                    lead, total, worst, clean));
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
