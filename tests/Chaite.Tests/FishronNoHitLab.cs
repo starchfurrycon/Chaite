@@ -1241,6 +1241,64 @@ namespace Chaite.Tests
         }
 
         /// <summary>
+        /// Hold horizontal speed at its maximum and never stop moving sideways,
+        /// using vertical input only to stay near the platform.
+        ///
+        /// This follows the owner's round-5 statement that bubbles are only a
+        /// problem if horizontal speed lapses, and the guide's W-shaped path with
+        /// horizontal distance pulled from the tornado. Every CorridorEscape
+        /// variant instead spends its effort climbing away from the charge line,
+        /// and both the climbAbove sweeps and the state-feedback attempt showed
+        /// that helping or harming. So this controller treats horizontal speed as
+        /// the durable resource and altitude as something merely to be maintained.
+        /// </summary>
+        private sealed class ConstantHorizontal : IFishronController
+        {
+            private readonly string _dir;
+
+            public ConstantHorizontal(string dir) => _dir = dir;
+
+            public void Reset() { }
+
+            public PlayerControlFrame Decide(int tick, in PlayerMotionFrame frame,
+                PlayerSnapshot player, TargetSnapshot boss, FightWorld world)
+            {
+                var controls = new PlayerControlFrame();
+                var px = frame.Position.X + frame.Width * 0.5f;
+                var py = frame.Position.Y + frame.Height * 0.5f;
+                var bx = boss.Position.X + boss.Width * 0.5f;
+
+                if (_dir == "awayBoss")
+                {
+                    controls.Right = bx < px;
+                    controls.Left = bx >= px;
+                }
+                else
+                {
+                    // Head for whichever side has more arena left, so the player
+                    // does not pin itself against a wall.
+                    var mid = (world.BandLeft + world.BandRight) * 0.5f;
+                    controls.Right = mid > px;
+                    controls.Left = mid <= px;
+                }
+
+                // Vertical input only holds the band: climb back if low, descend
+                // if high. No attempt to leave the charge line vertically.
+                var altitude = world.FloorY - py;
+                if (altitude < 60f)
+                {
+                    controls.Up = true;
+                    controls.Jump = true;
+                }
+                else if (altitude > 220f)
+                {
+                    controls.Down = true;
+                }
+                return controls;
+            }
+        }
+
+        /// <summary>
         /// Whether the player's box can touch the boss's box on this tick, given
         /// the charge line and the player's position relative to it.
         ///
@@ -1800,6 +1858,37 @@ namespace Chaite.Tests
                         var toward = boss.Center.X >= player.Center.X;
                         controls.Right = toward;
                         controls.Left = !toward;
+                    }
+
+                    // DASH-THROUGH SEPARATION: ATTEMPTED AND REFUTED.
+                    // The reasoning was that the i-frame is granted by
+                    // frame.Dashing alone (the lab never requires striking the
+                    // boss), so 15 immune ticks cover at most ONE contact per
+                    // roughly 35-tick dash cycle, while dashing into the boss
+                    // parks the player inside the hitbox for the rest of the
+                    // charge -- hence 1213 phase-three contacts. So the player
+                    // ought to leave immediately after the dash.
+                    //
+                    // Implemented exactly that, and it does not work: the result
+                    // moved only from 1213 to 1367 and stayed IDENTICAL across
+                    // every dashAtContact value, the same signature as before.
+                    // The cause is visible in the control flow rather than in the
+                    // idea -- once _dashIssued is set, the escape body below hits
+                    // "if (!_useDash || _dashIssued || ...) return controls;"
+                    // before the geometry block, so any heading chosen here is
+                    // simply overwritten or skipped. Making separation real needs
+                    // restructuring that early return, not another heading.
+                    //
+                    // Left in place, unused, as the record of the attempt.
+                    if (false && _counterDash && _dashIssued)
+                    {
+                        var esc = Math.Abs(signed) > 0.5f ? Math.Sign(signed) : 1f;
+                        var ex = -_ux.Y * esc;
+                        var ey = _ux.X * esc;
+                        controls.Right = ex > 0f;
+                        controls.Left = ex < 0f;
+                        if (ey > 0f && altitude > need) { controls.Down = true; controls.Up = false; }
+                        else if (ey < 0f) { controls.Up = true; controls.Down = false; }
                     }
 
                     // The dash's 172 px is HORIZONTAL, so it only helps if it is
@@ -4003,6 +4092,50 @@ namespace Chaite.Tests
                         "    counter={0,-5} at={1} | total={2,4}  p1={3,3} " +
                         "p2={4,3} p3={5,4}  cleanOpenings={6}/8", counter, at,
                         total, p1, p2, p3, clean));
+                }
+            }
+
+            // CONSTANT-HORIZONTAL MODE. The owner stated in round 5 that bubbles
+            // are not a concern provided "horizontal movement speed is kept up the
+            // whole time", and the guide describes a W-shaped path plus pulling
+            // horizontal distance from the tornado. Both say the same thing: the
+            // durable resource is HORIZONTAL speed, not vertical clearance.
+            //
+            // That is the opposite of what CorridorEscape does. It spends the
+            // climb to leave the charge line vertically, and the sweep of
+            // climbAbove showed vertical work is either useless or harmful. This
+            // mode instead holds altitude near the platform and simply never stops
+            // moving horizontally, away from the boss, using the wing's own
+            // horizontal speed. Vertical input is used only to hold the band.
+            Console.WriteLine();
+            Console.WriteLine("== constant-horizontal mode (weak), contacts by opening ==");
+            foreach (var wing in new[] { 6.75f, 12f, 15.82f })
+            {
+                foreach (var dir in new[] { "awayBoss", "towardCentre" })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new ConstantHorizontal(dir);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: wing);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    wing={0,5:F2} dir={1,-13} |{2} | sum={3,5} " +
+                        "clean={4}/8", wing, dir, cells, total, clean));
                 }
             }
 
