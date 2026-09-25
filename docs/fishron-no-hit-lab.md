@@ -1702,6 +1702,153 @@ if (_counterDash)
 
 **仍未达成无伤。** 当前最优仍为 `dashAtContact=1`（sum 523，3300 保持 0）。
 
+### 4.0 【重大·未建模】水平运动模型**根本不包含翅膀飞行**
+
+上一轮我怀疑"水平翼速"是枢纽，本轮核实——**确实是个真实的建模缺口**。
+
+`src/Chaite.Core/HorizontalMotion.cs` 的类注释自己写明：
+
+> Allocation-free ordinary 1.4.5.8 horizontal movement approximation.
+> Native base/sprint thresholds and acceleration are separate; **tile, cart,
+> portal, special mount, dash and grappling physics are not replayed here.**
+
+而 `PlayerForwardModel.cs:384` 在**所有非冲刺帧**调用它：
+
+```csharp
+nextVelocityX = HorizontalMotion.Advance(ToSnapshot(frame),
+    frame.Velocity.X, controls.Direction, frame.Grounded, 1, out displacement);
+```
+
+它只用 `BaseRunSpeed` / `MaxRunSpeed` / `RunAcceleration` /
+`SprintAcceleration` / `RunSlowdown`，**参数里根本没有翅膀**。
+唯一的离地区分是 `drag = grounded ? slowdown : slowdown * .5f;`
+（空中阻力减半）——**这不是飞行，只是"空中摩擦力小一点"**。
+
+**所以：实验台里玩家的水平速度，无论在地上还是在飞行，
+都由"跑步"参数决定（约 6.75 px/tick 量级）。**
+**翅膀的水平推进从未被建模。**
+
+### 4.1 为什么这一点足以推翻一阶段的核心论断
+
+一阶段的关键论证是（3.76 / 3.91）：
+
+> 水平冲刺线的法向是**竖直**的 ⇒ 横向的 172px 冲刺贡献为 0 ⇒
+> 只能靠爬升，而爬升垂直于线的速度是 `4.6·|ux|` ⇒ 需要 ~23 tick，只有 ~18。
+
+**这个论证里"横向"用的是走路的 ~6.75 px/tick。**
+如果翅膀的水平极速**明显高于**走路（泰拉瑞亚 1.4 的翅膀在飞行时
+确实有自己的水平加速上限，与跑步参数不同），那么：
+
+- 冲刺结束后玩家**仍在飞行中**，水平速度由**翼速**决定，而不是走速；
+- 那么"冲刺 172px"就不是唯一的水平来源，
+  **飞行本身每 tick 都在提供水平位移**；
+- **`4.6·|ux|` 这个爬升速率也会被水平翼速补充**，
+  "需要 23 tick"的结论**当场失效**。
+
+**也就是说，我可能一直在用一个漏掉了翅膀的玩家模型，
+去证明"翅膀补不回来"。** 这是整个一阶段论证最大的单点风险，
+且它**正好落在我从第 5 轮起反复求助的那个点上**。
+
+### 4.1 【已否证】翅膀**不会**提升水平速度——4.0 的担忧不成立
+
+4.0 我提出：实验台的水平运动不含翅膀，若**翼的水平极速明显高于走路**，
+则"水平冲刺躲不掉"的核心论断会反转。**读原生后否证**：
+
+原生 `Player.WingMovement()`（`Player.cs:22217`，约 160 行）**只做三件事**：
+竖直速度（`velocity.Y -= 0.2 * gravDir` 等）、翅膀动画、`wingTime -= 2f`。
+
+**它对 `maxRunSpeed` / `accRunSpeed` / `runAcceleration` / `velocity.X`
+的引用次数是 0。**
+
+也就是说**原版翅膀完全不参与水平速度**：
+水平推进在飞行时仍然走**同一套跑步逻辑**（`runAcceleration` /
+`maxRunSpeed`），翼只负责**竖直**。
+
+**推论**：
+
+1. 实验台"水平方向按跑步参数"**是正确的**——`HorizontalMotion` 的注释
+   说"不重放 tile/cart/portal/mount/dash/grapple"，但它**没漏掉翅膀，
+   因为翅膀本来就不影响水平**。
+2. 因此 3.76 / 3.91 的核心论证**不受影响**：
+   水平能力 ≈ 走速（~6.75 px/tick），冲刺 172px，
+   爬升竖直速率 `4.6·|ux|` —— 这些**都是对的**。
+3. **4.0 的"重大缺口"降级**：真正未建模的只剩
+   **空中加速度剖面**（`drag = grounded ? slowdown : slowdown * .5f`，
+   一个近似），属于**次要**，不足以推翻结论。
+
+**这一轮的价值在于把一个我原本准备当成"突破口"的假设当场否证了**，
+而不是让它在文档里继续作为一个诱人的错误方向存在。
+
+### 4.2 第 26 轮状态
+
+本轮：提出水平翼速假设（4.0）→ 读原生 → **否证**（4.1）。
+核心论断（一阶段水平冲刺不可躲）**保持成立**。
+
+**仍未达成无伤。** 未做行为改动。
+
+**下一步**：既然水平能力无法反转局面，而竖直爬升速率 `4.6` 是真正的瓶颈，
+下一轮应核实 **`4.6` 这个数本身**——它来自 `jump.Speed` 上限
+（`DemonThrust` 在 `jump.Speed` 处封顶）。若实际翼上升速率为
+`ClimbRate`（弱翼套记录了 **8.5**，强翼套 **8.6**）而非 `4.6`，
+则"需要 23 tick"会变成"需要 ~12 tick"，**一阶段当场可解**。
+这是**比水平翼速更可能**的一处偏差，且同样是单点。
+
+### 4.3 【疑似第三个保真度 bug】爬升速率 4.6 可能低估了约 3 倍
+
+4.1 把方向指到竖直爬升速率。核对原生后，**发现实验台的翼上升模型
+缺少一个关键的"重力抵消"项**：
+
+**原生 `Player.WingMovement()`（`Player.cs:22217`）**：
+
+```csharp
+velocity.Y -= 0.2f * gravDir;          // <-- 抵消重力（上升时）
+    if (velocity.Y > 0f) velocity.Y -= 1f;
+    else if (velocity.Y > 0f - jumpSpeed) velocity.Y -= 0.2f;
+    if (velocity.Y < (0f - jumpSpeed) * 3f) velocity.Y = (0f - jumpSpeed) * 3f;
+```
+
+**两个要点**：
+
+1. **`- 0.2f * gravDir` 是重力抵消项**——原版翅膀在上升时
+   **每 tick 额外减去 0.2**，这正好抵掉 `gravity = 0.4` 的一半，
+   使净上升更快。
+2. **速度下限是 `-jumpSpeed * 3f`**，即翼上升**允许到 jumpSpeed 的 3 倍**。
+
+**实验台的 `DemonThrust`（`src/Chaite.Core/FlightMotion.cs:184`）**：
+
+```csharp
+if (velocityY - .1f > 0f) velocityY -= .875f;
+else if (velocityY > -jumpSpeed) velocityY -= .275f;
+else velocityY -= .125f;
+return Math.Max(velocityY, -jumpSpeed * 1.5f);   // <-- 1.5，且无重力抵消
+```
+
+**差异**：
+- **没有 `-0.2 * gravDir` 的抵消项**；
+- 下限是 `-jumpSpeed * 1.5f` 而非 `-jumpSpeed * 3f`。
+
+**后果**：实验台的爬升是"推力 vs 重力"的平衡值
+（`0.275+0.125 ≈ 0.4` 对 `gravity = 0.4`），
+**平衡在 ~4.6**；而原生因为有抵消项，**净上升应显著更快**，
+上限也高出一倍。
+
+**如果原生实际爬升率接近 `ClimbRate`（弱翼 8.5 / 强翼 8.6）而不是 4.6**，
+那么 3.76 的核心算术"需要 ~23 tick"就变成"**需要 ~12 tick**"，
+**一阶段当场可解**。这与 `LoadoutProfile` 里早已记录的
+`ClimbRate = 8.5 / 8.6` 一致——**那个字段记录了正确值，却没被用上**。
+
+**这是目前最可能的根因**，且是**单点**。但**我没有原生的实测轨迹**
+来钉死"每 tick 净上升多少"，所以**不擅自改**——
+下一轮要用与 `DemonThrust` 注释里同样的方法
+（引擎实测总量）来确定它。
+
+### 4.4 第 26 轮状态
+
+本轮：**否证**水平翼速假设（4.1）、**定位**到一个更可能的根因——
+**翼上升缺少重力抵消项、下限差一倍**（4.3）。
+
+**仍未达成无伤。** 未改行为（避免在未确认的参数上引入回归）。
+
 ## 0. 本轮修正（重要）
 
 上一版有两处错误，都是我自己造成的，已修正：
