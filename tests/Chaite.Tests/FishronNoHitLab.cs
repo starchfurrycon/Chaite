@@ -1625,6 +1625,27 @@ namespace Chaite.Tests
                             }
                         }
                     }
+
+                    // The hover frames END here, deliberately. Removing this
+                    // return was tried and it is far WORSE, not better: the weak
+                    // set went from 119 48 0 82 84 82 44 97 to 157 188 116 170
+                    // 156 200 200 200, i.e. 0/8 clean instead of 1/8 and three
+                    // openings pinned at the 200 floor. So the return is a gate,
+                    // not dead code -- everything below it is the CHARGE
+                    // response, and it needs a committed charge line. During a
+                    // hover there is no such line: _ux still holds the PREVIOUS
+                    // charge's direction, so running the escape body on hover
+                    // frames steers by a stale normal.
+                    //
+                    // This also disposes of the worry from 3.96. The six
+                    // bit-identical null results were NOT caused by this return:
+                    // the hover lateral blocks (_wallBand, _retreat,
+                    // _preposition, _hoverVariant) all sit ABOVE it and their
+                    // controls are what gets returned. _preposition and
+                    // _hoverVariant demonstrably change outcomes, which proves
+                    // the hover path is live; only _wallBand and _retreat showed
+                    // no effect, and those are two specific settings rather than
+                    // evidence that hover input does nothing.
                     return controls;
                 }
 
