@@ -45,10 +45,15 @@ namespace Chaite.Tests
         private const float EnragedChargeSpeed = 23f;
         private const float HoverAccel = 0.55f;
         private const float HoverMaxSpeed = 8.5f;
-        /// <summary>Native parks the hover at player.Center + (360 * sign, -200)
-        /// (NPC.cs:50098-50100). The lab used 300, which shifts where the boss
-        /// can get to inside the 30-tick hover and therefore the lock angle.</summary>
-        private const float HoverParkOffset = 360f;
+        /// <summary>Hover park offset for phases one and two, native
+        /// NPC.cs:49835-49839 (state 5): ai[1] = 300 * sign. This is a DIFFERENT
+        /// constant from the phase-three one below, and the lab previously used
+        /// a single value for both, which broke the phases' charge geometry
+        /// differently in each.</summary>
+        private const float HoverParkOffsetPhase12 = 300f;
+        /// <summary>Hover park offset for phase three, native NPC.cs:50096-50100
+        /// (state 10): ai[1] = 360 * sign.</summary>
+        private const float HoverParkOffsetPhase3 = 360f;
         private const float HoverAccelPhase2 = 0.6f;
         private const float HoverMaxSpeedPhase2 = 10f;
         private const float HoverAccelPhase3 = 0.7f;
@@ -357,7 +362,11 @@ namespace Chaite.Tests
                 case 10:
                 {
                     if (world.HoverOffset == 0f)
-                        world.HoverOffset = HoverParkOffset * Math.Sign(bc.X - pc.X);
+                    {
+                        var park = world.State == 10 ? HoverParkOffsetPhase3
+                            : HoverParkOffsetPhase12;
+                        world.HoverOffset = park * Math.Sign(bc.X - pc.X);
+                    }
                     var target = new Vec2(pc.X + world.HoverOffset, pc.Y - 200f);
                     var toTarget = new Vec2(target.X - bc.X, target.Y - bc.Y);
                     var length = (float)Math.Sqrt(toTarget.X * toTarget.X +
@@ -441,7 +450,8 @@ namespace Chaite.Tests
                     if (world.StateTimer == 15)
                     {
                         if (world.HoverOffset == 0f)
-                            world.HoverOffset = HoverParkOffset * Math.Sign(bc.X - pc.X);
+                            world.HoverOffset = HoverParkOffsetPhase3 *
+                                Math.Sign(bc.X - pc.X);
                         var landing = new Vec2(pc.X - world.HoverOffset, pc.Y - 200f);
                         world.BossX = landing.X - BossWidth * 0.5f;
                         world.BossY = landing.Y - BossHeight * 0.5f;
