@@ -3888,6 +3888,64 @@ namespace Chaite.Tests
                 }
             }
 
+            // FINAL FOCUSED SEARCH. The video was finally readable through a
+            // vision endpoint, and its own annotations say the phase-one method
+            // is a "W" shaped path with a 5+1+5+1 attack cycle and horizontal
+            // distance pulled from the tornado, which is what CorridorEscape
+            // already approximates. What the vision pass could not supply is
+            // per-tick geometry, so this is a narrow search around the best
+            // region found by the earlier sweeps: speed 12, lead near 240, aim
+            // near 0.85. The point is a single configuration with zero contacts
+            // at EVERY opening, which is the acceptance criterion -- not a lower
+            // total.
+            Console.WriteLine();
+            Console.WriteLine("== final focused search for an all-openings zero ==");
+            var found = new List<string>();
+            foreach (var lead in new[] { 200f, 220f, 240f, 260f, 280f })
+            {
+                foreach (var aim in new[] { 0.80f, 0.83f, 0.85f, 0.88f, 0.90f })
+                {
+                    foreach (var cloth in new[] { 0.80f, 0.88f, 0.95f })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var worst = 0;
+                        foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                            4300f, 4800f, 5300f, 5800f })
+                        {
+                            var ctrl = new CorridorEscape(true, lead,
+                                WeakWings().DashAt, true, 0f, cloth, aim, 0,
+                                WeakWings().ClimbCap, WeakWings().HoverDescend,
+                                0, "none", false, 0f);
+                            var run = RunFight(ctrl, 8000, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: WeakWings().JumpSpeed,
+                                wingTimeMax: WeakWings().FlyTicks,
+                                autoJump: true, wingAccRunSpeed: 12f);
+                            var n = 0;
+                            foreach (var l in run.HitLog)
+                                if (l.Contains("src boss")) n++;
+                            total += n;
+                            if (n > worst) worst = n;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,4}", n));
+                        }
+                        if (worst <= 2)
+                        {
+                            var row = string.Format(CultureInfo.InvariantCulture,
+                                "    lead={0,3:F0} aim={1,4:F2} climb={2,4:F2} |" +
+                                "{3} | sum={4,4} worst={5}", lead, aim, cloth,
+                                cells, total, worst);
+                            Console.WriteLine(row);
+                            if (worst == 0) found.Add(row);
+                        }
+                    }
+                }
+            }
+            Console.WriteLine("    configurations with zero contacts everywhere: " +
+                found.Count);
+            foreach (var f in found) Console.WriteLine("    ZERO ->" + f);
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();

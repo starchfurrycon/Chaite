@@ -1,0 +1,13 @@
+a01.png	TEXT: 机制解析 我叫骷髅小兵 bilibili 猪鲨会先向你发起五次冲撞 || TECHNIQUE: Stay on the platform to avoid the shark's initial five charges
+a02.png	TEXT: 机制解析 || TEXT: 机制解析 || TECHNIQUE:
+a03.png	TEXT: 机制解析 然后吐出鲨鱼龙卷 我叫骷髅小兵 || TECHNIQUE: Player moves upward to dodge the shark tornado.
+a04.png	TEXT: 机制解析 简单来说就是一个5+1+5+1的攻击模式 我叫骷髅小兵 bilibili || TECHNIQUE: Move horizontally between the two tornadoes to dodge.
+a05.png	TEXT: 机制解析 这样的攻击模式也非常好应对 我叫骷髅小兵 bilibili || TECHNIQUE: Player moves in a straight line to avoid boss attacks
+a06.png	TEXT: 机制解析 应对策略 用武器清理掉泡泡 我叫骷髅小兵 bilibili || TECHNIQUE: Use weapon to clear bubbles while avoiding boss attacks
+a07.png	TEXT: 机制解析 再次w形走位躲开冲撞 我叫骷髅小兵 bilibili || TECHNIQUE: Move in a W pattern to dodge the boss's charge.
+a08.png	TEXT: 机制解析 我叫骷髅小兵 bilibili 然后拉开水平距离远离鲨鱼龙卷即可 || TECHNIQUE: Move horizontally away from the boss.
+b01.png	TEXT: 机制解析 || TECHNIQUE: Move horizontally to dodge
+b02.png	TEXT: 机制解析 || TECHNIQUE: Move after Duke Fishron teleports.
+b03.png	TEXT: 机制解析 || TECHNIQUE: Player moves to avoid boss's one, two, three charges
+b04.png	TEXT: 我叫骷髅小兵 bilibili 我们再来看看战斗之前我们需要先
+b05.png	TEXT: 场地 || TECHNIQUE: Use a long straight platform for the fight
