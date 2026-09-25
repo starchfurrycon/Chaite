@@ -143,7 +143,7 @@ namespace Chaite.Tests
         // num3=4.5 with an up-hover of 0.4. Horizontal run speed with boots is
         // accRunSpeed 6; the base sprint ceiling is 6.75.
         private static PlayerMotionFrame FishronPlayerStart(float x, float floorY,
-            float jumpSpeed = 5.01f)
+            float jumpSpeed = 5.01f, float wingTimeMax = 150f, bool autoJump = false)
         {
             var jump = new JumpSnapshot
             {
@@ -154,15 +154,15 @@ namespace Chaite.Tests
                 ReleaseReady = true,
                 CloudAvailable = false,
                 CloudEnabled = false,
-                AutoJump = false,
+                AutoJump = autoJump,
             };
             var flight = new FlightSnapshot
             {
                 Known = true,
                 WingsLogic = 45,
                 RocketBoots = 0,
-                WingTime = 150f,
-                WingTimeMax = 150,
+                WingTime = wingTimeMax,
+                WingTimeMax = (int)wingTimeMax,
                 RocketTime = 0,
                 RocketTimeMax = 0,
                 RocketDelay = 0,
@@ -756,7 +756,8 @@ namespace Chaite.Tests
             int maxTicks, bool verbose = false, bool trace = false,
             int traceTicks = 70, int maxHits = 1, bool bossOnly = false,
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
-            float jumpSpeed = 5.01f)
+            float jumpSpeed = 5.01f, float wingTimeMax = 150f,
+            bool autoJump = false)
         {
             const float floorY = 6000f;
             var bandLeft = 1000f;
@@ -777,7 +778,8 @@ namespace Chaite.Tests
                 TornadoesEnabled = tornados ?? !bossOnly,
                 BossContactEnabled = true,
             };
-            var frame = FishronPlayerStart(startX, floorY, jumpSpeed);
+            var frame = FishronPlayerStart(startX, floorY, jumpSpeed, wingTimeMax,
+                autoJump);
             controller.Reset();
             var chargeLine = new Vec2(0f, 0f);
             var chargeOrigin = new Vec2(0f, 0f);
@@ -1651,7 +1653,6 @@ namespace Chaite.Tests
             return new LoadoutProfile("weak (fairy wings 761)", 7.41f, 7.0f, 100f,
                 0.75f, 0.85f, 420f, 160f, 240f, 8);
         }
-
         /// <summary>Strong route: Fishron Wings and the IsStrongWingItem set.</summary>
         public static LoadoutProfile StrongWings()
         {
@@ -1668,6 +1669,27 @@ namespace Chaite.Tests
         public static void FishronLoadoutCompare()
         {
             Console.WriteLine("== admitted wing sets, run separately ==");
+            // The wing budget does deplete: the probe shows WingTime leaving
+            // 150 around tick 17 and falling about one per tick, so the strong
+            // wing's longer flight is a real difference and not, as 3.29 said,
+            // an inert field. That earlier reading came from a trace that only
+            // printed the first 26 ticks, which are still at 150.
+            Console.WriteLine("== wing budget (WingTimeMax) ==");
+            foreach (var js in new[] { 7.41f, 9.01f })
+            foreach (var wt in new[] { 50f, 100f, 150f, 220f })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f), 8000, maxHits: 8, bossOnly: true,
+                    bubbles: true, jumpSpeed: js, wingTimeMax: wt, autoJump: true);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  jumpSpeed={0,5:F2} wingTimeMax={1,5:F0} lastHit={2,5} " +
+                    "charges={3,3} bossHits={4,3}", js, wt, fight.Ticks,
+                    fight.Charges, contacts));
+            }
+            Console.WriteLine();
             foreach (var profile in new[] { WeakWings(), StrongWings() })
             {
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
@@ -1721,7 +1743,8 @@ namespace Chaite.Tests
                 }
                 var shape = new System.Text.StringBuilder();
                 var peak = 0f;
-                for (var tick = 1; tick <= 26; tick++)
+                var wingTrace = new System.Text.StringBuilder();
+                for (var tick = 1; tick <= 160; tick++)
                 {
                     PlayerMotionFrame next;
                     ForwardModelRefusal refusal;
@@ -1737,10 +1760,14 @@ namespace Chaite.Tests
                     if (tick <= 26)
                         shape.Append(frame.Velocity.Y.ToString("F1",
                             CultureInfo.InvariantCulture)).Append(' ');
+                    if (tick <= 40 || tick % 20 == 0)
+                        wingTrace.Append(frame.WingTime.ToString("F0",
+                            CultureInfo.InvariantCulture)).Append(' ');
                 }
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "  {0,9:F2}  {1,-8}  peakVY={2,6:F2}  {3}",
                     js, auto, peak, shape.ToString().Trim()));
+                Console.WriteLine("             wingTime: " + wingTrace.ToString().Trim());
             }
         }
 
