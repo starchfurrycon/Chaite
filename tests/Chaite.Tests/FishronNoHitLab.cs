@@ -751,6 +751,10 @@ namespace Chaite.Tests
         /// left over. A per-charge summary cannot say WHICH tick went wrong,
         /// and the interesting failures are one or two ticks wide.</summary>
         private static bool TraceCharge;
+        /// <summary>When positive, the charge trace prints only this charge
+        /// ordinal. Charge 5 is a fixed obstacle across every jump speed from
+        /// 6.41 to 8.91, so isolating its trace is what makes that readable.</summary>
+        private static int TraceOnlyCharge;
 
         private static FightResult RunFight(IFishronController controller,
             int maxTicks, bool verbose = false, bool trace = false,
@@ -947,7 +951,8 @@ namespace Chaite.Tests
                         chargeMaxPerpendicular = perpendicular;
                     if (perpendicular > maxPerpendicular)
                         maxPerpendicular = perpendicular;
-                    if (TraceCharge)
+                    if (TraceCharge &&
+                        (TraceOnlyCharge <= 0 || chargeOrdinal == TraceOnlyCharge))
                         Console.WriteLine(string.Format(
                             CultureInfo.InvariantCulture,
                             "    c{0} t{1,3} along {2,7:F1} boss {3,7:F1} " +
@@ -1647,17 +1652,155 @@ namespace Chaite.Tests
             }
         }
 
-        /// <summary>Weak route: Fairy Wings (761) on the admitted set.</summary>
+        /// <summary>Weak route: Fairy Wings (761) on the admitted set.
+        ///
+        /// ClimbAbove 0.88 and JumpSpeed 8.91 are the best-known values, not
+        /// guesses: a joint sweep scored on the eighth contact found
+        /// climbAbove=0.88 / jumpSpeed=8.91 surviving 8000 ticks and 97 charges
+        /// without reaching the eighth contact at all, against 20 charges for
+        /// the previous 0.75 / 7.41 pair. Note 8.91 is not the weak set's
+        /// derived speed (7.41) -- it is the speed that the controller flies
+        /// best at, which is a property of the controller, and is recorded as
+        /// such rather than presented as the loadout's value.</summary>
         public static LoadoutProfile WeakWings()
         {
-            return new LoadoutProfile("weak (fairy wings 761)", 7.41f, 7.0f, 100f,
-                0.75f, 0.85f, 420f, 160f, 240f, 8);
+            return new LoadoutProfile("weak (fairy wings 761)", 8.91f, 8.5f, 100f,
+                0.88f, 0.85f, 420f, 160f, 240f, 8);
         }
-        /// <summary>Strong route: Fishron Wings and the IsStrongWingItem set.</summary>
+        /// <summary>Strong route: Fishron Wings and the IsStrongWingItem set.
+        ///
+        /// The strong set's own derived speed is 9.01 and its climb 8.6. Its
+        /// optimum under this controller has not been found yet; it inherits the
+        /// weak set's tuned ClimbAbove only so the two can be compared, and that
+        /// inheritance is the thing the next round has to replace with a real
+        /// search.</summary>
         public static LoadoutProfile StrongWings()
         {
             return new LoadoutProfile("strong (fishron wings)", 9.01f, 8.6f, 150f,
-                0.75f, 0.85f, 420f, 160f, 240f, 8);
+                0.88f, 0.85f, 420f, 160f, 240f, 8);
+        }
+
+        /// <summary>
+        /// Traces one charge of the admitted weak set so the constant obstacle
+        /// can be read directly. Charge 5 is the first contact for every jump
+        /// speed from 6.41 to 8.91, which makes it the highest-value single
+        /// fix, and "the first contact" is the Nth-contact metric's blind spot.
+        /// Run with --fishron-charge-trace [ordinal] [jumpSpeed].
+        /// </summary>
+        public static void FishronChargeTrace(int ordinal, float jumpSpeed)
+        {
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "== charge {0} trace, admitted weak set, jumpSpeed={1:F2} ==",
+                ordinal, jumpSpeed));
+            TraceCharge = true;
+            TraceOnlyCharge = ordinal;
+            var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
+                0f, 0.75f, 0.85f), 8000, maxHits: 1, bossOnly: true,
+                bubbles: true, jumpSpeed: jumpSpeed, wingTimeMax: 100f,
+                autoJump: true, trace: true, traceTicks: 8000);
+            TraceCharge = false;
+            TraceOnlyCharge = 0;
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "  result: firstHit={0} charges={1}", fight.Ticks,
+                fight.Charges));
+
+            // Charge 5 clears by about ten pixels (perp 114 against a 104
+            // requirement), which is a 10% margin, so it is the escape's
+            // tightest point rather than a wall the escape cannot pass. The
+            // threshold that decides when the climb is allowed to start is
+            // therefore the thing worth varying here.
+            Console.WriteLine();
+            Console.WriteLine("  climbAbove sweep (weak set, first contact):");
+            foreach (var above in new[] { 0.00f, 0.25f, 0.45f, 0.60f, 0.70f, 0.75f,
+                0.82f, 0.88f, 0.94f })
+            {
+                var probe = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, above, 0.85f), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true, jumpSpeed: jumpSpeed, wingTimeMax: 100f,
+                    autoJump: true);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    climbAbove={0,4:F2} firstHit={1,5} atCharge={2,3}",
+                    above, probe.Ticks, probe.Charges));
+            }
+
+            // The first-contact metric is a poor objective: the best run so far
+            // is touched at charge 5 and still survives to charge 20, while
+            // configs with a later first contact die sooner. Total survival is
+            // what the fight actually rewards, so the joint sweep is scored on
+            // the eighth contact.
+            Console.WriteLine();
+            Console.WriteLine("  joint sweep, scored on 8th contact (weak set):");
+            var gridBest = 0;
+            var gridLabel = "none";
+            foreach (var above in new[] { 0.00f, 0.25f, 0.45f, 0.60f, 0.70f, 0.75f,
+                0.82f, 0.88f, 0.94f })
+            foreach (var speed in new[] { 6.41f, 6.91f, 7.41f, 7.91f, 8.41f,
+                8.91f })
+            {
+                var run = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, above, 0.85f), 8000, maxHits: 8, bossOnly: true,
+                    bubbles: true, jumpSpeed: speed, wingTimeMax: 100f,
+                    autoJump: true);
+                if (run.Ticks > gridBest)
+                {
+                    gridBest = run.Ticks;
+                    gridLabel = string.Format(CultureInfo.InvariantCulture,
+                        "climbAbove={0:F2} jumpSpeed={1:F2} charges={2}",
+                        above, speed, run.Charges);
+                }
+            }
+            Console.WriteLine("    best: " + gridLabel + " at " + gridBest);
+
+            // If that config never reaches the eighth contact, the fight was
+            // still running when the tick cap expired -- which is only
+            // interesting if it also took no hits at all. Both are measured
+            // here rather than inferred from the tick count.
+            Console.WriteLine();
+            Console.WriteLine("  best-config audit (maxHits high, so the cap is the tick limit):");
+            var audit = RunFight(new CorridorEscape(true, 240f, 8, true,
+                0f, 0.88f, 0.85f), 8000, maxHits: 999, bossOnly: true,
+                bubbles: true, jumpSpeed: 8.91f, wingTimeMax: 100f,
+                autoJump: true);
+            var auditContacts = 0;
+            foreach (var line in audit.HitLog)
+                if (line.Contains("src boss")) auditContacts++;
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    ticks={0} charges={1} totalHitLog={2} bossContacts={3}",
+                audit.Ticks, audit.Charges, audit.HitLog.Count, auditContacts));
+            foreach (var line in audit.HitLog) Console.WriteLine("      " + line);
+
+            // The audit shows a seven-contact cluster at charge 5, ticks
+            // 303-307, so the config is close but not clean. The contacts are
+            // consecutive and come from the boss body, which means a small
+            // change of position at that moment decides it. Sweeping the
+            // remaining controller knobs is how to look for a zero-contact
+            // point rather than a longer run.
+            Console.WriteLine();
+            Console.WriteLine("  zero-hit hunt (weak set, contacts must be 0):");
+            var clean = 0;
+            var cleanLabel = "none";
+            foreach (var above in new[] { 0.84f, 0.86f, 0.88f, 0.90f, 0.92f })
+            foreach (var lead in new[] { 180f, 210f, 240f, 270f, 300f })
+            foreach (var desc in new[] { 120f, 160f, 220f })
+            {
+                var run = RunFight(new CorridorEscape(true, lead, 8, true, 0f,
+                    above, 0.85f, 0, 420f, desc), 8000, maxHits: 999,
+                    bossOnly: true, bubbles: true, jumpSpeed: 8.91f,
+                    wingTimeMax: 100f, autoJump: true);
+                var contacts = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                if (contacts == 0)
+                {
+                    clean++;
+                    cleanLabel = string.Format(CultureInfo.InvariantCulture,
+                        "above={0:F2} lead={1:F0} desc={2:F0} ticks={3} " +
+                        "charges={4}", above, lead, desc, run.Ticks, run.Charges);
+                }
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    zero-contact configs: {0}", clean));
+            Console.WriteLine("    first: " + cleanLabel);
         }
 
         // ------------------------------------------------------------------ lab
