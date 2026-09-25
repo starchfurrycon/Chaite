@@ -261,6 +261,13 @@ namespace Chaite.Core
         internal const float OpposingSpeedBleed = .4512f;
         private const int CooldownTicks = 30;
         private const int ContactWindowTicks = 15;
+        /// <summary>The dash identity the reviewed start belongs to: the
+        /// decompile's `dash == 2`, the branch that writes fourteen and a half
+        /// and opens the fifteen-tick contact window. <see cref="IsValid"/>
+        /// already required this value of a state handed in from a sample; it is
+        /// named because the frame-level ready state below has no sample to read
+        /// it from.</summary>
+        private const int ReviewedDashType = 2;
 
         /// <summary>The measured decay, in one rule:
         ///
@@ -406,6 +413,64 @@ namespace Chaite.Core
         }
 
         /// <summary>
+        /// Materialises the ready state a Shield dash starts from when the frame
+        /// carries the reviewed identity and the readiness flag instead of a
+        /// native sample.
+        ///
+        /// A frame a rollout built has no engine behind it, so dashType,
+        /// dashDelay, dashTime, eocDash and the release edge have to come from
+        /// the review's own contract rather than from a reading, and none of
+        /// these values is a new measurement: they are what the engine's ready
+        /// path holds, which <see cref="IsValid"/> already requires. The velocity
+        /// and the two run speeds are the frame's, because the decay below is
+        /// read against them.
+        ///
+        /// The collision-free contract is the same one the candidate enforces:
+        /// this model has no tile probe and no hostile-contact prediction, so the
+        /// only start it can replay is the one into clear space with no contact.
+        /// A caller that needs the halved blocked-probe start has to hand in the
+        /// native state instead.
+        ///
+        /// The direction is the caller's, and the resolver below returns the held
+        /// direction whenever one is held, so passing it as the facing gives the
+        /// direction the engine would take. A request with no direction has no
+        /// facing to fall back on, and is rejected rather than guessed.
+        /// </summary>
+        public static bool TryCreateFrameReadyState(DashEquipmentIdentity identity,
+            int direction, float velocityX, float velocityY, float accRunSpeed,
+            float maxRunSpeed, out EyeShieldDashState state)
+        {
+            state = default(EyeShieldDashState);
+            if (!ReviewedDashIdentity.IsSupported(identity)) return false;
+            if (direction != 1 && direction != -1) return false;
+
+            state = new EyeShieldDashState
+            {
+                Known = true,
+                NormalPlayerUpdatePath = true,
+                EquipmentIdentity = identity,
+                DashType = ReviewedDashType,
+                Dash = ReviewedDashType,
+                // Zero delay with nothing open is the ready edge; releaseDash
+                // armed is what makes the request carrying it a start.
+                DashDelay = 0,
+                DashTime = 0,
+                TimeSinceLastDashStarted = 0,
+                EocDash = 0,
+                EocHit = -1,
+                ReleaseDash = true,
+                FacingDirection = direction,
+                VelocityX = velocityX,
+                VelocityY = velocityY,
+                AccRunSpeed = accRunSpeed,
+                MaxRunSpeed = maxRunSpeed,
+                ForwardSolidProbeKnown = true,
+                HostileContactKnown = true
+            };
+            return true;
+        }
+
+        /// <summary>
         /// Predicts a dedicated-key Shield dash. The candidate must still be
         /// checked by the arena/target trajectory scorer before it is used.
         /// </summary>
@@ -421,7 +486,7 @@ namespace Chaite.Core
             var direction = ResolveDedicatedDirection(state.FacingDirection,
                 state.ControlLeft, state.ControlRight);
             var next = state;
-            next.Dash = 2;
+            next.Dash = ReviewedDashType;
             next.DashTime = 0;
             next.TimeSinceLastDashStarted = 0;
             next.ReleaseDash = false;
@@ -528,7 +593,8 @@ namespace Chaite.Core
             // incorrectly ended an otherwise valid Fishron takeover.
             state.Known && state.NormalPlayerUpdatePath &&
             ReviewedDashIdentity.IsSupported(state.EquipmentIdentity) &&
-            state.DashType == 2 && state.Dash == 2 && !state.MountActive &&
+            state.DashType == ReviewedDashType && state.Dash == ReviewedDashType &&
+            !state.MountActive &&
             !state.Pulley && !state.Grappling && !state.Tongued &&
             !state.OldStyleParkour && state.DashDelay >= -1 &&
             state.DashDelay <= CooldownTicks && state.DashTime >= -15 &&
@@ -549,7 +615,7 @@ namespace Chaite.Core
         {
             if (!state.Known || !state.NormalPlayerUpdatePath ||
                 !ReviewedDashIdentity.IsSupported(state.EquipmentIdentity) ||
-                state.DashType != 2 || state.Dash != 2 ||
+                state.DashType != ReviewedDashType || state.Dash != ReviewedDashType ||
                 state.DashDelay < -1 || state.DashDelay > CooldownTicks ||
                 state.DashTime < -15 || state.DashTime > 15 ||
                 state.TimeSinceLastDashStarted < 0 || state.TimeSinceLastDashStarted > 300 ||

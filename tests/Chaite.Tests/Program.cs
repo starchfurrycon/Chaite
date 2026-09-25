@@ -68,6 +68,7 @@ namespace Chaite.Tests
             Run(nameof(BossMonitoringTransitionsOnceAndResetsLifeAccounting), BossMonitoringTransitionsOnceAndResetsLifeAccounting);
             Run(nameof(BossMonitoringProductionHasNoSummonOrSurvivalPath), BossMonitoringProductionHasNoSummonOrSurvivalPath);
             Run(nameof(GravityDashMotionContracts), GravityDashMotionContracts);
+            Run(nameof(FrameDashRequestReachesCertifiedSpeedThenCoolsDown), FrameDashRequestReachesCertifiedSpeedThenCoolsDown);
             Run(nameof(GrappleMotionContracts), GrappleMotionContracts);
             Run(nameof(GrappleRouteFactoryContracts), GrappleRouteFactoryContracts);
             Run(nameof(BasicHookRescueControllerContracts), BasicHookRescueControllerContracts);

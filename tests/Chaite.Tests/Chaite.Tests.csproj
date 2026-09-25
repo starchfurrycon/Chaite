@@ -39,6 +39,7 @@
     <Compile Include="GravityDashMotionTests.cs" />
     <Compile Include="NativeMotionTraceTests.cs" />
     <Compile Include="ForwardModelTraceTests.cs" />
+    <Compile Include="ForwardModelDashTests.cs" />
     <Compile Include="RouteEnumeratorTests.cs" />
     <Compile Include="LoopDecompositionTests.cs" />
     <Compile Include="LoopCompositionTests.cs" />

@@ -18,9 +18,10 @@ namespace Chaite.Core
         Mounted,
         /// <summary>A grapple is attached or was this tick.</summary>
         Grappling,
-        /// <summary>The dash is engaged. <see cref="HorizontalMotion"/> states
-        /// outright that it does not replay dash physics, and a dash also
-        /// overrides gravity for its duration.</summary>
+        /// <summary>The dash is engaged, or one is requested on a frame that
+        /// cannot say which reviewed dash it would start or in which direction.
+        /// <see cref="HorizontalMotion"/> states outright that it does not replay
+        /// dash physics, and a dash also overrides gravity for its duration.</summary>
         Dashing,
         /// <summary>Rocket boots are firing.</summary>
         RocketBoots,
@@ -128,6 +129,22 @@ namespace Chaite.Core
         /// provably feed the same values to the same models.</summary>
         public float WingTime;
         public EyeShieldDashState Dash;
+        /// <summary>The reviewed dash the loadout carries, and whether its
+        /// cooldown is at zero.
+        ///
+        /// A frame filled from a trace or a live sample reads both facts from
+        /// <see cref="Dash"/>, and a known dash state is authoritative: these two
+        /// are not consulted at all then. A frame a rollout built has no sample to
+        /// read them from -- every field of a default <see cref="EyeShieldDashState"/>
+        /// is zero, which cannot be told apart from a dash that has just come off
+        /// cooldown, and the identity of the dash is nowhere on the frame.
+        /// Without them a rollout cannot start a dash at all: the control bit is
+        /// read and then dropped, which is why a dash sweep over a rollout
+        /// returned identical figures for every dash setting. The pair is the
+        /// frame-level form of MobilitySnapshot's CanDash (a reviewed identity)
+        /// and DashReady (dashDelay is zero).</summary>
+        public DashEquipmentIdentity DashIdentity;
+        public bool DashReady;
         /// <summary>The reviewed jump and flight inputs. The wing path needs the
         /// jump charge, the wing and rocket resources, and the engine's own
         /// justJumped flag, and none of them can be derived from the others.</summary>
@@ -294,6 +311,27 @@ namespace Chaite.Core
             float nextVelocityX;
             var dashStarted = false;
             var dash = frame.Dash;
+            // A frame a rollout built carries no native dash state, only the
+            // reviewed identity and the readiness flag above. Declared readiness
+            // is what turns a request into the impulse: the reviewed start speed,
+            // then the reviewed decay, then the cooldown. Ready false means the
+            // loadout's dash is not available on this tick -- a cooldown, or no
+            // reviewed dash at all -- and the engine applies no impulse for a
+            // request then, so the ordinary step owns the tick. Ready true with
+            // no reviewed identity, or with no direction to dash in, is a request
+            // the frame cannot answer, and it is refused here rather than
+            // dropped: a dropped request is not a prediction, it is the ordinary
+            // tick with a dash bit set, which is what made every dash sweep over
+            // a rollout return one set of figures.
+            if (!dash.Known && !frame.Dashing && controls.Dash && frame.DashReady)
+            {
+                EyeShieldDashState ready;
+                if (!EyeShieldDashMotion.TryCreateFrameReadyState(frame.DashIdentity,
+                        controls.Direction, frame.Velocity.X, frame.Velocity.Y,
+                        frame.AccRunSpeed, frame.MaxRunSpeed, out ready))
+                    return Refuse(ForwardModelRefusal.Dashing, ref refusal);
+                dash = ready;
+            }
             dash.ControlLeft = controls.Left;
             dash.ControlRight = controls.Right;
             // The dash decelerates by the engine's ordinary horizontal amounts,
