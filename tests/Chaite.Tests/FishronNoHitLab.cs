@@ -1340,6 +1340,9 @@ namespace Chaite.Tests
             private readonly int _dashAtContact;
             /// <summary>Dash only when the committed line would actually hit.</summary>
             private readonly bool _gateDashOnPrediction;
+            /// <summary>Height to hold during the hover, which sets the charge
+            /// angle the lock will produce (native NPC.cs:50096).</summary>
+            private readonly float _holdAltitude;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
@@ -1350,7 +1353,7 @@ namespace Chaite.Tests
                 float hoverDescend = 160f, int preposition = 0,
                 string hoverVariant = "none", bool counterDash = false,
                 float holdX = 0f, int dashAtContact = 0,
-                bool gateDashOnPrediction = false)
+                bool gateDashOnPrediction = false, float holdAltitude = 0f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1369,6 +1372,7 @@ namespace Chaite.Tests
                 _holdTolerance = 40f;
                 _dashAtContact = dashAtContact;
                 _gateDashOnPrediction = gateDashOnPrediction;
+                _holdAltitude = holdAltitude;
             }
 
             public void Reset()
@@ -1460,7 +1464,36 @@ namespace Chaite.Tests
                 // any real arena origin and so was true on every tick.
                 if (!dashing)
                 {
-                    if (!frame.Grounded &&
+                    // ALTITUDE HOLD. Native (NPC.cs:50096-50100) parks the boss
+                    // at player.Center + (360 * sign, -200) during the hover, and
+                    // the lock then aims along player.Center - boss.Center. So
+                    // the charge ANGLE is decided by where the player is while
+                    // the boss settles, before the lock happens at all.
+                    //
+                    // That matters because RequiredClearance is
+                    // |75*uy| + |50*ux| + |10*uy| + |21*ux|, while the player's
+                    // climb is vertical. A boss 200 above a GROUNDED player
+                    // produces a nearly horizontal charge (uy near 0), whose
+                    // requirement 50 + 21 = 71 px does not depend on Y at all,
+                    // so a vertical climb buys nothing against it. Being
+                    // airborne makes the lock steeper, and a steep charge's
+                    // requirement does fall with altitude. Holding height is
+                    // therefore not a refinement of the escape -- it changes
+                    // which escapes exist.
+                    if (_holdAltitude > 0f)
+                    {
+                        var alt = world.FloorY - (frame.Position.Y + frame.Height);
+                        if (alt < _holdAltitude - 20f)
+                        {
+                            controls.Up = true;
+                            controls.Jump = true;
+                        }
+                        else if (alt > _holdAltitude + 20f)
+                        {
+                            controls.Down = true;
+                        }
+                    }
+                    else if (!frame.Grounded &&
                         player.Center.Y > world.FloorY - _hoverDescend)
                         controls.Up = true;
 
@@ -2584,6 +2617,42 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "    startX={0,5:F0} gateOff={1,4} gateOn={2,4}", startX,
                     nOff, nOn));
+            }
+
+            // ALTITUDE HOLD. Native parks the boss at player + (360*sign, -200)
+            // during the hover and then aims the lock along player - boss, so the
+            // height the player holds decides the charge angle. A grounded
+            // player gets a near-horizontal charge whose requirement is 71 px
+            // that no vertical climb can pay. Sweeping the held height therefore
+            // tests a different mechanism from every previous round: not how to
+            // escape the charge, but which charges the boss is given.
+            Console.WriteLine();
+            Console.WriteLine("== altitude hold x opening (weak set) ==");
+            foreach (var alt in new[] { 0f, 120f, 200f, 280f, 360f, 440f })
+            {
+                var line = new System.Text.StringBuilder(string.Format(
+                    CultureInfo.InvariantCulture, "    alt={0,3:F0} :", alt));
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, 0f, 0,
+                        false, alt), 8000, maxHits: 999, bossOnly: true,
+                        bubbles: true, startX: startX,
+                        jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    if (n == 0) clean++;
+                    line.Append(string.Format(CultureInfo.InvariantCulture,
+                        " {0}", n));
+                }
+                Console.WriteLine(line.ToString() + string.Format(
+                    CultureInfo.InvariantCulture, "   clean={0}/8", clean));
             }
 
             // All threats, weak set, every opening: what still lands and from
