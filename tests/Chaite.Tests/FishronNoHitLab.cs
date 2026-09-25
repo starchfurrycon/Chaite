@@ -1586,10 +1586,40 @@ namespace Chaite.Tests
             Console.WriteLine("== corridor escape with wing ascent held ==");
             TraceCharge = true;
             var climbing = RunFight(new CorridorEscape(true, 240f, 8, true), 12000,
-                bossOnly: true);
+                bossOnly: false, maxHits: 6);
             TraceCharge = false;
-            Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks);
+            Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks +
+                " charges=" + climbing.Charges);
+            var bossHits = 0;
+            foreach (var line in climbing.HitLog)
+                if (line.Contains("src boss")) bossHits++;
+            Console.WriteLine("  BOSS-CONTACT HITS: " + bossHits + " of " +
+                climbing.HitLog.Count + " total hits");
+            // The charge dodge and the projectile threat are separable, and
+            // they have to be reported separately: a run can dodge every charge
+            // and still die to a bubble, which would otherwise read as "the
+            // dodge failed". bossOnly=true removes every projectile so the
+            // charge answer stands on its own.
+            Console.WriteLine("== charge-only audit (projectiles removed) ==");
+            foreach (var dl in new[] { 160f, 200f, 240f, 280f })
+                foreach (var at in new[] { 4, 8, 12 })
+                {
+                    var bossFight = RunFight(
+                        new CorridorEscape(true, dl, at, true), 4000,
+                        bossOnly: true, maxHits: 8);
+                    var contacts = 0;
+                    foreach (var line in bossFight.HitLog)
+                        if (line.Contains("src boss")) contacts++;
+                    Console.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "  dl={0,5:F0} at={1,2} ticks={2,5} charges={3,3} " +
+                        "bossHits={4,3} hits={5,3} perpAtClosest={6,6:F1}",
+                        dl, at, bossFight.Ticks, bossFight.Charges, contacts,
+                        bossFight.Hits, bossFight.ClosestPerpendicular));
+                }
             foreach (var line in climbing.ChargeLog)
+                Console.WriteLine("  " + line);
+            foreach (var line in climbing.HitLog)
                 Console.WriteLine("  " + line);
             Console.WriteLine();
             Console.WriteLine("== dodge sweep (lead ticks before charge) ==");
