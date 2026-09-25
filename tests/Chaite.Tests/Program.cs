@@ -22,6 +22,11 @@ namespace Chaite.Tests
             if (args.Length >= 2 && args[0] == "--exhaustive-loop") return ExhaustiveLoop(args[1], args.Length > 2 ? args[2] : null, args.Length > 3 ? args[3] : null, args.Length > 4 ? args[4] : null, args.Length > 5 ? args[5] : null, args.Length > 6 ? args[6] : null);
             if (args.Length == 2 && args[0] == "--native-flight-trace") return VerifyNativeFlightTrace(args[1]);
             if (args.Length == 1 && args[0] == "--fishron-no-hit-lab") { FishronNoHitLab(); return _failed == 0 ? 0 : 1; }
+            if (args.Length >= 1 && args[0] == "--fishron-loadouts")
+            {
+                FishronLoadoutCompare();
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "--fishron-jump-probe")
             {
                 FishronJumpProbe();

@@ -1602,7 +1602,97 @@ namespace Chaite.Tests
             }
         }
 
+        /// <summary>
+        /// One admitted wing set. The two admitted routes differ in vertical
+        /// mobility, not merely in taste, so they get two parameter sets rather
+        /// than one strong-wing set that the weak wing is then expected to
+        /// imitate. FormulaRouteCatalog.Select is the admission rule being
+        /// mirrored: both routes gate on the Frog Leg, and they split on
+        /// wingItem -- 761 (Fairy Wings) is the weak route, IsStrongWingItem is
+        /// the strong route.
+        ///
+        /// JumpSpeed is derived, not chosen: 5.01 base (Player.cs:2513) plus the
+        /// Frog Leg's 2.4 (19741) plus the 1.6 the Amphibious Boots contribute
+        /// through the 14523 equipment family. ClimbRate is the measured
+        /// steady-state ascent at that speed, which the jump probe shows to be
+        /// jump.Speed minus DemonThrust's decrement -- 7.0 at 7.41 and 8.6 at
+        /// 9.01. FlyTicks is the wing budget, which is the one figure still not
+        /// read from the assembly (ArmorIDs.Wing.Sets.Stats is not in the
+        /// decompiled output) and is therefore marked as taken from the reviewed
+        /// routes rather than measured.
+        /// </summary>
+        public readonly struct LoadoutProfile
+        {
+            public readonly string Name;
+            public readonly float JumpSpeed;
+            public readonly float ClimbRate;
+            public readonly float FlyTicks;
+            public readonly float ClimbAbove;
+            public readonly float DashAim;
+            public readonly float ClimbCap;
+            public readonly float HoverDescend;
+            public readonly float Lead;
+            public readonly int DashAt;
+
+            public LoadoutProfile(string name, float jumpSpeed, float climbRate,
+                float flyTicks, float climbAbove, float dashAim, float climbCap,
+                float hoverDescend, float lead, int dashAt)
+            {
+                Name = name; JumpSpeed = jumpSpeed; ClimbRate = climbRate;
+                FlyTicks = flyTicks; ClimbAbove = climbAbove; DashAim = dashAim;
+                ClimbCap = climbCap; HoverDescend = hoverDescend; Lead = lead;
+                DashAt = dashAt;
+            }
+        }
+
+        /// <summary>Weak route: Fairy Wings (761) on the admitted set.</summary>
+        public static LoadoutProfile WeakWings()
+        {
+            return new LoadoutProfile("weak (fairy wings 761)", 7.41f, 7.0f, 100f,
+                0.75f, 0.85f, 420f, 160f, 240f, 8);
+        }
+
+        /// <summary>Strong route: Fishron Wings and the IsStrongWingItem set.</summary>
+        public static LoadoutProfile StrongWings()
+        {
+            return new LoadoutProfile("strong (fishron wings)", 9.01f, 8.6f, 150f,
+                0.75f, 0.85f, 420f, 160f, 240f, 8);
+        }
+
         // ------------------------------------------------------------------ lab
+        /// <summary>
+        /// Runs the two admitted wing sets as two separate configurations and
+        /// reports them side by side, so the split is visible rather than
+        /// averaged away. Run with --fishron-loadouts.
+        /// </summary>
+        public static void FishronLoadoutCompare()
+        {
+            Console.WriteLine("== admitted wing sets, run separately ==");
+            foreach (var profile in new[] { WeakWings(), StrongWings() })
+            {
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  {0}: jumpSpeed={1:F2} climb={2:F1} fly={3:F0}",
+                    profile.Name, profile.JumpSpeed, profile.ClimbRate,
+                    profile.FlyTicks));
+                foreach (var js in new[] { 5.01f, profile.JumpSpeed, 8.01f, 10.01f,
+                    11.01f, 12.01f })
+                {
+                    var fight = RunFight(new CorridorEscape(true, profile.Lead,
+                        profile.DashAt, true, 0f, profile.ClimbAbove,
+                        profile.DashAim, 0, profile.ClimbCap, profile.HoverDescend),
+                        8000, maxHits: 8, bossOnly: true, bubbles: true,
+                        jumpSpeed: js);
+                    var contacts = 0;
+                    foreach (var line in fight.HitLog)
+                        if (line.Contains("src boss")) contacts++;
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    jumpSpeed={0,5:F2} lastHit={1,5} charges={2,3} " +
+                        "bossHits={3,3}", js, fight.Ticks, fight.Charges,
+                        contacts));
+                }
+            }
+        }
+
         /// <summary>
         /// Measures the accoladed loadout's vertical mobility directly instead
         /// of inferring it. Earlier rounds concluded "the climb is capped at a
