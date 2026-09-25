@@ -1675,6 +1675,45 @@ namespace Chaite.Tests
             // an inert field. That earlier reading came from a trace that only
             // printed the first 26 ticks, which are still at 150.
             Console.WriteLine("== wing budget (WingTimeMax) ==");
+            // "last hit tick" is the Nth contact and hides what actually
+            // changed, so the first contact is measured alongside it. The
+            // jumpSpeed curve is non-monotone (7.41 far better than 9.01), and
+            // a first-contact number is what distinguishes "clears more
+            // charges" from "fails later in the same place".
+            Console.WriteLine("  first-contact comparison:");
+            foreach (var js in new[] { 5.01f, 7.41f, 9.01f, 11.01f, 12.01f })
+            {
+                var first = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true, jumpSpeed: js, wingTimeMax: 150f,
+                    autoJump: true);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    jumpSpeed={0,5:F2} firstHit={1,5} chargesAtHit={2,3}",
+                    js, first.Ticks, first.Charges));
+            }
+            Console.WriteLine("  failure charge map (finer jumpSpeed sweep):");
+            // autoJump is swept alongside speed because it is not a free
+            // upgrade: the last block above shows a run where EVERY charge
+            // contacts with maxPerp of only 17-28 px against a ~105 px
+            // requirement, which is the signature of the ascent being cut short
+            // rather than of the speed being wrong.
+            foreach (var auto in new[] { false, true })
+            foreach (var speed in new[] { 6.41f, 6.91f, 7.41f, 7.91f, 8.41f, 8.91f })
+            {
+                var first = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true, jumpSpeed: speed, wingTimeMax: 150f,
+                    autoJump: auto);
+                var full = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f), 8000, maxHits: 8, bossOnly: true,
+                    bubbles: true, jumpSpeed: speed, wingTimeMax: 150f,
+                    autoJump: auto);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    autoJump={0,-5} jumpSpeed={1,5:F2} firstHit={2,5} " +
+                    "atCharge={3,3} then8th={4,5} totalCharges={5,3}",
+                    auto, speed, first.Ticks, first.Charges, full.Ticks,
+                    full.Charges));
+            }
             foreach (var js in new[] { 7.41f, 9.01f })
             foreach (var wt in new[] { 50f, 100f, 150f, 220f })
             {
