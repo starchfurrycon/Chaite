@@ -7543,7 +7543,11 @@ namespace Chaite.Core
                 case 7: return sequence == 1;
                 case 8: return sequence == 0;
                 case 9: return sequence <= 7;
-                case 10: return sequence <= 8;
+                // State 10's dispatch sends ai[3] == 9 to the spinning-shark
+                // branch (state 13).  The third-phase sequence reaches 9 before
+                // it resets, so 9 is an ordinary native observation here and
+                // rejecting it reported a legitimate spin as an unknown state.
+                case 10: return sequence <= 9;
                 case 11:
                     return sequence == 0 || sequence == 2 ||
                         sequence == 3 || sequence == 5 ||
@@ -7563,8 +7567,11 @@ namespace Chaite.Core
             if (state == -1) return 75;
             if (state == 0)
             {
-                // num2 starts at expert?40:60, is reduced to 30 while the
-                // dash sequence is 0..9, and is forced to 10 by flag6.
+                // num2 is expert?40:60, is reduced to 30 while the dash
+                // sequence is still 0..9, and is forced to 10 by flag6.
+                // Sequence 10 and 11 are the attack markers that follow the
+                // dash group: flag5 (ai[3] < num2*2) is then false, so the
+                // native chain falls through to the base cadence.
                 if (nativeEnraged) return 10;
                 return sequence < 10 ? 30 : expert ? 40 : 60;
             }
@@ -7596,6 +7603,9 @@ namespace Chaite.Core
             if (state == 6) return nativeEnraged ? 25 : expert ? 27 : 30;
             if (state == 7) return 120;
             if (state == 8) return 90;
+            // State 9 is the phase-three transform, and its exit test uses
+            // num14 (180), not num3.  The hover family's num3 must not be
+            // applied here even though the state also lerps its velocity.
             if (state == 9) return 180;
             if (state == 10) return nativeEnraged ? 10 : 30;
             // State 11 uses the same native num6 dash timer as states 1 and 6;
