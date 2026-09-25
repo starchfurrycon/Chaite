@@ -949,12 +949,15 @@ namespace Chaite.Tests
                             "    c{0} t{1,3} along {2,7:F1} boss {3,7:F1} " +
                             "perp {4,6:F1} req {5,4:F0} room {6,7:F1} " +
                             "ply=({7:F0},{8:F0}) v=({9:F1},{10:F1}) gnd={11} " +
-                            "ctrl={12}",
+                            "ctrl={12}{13}{14}{15}{16}",
                             chargeOrdinal, world.Tick, numerator, bossAlong,
                             perpendicular, requiredClearance,
                             perpendicular - requiredClearance,
                             playerX, playerY, frame.Velocity.X,
-                            frame.Velocity.Y, frame.Grounded, controls));
+                            frame.Velocity.Y, frame.Grounded,
+                            controls.Left ? "L" : "-", controls.Right ? "R" : "-",
+                            controls.Up ? "U" : "-", controls.Down ? "D" : "-",
+                            controls.Jump ? "J" : "-"));
                     // The closest approach is where the player's and the boss's
                     // projections onto the charge line meet -- not where the two
                     // bodies happen to be nearest each other in general, which
@@ -1219,19 +1222,21 @@ namespace Chaite.Tests
             private readonly float _dashLead;
             private readonly int _dashAtTimer;
             private readonly bool _climb;
+            private readonly float _climbAbove;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
             private Vec2 _ux = new Vec2(1f, 0f);
 
             public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
-                bool climb = false, float lead = 0f)
+                bool climb = false, float lead = 0f, float climbAbove = 0.75f)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
                 _dashAtTimer = dashAtTimer;
                 _climb = climb;
                 _lead = lead;
+                _climbAbove = climbAbove;
             }
 
             public void Reset()
@@ -1380,14 +1385,27 @@ namespace Chaite.Tests
                 // the dash is for, so they must not also be given the climb.
                 //
                 // Both bits are required when climbing and they are NOT the
-                // same input: FlightMotion's impulse tests controls.Jump, while
-                // controls.Up only steers sustained ascent (and doubles as the
-                // descend control). Setting Up alone left the player grounded
-                // with velocity.Y at exactly zero for the whole charge, so
-                // every earlier "climb" experiment was silently measuring no
-                // climb at all.
+                // The threshold is set from the measured climb rate rather than
+                // guessed. Wing ascent settles at 4.6 px/tick -- DemonThrust
+                // caps at jump.Speed, and the lab fixture's jump speed is 5.01,
+                // which the trace confirms at a constant v.Y of -4.6 for the
+                // whole climb. Measured perpendicular gain is therefore
+                //
+                //   4.6 * |normal.Y| = 4.6 * |ux|
+                //
+                // px/tick, so the ticks a climb needs are
+                // RequiredClearance(ux,uy) / (4.6*|ux|), and a charge lasts 12
+                // to 21 ticks. Working that against the measured table:
+                //
+                //   10 deg -> 18.7 ticks (fits)    25 deg -> 24.1 (does not)
+                //   15 deg -> 20.4 ticks (marginal) 40 deg -> 30.9 (no)
+                //
+                // so the climb only wins for shallow charges and the crossing
+                // sits near |ux| = 0.91, about 25 degrees. The previous 0.75 let
+                // the climb cover everything up to 41 degrees, which is exactly
+                // the 34-44 degree family this run kept dying to.
                 var normalVertical = Math.Abs(_ux.X);
-                if (_climb && !escapeDown && normalVertical > 0.75f)
+                if (_climb && !escapeDown && normalVertical > _climbAbove)
                 {
                     controls.Jump = true;
                     controls.Up = true;
@@ -1674,7 +1692,7 @@ namespace Chaite.Tests
             Console.WriteLine("== corridor escape with wing ascent held ==");
             TraceCharge = true;
             var climbing = RunFight(new CorridorEscape(true, 240f, 8, true), 12000,
-                maxHits: 6, bossOnly: false, bubbles: true);
+                maxHits: 6, bossOnly: false, bubbles: false);
             TraceCharge = false;
             Console.WriteLine("  hits=" + climbing.Hits + " ticks=" + climbing.Ticks +
                 " charges=" + climbing.Charges);
@@ -1710,6 +1728,26 @@ namespace Chaite.Tests
             // each switch is now actually honoured. This walks them one at a
             // time so the remaining work is attributable to a named source
             // rather than to "projectiles".
+            Console.WriteLine();
+            // The climb/dash threshold is the one free parameter with a real
+            // physical meaning (see the derivation at CorridorEscape), and the
+            // two extremes both fail: climbing everything dies to the steep
+            // family, dashing everything dies to the shallow one. The optimum
+            // is interior, so it is swept rather than reasoned about.
+            Console.WriteLine("== climb/dash threshold sweep ==");
+            foreach (var th in new[] { 0.60f, 0.70f, 0.75f, 0.80f, 0.85f,
+                0.90f, 0.95f })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true, 0f, th),
+                    8000, maxHits: 8, bossOnly: false, bubbles: false);
+                var contacts = 0;
+                foreach (var line in fight.HitLog)
+                    if (line.Contains("src boss")) contacts++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  climbAbove={0:F2} ticks={1,5} charges={2,3} bossHits={3,3}",
+                    th, fight.Ticks, fight.Charges, contacts));
+            }
+            Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
             // A full phase one is ten charges (ai[0] 0..9) plus the phase-two
             // states, so the charge run is given enough hits and ticks to get
