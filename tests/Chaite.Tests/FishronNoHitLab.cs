@@ -772,6 +772,8 @@ namespace Chaite.Tests
         private static bool TraceCharge;
         /// <summary>Set only by the A/B check that the dash immunity matters.</summary>
         private static bool FishronDashImmunityDisabled;
+        /// <summary>Close-approach trace over a whole run.</summary>
+        private static bool TraceClose;
         /// <summary>Arena runway bounds. Widened by the drift test to tell an
         /// arena-geometry failure from a controller failure.</summary>
         private static float ArenaBandLeft = 1000f;
@@ -787,9 +789,10 @@ namespace Chaite.Tests
             bool bubbles = false, bool? tornados = null, float startX = 3300f,
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
-            float holdX = 0f)
+            float holdX = 0f, bool traceClose = false)
         {
             const float floorY = 6000f;
+            TraceClose = traceClose;
             var bandLeft = ArenaBandLeft;
             var bandRight = ArenaBandRight;
             var world = new FightWorld
@@ -1067,6 +1070,34 @@ namespace Chaite.Tests
                         chargeOrigin.Y, chargeLine.X, chargeLine.Y,
                         frame.Position.X + frame.Width * 0.5f,
                         frame.Position.Y + frame.Height * 0.5f));
+                // Compact close-approach trace over a whole run. The per-tick
+                // version above is capped at traceTicks because it is one line
+                // per tick; the question here is what the ONE working
+                // configuration actually does across all 97 charges, which
+                // needs the whole run at low density. Prints only the ticks
+                // where the two are close enough for the geometry to matter.
+                var pcx = frame.Position.X + frame.Width * 0.5f;
+                var pcy = frame.Position.Y + frame.Height * 0.5f;
+                var bcx = world.BossX + BossWidth * 0.5f;
+                var bcy = world.BossY + BossHeight * 0.5f;
+                var closeDx = pcx - bcx;
+                var closeDy = pcy - bcy;
+                if (TraceClose && isDash && closeDx * closeDx + closeDy * closeDy <
+                    260f * 260f)
+                {
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "  C{0,3} T{1,4} st={2,2} tm={3,2} dist={4,6:F0} " +
+                        "perp={5,6:F1} req={6,5:F0} alt={7,5:F0} " +
+                        "ctrl={8}{9}{10}{11} imm={12,2}",
+                        chargeOrdinal, world.Tick, world.State,
+                        world.StateTimer,
+                        (float)Math.Sqrt(closeDx * closeDx + closeDy * closeDy),
+                        perpendicular, requiredClearance,
+                        world.FloorY - (frame.Position.Y + frame.Height * 0.5f),
+                        controls.Left ? "L" : "-", controls.Right ? "R" : "-",
+                        controls.Jump ? "J" : "-", controls.Dash ? "D" : "-",
+                        world.ImmuneTicks));
+                }
                 if (trace && world.Tick < traceTicks)
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "  T{0,3} st={1,2} tm={2,2} boss=({3,7:F1},{4,7:F1}) " +
@@ -2382,6 +2413,20 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "                   best={0} at delay={1}", best, bestAt));
             }
+
+            // What the ONE working configuration actually does, across the
+            // whole run. Every previous attempt to improve on it guessed at the
+            // mechanism; this reads it off instead.
+            Console.WriteLine();
+            Console.WriteLine("== close-approach trace, working config (startX 3300) ==");
+            RunFight(new CorridorEscape(true, WeakWings().Lead,
+                WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                WeakWings().HoverDescend, 0, "none", false, 0f), 1200,
+                maxHits: 999, bossOnly: true, bubbles: true,
+                jumpSpeed: WeakWings().JumpSpeed,
+                wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                traceClose: true);
 
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
