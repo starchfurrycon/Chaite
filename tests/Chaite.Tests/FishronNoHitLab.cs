@@ -815,7 +815,7 @@ namespace Chaite.Tests
             float jumpSpeed = 5.01f, float wingTimeMax = 150f,
             bool autoJump = false, string hoverVariant = "none",
             float holdX = 0f, bool traceClose = false, float wallBand = 0f, bool adaptive = false,
-            float wingAccRunSpeed = 0f)
+            float wingAccRunSpeed = -1f)
         {
             const float floorY = 6000f;
             TraceClose = traceClose;
@@ -3682,6 +3682,111 @@ namespace Chaite.Tests
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "    {0,5:F2} {1,5:F0} |{2} | {3,4}  {4}/8   {5,5}",
                         wing, lead, cells, total, clean, issued));
+                }
+            }
+
+            // RETUNE AT THE DOCUMENTED SPEED. The previous round showed the real
+            // wing speed is the missing capability (12 px/tick reaches sum 78
+            // against the old model's 556) but that simply switching to the
+            // documented 15.82 collapses, because every parameter was tuned
+            // against a player moving 2.34x too slowly. The dash lead is a
+            // DISTANCE, so at higher speed the same lead is reached in fewer ticks
+            // and the dash fires earlier; the aim boundary likewise has to move.
+            // Re-tune the pair AT the documented value rather than around the old
+            // one, and include the arrival-timed trigger since that is the
+            // mechanism that actually eats contacts.
+            Console.WriteLine();
+            Console.WriteLine("== retune at true wing speed 15.82 (weak) ==");
+            var bestTrue = int.MaxValue;
+            string bestTrueDesc = "";
+            foreach (var lead in new[] { 80f, 120f, 160f, 200f, 240f, 300f })
+            {
+                foreach (var aim in new[] { 0.75f, 0.85f, 0.95f, 1.01f })
+                {
+                    foreach (var at in new[] { 0, 1, 4 })
+                    {
+                        var cells = new System.Text.StringBuilder();
+                        var total = 0;
+                        var clean = 0;
+                        foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                            4300f, 4800f, 5300f, 5800f })
+                        {
+                            var ctrl = new CorridorEscape(true, lead,
+                                WeakWings().DashAt, true, 0f,
+                                WeakWings().ClimbAbove, aim, 0,
+                                WeakWings().ClimbCap, WeakWings().HoverDescend,
+                                0, "none", false, 0f, at);
+                            var run = RunFight(ctrl, 8000, maxHits: 999,
+                                bossOnly: true, bubbles: true, startX: startX,
+                                jumpSpeed: WeakWings().JumpSpeed,
+                                wingTimeMax: WeakWings().FlyTicks,
+                                autoJump: true, wingAccRunSpeed: 15.82f);
+                            var n = 0;
+                            foreach (var l in run.HitLog)
+                                if (l.Contains("src boss")) n++;
+                            total += n;
+                            if (n == 0) clean++;
+                            cells.Append(string.Format(
+                                CultureInfo.InvariantCulture, "{0,5}", n));
+                        }
+                        if (total < bestTrue)
+                        {
+                            bestTrue = total;
+                            bestTrueDesc = string.Format(
+                                CultureInfo.InvariantCulture,
+                                "lead={0:F0} aim={1:F2} at={2}", lead, aim, at);
+                        }
+                        if (clean > 0 || total < 200)
+                            Console.WriteLine(string.Format(
+                                CultureInfo.InvariantCulture,
+                                "    lead={0,3:F0} aim={1,4:F2} at={2} |{3} | " +
+                                "sum={4,5} clean={5}/8", lead, aim, at, cells,
+                                total, clean));
+                    }
+                }
+            }
+            Console.WriteLine("    best at true speed: sum=" + bestTrue + " (" +
+                bestTrueDesc + ")");
+
+            // The documented speed never recovers, so check whether the aim gate
+            // is what collapses it, by holding the speed at the value that works
+            // and moving the aim boundary instead. If 12 improves past 78 the two
+            // are independent knobs; if it does not, the speed itself sets the
+            // achievable floor and the controller needs state feedback, not
+            // another tuned constant.
+            Console.WriteLine();
+            Console.WriteLine("== aim boundary at the working speed 12 ==");
+            foreach (var aim in new[] { 0.75f, 0.85f, 0.95f, 1.01f })
+            {
+                foreach (var at in new[] { 0, 1 })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, WeakWings().Lead,
+                            WeakWings().DashAt, true, 0f,
+                            WeakWings().ClimbAbove, aim, 0,
+                            WeakWings().ClimbCap, WeakWings().HoverDescend,
+                            0, "none", false, 0f, at);
+                        var run = RunFight(ctrl, 8000, maxHits: 999,
+                            bossOnly: true, bubbles: true, startX: startX,
+                            jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks,
+                            autoJump: true, wingAccRunSpeed: 12f);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    speed=12 aim={0,4:F2} at={1} |{2} | sum={3,5} " +
+                        "clean={4}/8", aim, at, cells, total, clean));
                 }
             }
 
