@@ -2655,6 +2655,56 @@ namespace Chaite.Tests
                     CultureInfo.InvariantCulture, "   clean={0}/8", clean));
             }
 
+            // WALL DRAG. 3.54 established that the hover parks the boss at
+            // player.Center + (360*sign, -200), so moving the player during the
+            // hover MOVES where the boss will end up -- the drift is not
+            // passively entering bad configurations, it is dragging the boss
+            // into them. The untried use of that is the reverse: drag the boss
+            // deliberately. Pinning the player near a wall should park the boss
+            // a fixed 360 px off that wall, which constrains where the next
+            // charge can start and which lines it can take.
+            //
+            // The anchors are expressed from the walls:
+            //   wall     park the player 120 px inside the left wall
+            //   wallR    park the player 120 px inside the right wall
+            //   centre   park the player near the middle of the runway
+            Console.WriteLine();
+            Console.WriteLine("== wall drag: hover anchor x opening (weak set) ==");
+            foreach (var anchor in new[]
+            {
+                new { Name = "none   ", X = 0f },
+                new { Name = "wall   ", X = ArenaBandLeft + 120f },
+                new { Name = "wallR  ", X = ArenaBandRight - 120f },
+                new { Name = "quarter", X = ArenaBandLeft +
+                    (ArenaBandRight - ArenaBandLeft) * 0.25f },
+                new { Name = "middle ", X = ArenaBandLeft +
+                    (ArenaBandRight - ArenaBandLeft) * 0.5f },
+            })
+            {
+                var line = new System.Text.StringBuilder(string.Format(
+                    CultureInfo.InvariantCulture, "    {0} :", anchor.Name));
+                var clean = 0;
+                foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f, 4300f,
+                    4800f, 5300f, 5800f })
+                {
+                    var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                        WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                        WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                        WeakWings().HoverDescend, 0, "none", false, anchor.X),
+                        8000, maxHits: 999, bossOnly: true, bubbles: true,
+                        startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                        wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                    var n = 0;
+                    foreach (var l in run.HitLog)
+                        if (l.Contains("src boss")) n++;
+                    if (n == 0) clean++;
+                    line.Append(string.Format(CultureInfo.InvariantCulture,
+                        " {0,3}", n));
+                }
+                Console.WriteLine(line.ToString() + string.Format(
+                    CultureInfo.InvariantCulture, "   clean={0}/8", clean));
+            }
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
