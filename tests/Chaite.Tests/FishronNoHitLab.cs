@@ -1277,17 +1277,28 @@ namespace Chaite.Tests
                 // shallow charge the normal is nearly vertical and the dash
                 // contributes almost nothing, so height is the whole escape.
                 //
-                // Both bits are required and they are NOT the same input:
-                // FlightMotion's impulse tests controls.Jump, while controls.Up
-                // only steers sustained ascent (and doubles as the descend
-                // control). Setting Up alone left the player grounded with
-                // velocity.Y at exactly zero for the whole charge, so every
-                // earlier "climb" experiment was silently measuring no climb.
+                // Which branch applies is decided by how vertical the normal
+                // is. The charge line is (ux, uy), so its normal is (-uy, ux)
+                // and the normal's VERTICAL component is |ux|: a shallow line
+                // (ux near 1) has an almost straight-up normal, and a steep one
+                // (ux near 0.5) has a mostly horizontal normal.
                 //
-                // The shallow case also has to climb NOW rather than at the
-                // dash: its closest approach is the first projected tick, so
-                // ascending only once the dash trigger fires is already late.
-                if (_climb && !escapeDown)
+                // This is NOT the same question as "is the escape direction
+                // up". Both charge 3 (57.4 deg, |ux|=0.54) and charge 4
+                // (51.2 deg, |ux|=0.63) escaped upwards, yet routing both to
+                // the climb left 4 fifty-six px short of the 111 px it needed
+                // while 3 cleared its 110 px by sixty. The steep pair is what
+                // the dash is for, so they must not also be given the climb.
+                //
+                // Both bits are required when climbing and they are NOT the
+                // same input: FlightMotion's impulse tests controls.Jump, while
+                // controls.Up only steers sustained ascent (and doubles as the
+                // descend control). Setting Up alone left the player grounded
+                // with velocity.Y at exactly zero for the whole charge, so
+                // every earlier "climb" experiment was silently measuring no
+                // climb at all.
+                var normalVertical = Math.Abs(_ux.X);
+                if (_climb && !escapeDown && normalVertical > 0.75f)
                 {
                     controls.Jump = true;
                     controls.Up = true;
