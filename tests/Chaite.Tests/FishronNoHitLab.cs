@@ -122,6 +122,8 @@ namespace Chaite.Tests
             public int Hits;
             public readonly List<string> HitLog = new List<string>();
             public int ImmuneTicks;
+            /// <summary>Set only by the A/B check that the immunity matters.</summary>
+            public bool DashImmunityDisabled;
             public int ChargeCount;
             public int Tick;
             public int TicksSinceBubbleDamage;
@@ -764,6 +766,8 @@ namespace Chaite.Tests
         /// left over. A per-charge summary cannot say WHICH tick went wrong,
         /// and the interesting failures are one or two ticks wide.</summary>
         private static bool TraceCharge;
+        /// <summary>Set only by the A/B check that the dash immunity matters.</summary>
+        private static bool FishronDashImmunityDisabled;
         /// <summary>When positive, the charge trace prints only this charge
         /// ordinal. Charge 5 is a fixed obstacle across every jump speed from
         /// 6.41 to 8.91, so isolating its trace is what makes that readable.</summary>
@@ -836,6 +840,22 @@ namespace Chaite.Tests
                 (maxHits < 0 || world.Hits < maxHits))
             {
                 if (world.ImmuneTicks > 0) world.ImmuneTicks--;
+
+                // The dash's contact immunity. Native sets eocDash = 15 when a
+                // Shield of Cthulhu dash starts (Player.cs:21641) and the NPC
+                // collision loop skips entirely while eocDash > 0
+                // (Player.cs:31602), so a dash INTO the boss cannot be hit. The
+                // official wiki states the same thing as the core phase-three
+                // survival mechanic: "the Shield of Cthulhu can be used to great
+                // effect, providing brief invincibility frames when dashing into
+                // him".
+                //
+                // ImmuneTicks was declared, decremented and gated on, but never
+                // SET, so this whole mechanic was dead code and every contact
+                // registered regardless. That is why a pure perpendicular-escape
+                // controller could never reach zero: the escape it was missing
+                // was not a geometric one.
+                if (frame.Dashing && !FishronDashImmunityDisabled) world.ImmuneTicks = 15;
                 var playerView = PlayerView(in frame, world);
                 var bossView = BossView(world);
                 var controls = controller.Decide(world.Tick, in frame,
@@ -1251,6 +1271,7 @@ namespace Chaite.Tests
             private readonly float _hoverDescend;
             private readonly int _preposition;
             private readonly string _hoverVariant;
+            private readonly bool _counterDash;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
@@ -1260,7 +1281,7 @@ namespace Chaite.Tests
                 bool climb = false, float lead = 0f, float climbAbove = 0.75f,
                 float dashAim = 0.85f, int jumpPulse = 0, float climbCap = 420f,
                 float hoverDescend = 160f, int preposition = 0,
-                string hoverVariant = "none")
+                string hoverVariant = "none", bool counterDash = false)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1274,6 +1295,7 @@ namespace Chaite.Tests
                 _hoverDescend = hoverDescend;
                 _preposition = preposition;
                 _hoverVariant = hoverVariant;
+                _counterDash = counterDash;
             }
 
             public void Reset()
@@ -1466,9 +1488,23 @@ namespace Chaite.Tests
                 if (escapeDown) controls.Down = true;
                 else controls.Up = true;
 
-                // The dash's 172 px is HORIZONTAL, so it only helps if it is
-                // taken towards the side being escaped. Steering body-left or
-                // body-right purely to get away from the boss can therefore
+                    // Counter-dash: aim the dash INTO the boss rather than at
+                    // the escape side. This is the wiki's stated phase-three
+                    // answer -- the i-frames from dashing into him -- and it is
+                    // a different action from the geometric escape, not a
+                    // setting of it. Aiming into the boss is taken as the
+                    // direction along which the boss is closing on the player.
+                    if (_counterDash)
+                    {
+                        var toward = boss.Center.X >= player.Center.X;
+                        controls.Right = toward;
+                        controls.Left = !toward;
+                        return controls;
+                    }
+
+                    // The dash's 172 px is HORIZONTAL, so it only helps if it is
+                    // taken towards the side being escaped. Steering body-left or
+                    // body-right purely to get away from the boss can therefore
                 // spend the dash along the charge line, where it buys no
                 // clearance at all, or even straight into the corridor.
                 //
@@ -1883,6 +1919,87 @@ namespace Chaite.Tests
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "    zero-contact configs: {0}", clean));
             Console.WriteLine("    first: " + cleanLabel);
+
+            // ZERO-CONTACT AUDIT. Everything the run logged, not a count, plus
+            // the hit source breakdown, so "0 boss contacts" cannot be a
+            // filtering artefact and any bubble or sharkron contact still shows.
+            Console.WriteLine();
+            Console.WriteLine("  AUDIT: perpendicular escape, dash immunity ON, all threats:");
+            var auditRun = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                0.88f, 0.85f, 0, 420f, 160f, 0, "none", false), 8000,
+                maxHits: 999, bossOnly: false, bubbles: true, tornados: true,
+                jumpSpeed: 8.91f, wingTimeMax: 100f, autoJump: true);
+            var bossN = 0;
+            var bubbleN = 0;
+            var otherN = 0;
+            foreach (var line in auditRun.HitLog)
+            {
+                if (line.Contains("src boss")) bossN++;
+                else if (line.Contains("src bubble")) bubbleN++;
+                else otherN++;
+            }
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    ticks={0} charges={1} totalHits={2} boss={3} bubble={4} " +
+                "other={5} hitLogEntries={6}",
+                auditRun.Ticks, auditRun.Charges, auditRun.Hits, bossN, bubbleN,
+                otherN, auditRun.HitLog.Count));
+            foreach (var line in auditRun.HitLog)
+                Console.WriteLine("      " + line);
+
+            // And the same run with every projectile threat disabled, which is
+            // the isolated question "can the boss body ever touch the player
+            // under this controller".
+            Console.WriteLine();
+            Console.WriteLine("  AUDIT: boss body only:");
+            var bodyRun = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                0.88f, 0.85f, 0, 420f, 160f, 0, "none", false), 8000,
+                maxHits: 999, bossOnly: true, bubbles: true,
+                jumpSpeed: 8.91f, wingTimeMax: 100f, autoJump: true);
+            var bodyN = 0;
+            foreach (var line in bodyRun.HitLog)
+                if (line.Contains("src boss")) bodyN++;
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    ticks={0} charges={1} totalHits={2} bossContacts={3}",
+                bodyRun.Ticks, bodyRun.Charges, bodyRun.Hits, bodyN));
+
+            // A/B: the same controller with the immunity switched back off.
+            // Without this the zero could be the controller rather than the
+            // mechanic, and which one it is is the whole question.
+            Console.WriteLine();
+            Console.WriteLine("  A/B: dash immunity OFF (same controller):");
+            FishronDashImmunityDisabled = true;
+            var offRun = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                0.88f, 0.85f, 0, 420f, 160f, 0, "none", false), 8000,
+                maxHits: 999, bossOnly: true, bubbles: true,
+                jumpSpeed: 8.91f, wingTimeMax: 100f, autoJump: true);
+            FishronDashImmunityDisabled = false;
+            var offN = 0;
+            foreach (var line in offRun.HitLog)
+                if (line.Contains("src boss")) offN++;
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "    immunity=OFF ticks={0} charges={1} bossContacts={2}",
+                offRun.Ticks, offRun.Charges, offN));
+
+            // The dash's contact immunity is now modelled (eocDash 15), so the
+            // open question is whether dashing INTO the boss clears contacts.
+            // The counter-dash is a different action from the geometric escape,
+            // not a setting of it, so the two are measured side by side.
+            Console.WriteLine();
+            Console.WriteLine("  counter-dash vs perpendicular escape (immunity ON):");
+            foreach (var counterMode in new[] { false, true })
+            {
+                var run = RunFight(new CorridorEscape(true, 240f, 8, true, 0f,
+                    0.88f, 0.85f, 0, 420f, 160f, 0, "none", counterMode), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    jumpSpeed: 8.91f, wingTimeMax: 100f, autoJump: true);
+                var n = 0;
+                foreach (var line in run.HitLog)
+                    if (line.Contains("src boss")) n++;
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    counterDash={0,-5} ticks={1,5} charges={2,3} " +
+                    "bossContacts={3,4}", counterMode, run.Ticks, run.Charges,
+                    n));
+            }
 
             // The first hunt only varied climbAbove/lead/hoverDescend. The
             // contacts are a hover-phase cluster, so the hover geometry itself
