@@ -1418,11 +1418,20 @@ namespace Chaite.Tests
             // Counting executions separates those, which no contact count can.
             public int EscapeBodyTicks { get; private set; }
 
+            /// <summary>How many times the charge escape body actually issued a
+            /// dash. Needed because dashLead sweeps came back bit-identical at the
+            /// documented wing speed, which is only possible if the dash trigger
+            /// is never reached -- the lead is a distance and the trigger compares
+            /// it against remaining travel, so if the player keeps station at high
+            /// speed the trigger simply does not fire.</summary>
+            public int DashIssues { get; private set; }
+
             public void Reset()
             {
                 _lastState = int.MinValue;
                 _dashIssued = false;
                 EscapeBodyTicks = 0;
+                DashIssues = 0;
 
                 _ux = new Vec2(1f, 0f);
             }
@@ -1952,6 +1961,7 @@ namespace Chaite.Tests
                 }
                 controls.Dash = true;
                 _dashIssued = true;
+                DashIssues++;
                 return controls;
             }
 
@@ -3626,6 +3636,53 @@ namespace Chaite.Tests
                     "    wingSpeed={0,5:F2}{1} |{2} | sum={3,5} clean={4}/8",
                     wing, wing <= 0f ? " (on-foot)" : "         ", cells, total,
                     clean));
+            }
+
+            // RETUNE AT THE DOCUMENTED WING SPEED. 4.13 showed the wing speed is
+            // the missing capability but that simply switching to the real value
+            // makes things worse, because every control parameter was tuned
+            // against a player moving 2.34x too slowly. The dash lead in
+            // particular is a DISTANCE, so at a higher speed the same lead is
+            // crossed in far fewer ticks and the dash fires far too early. Re-sweep
+            // the parameters at the real speed instead of concluding the speed is
+            // harmful.
+            Console.WriteLine();
+            Console.WriteLine("== retune at documented wing speed ==");
+            Console.WriteLine("    wing  lead |  contacts by opening                        " +
+                "     | sum  clean  dashIssues");
+            foreach (var wing in new[] { 0f, 12f, 15.82f })
+            {
+                foreach (var lead in new[] { 60f, 120f, 180f, 240f, 350f, 500f })
+                {
+                    var cells = new System.Text.StringBuilder();
+                    var total = 0;
+                    var clean = 0;
+                    var issued = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var ctrl = new CorridorEscape(true, lead,
+                            WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                            WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend, 0, "none", false, 0f);
+                        var run = RunFight(ctrl,
+                            8000, maxHits: 999, bossOnly: true, bubbles: true,
+                            startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true,
+                            wingAccRunSpeed: wing);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        issued += ctrl.DashIssues;
+                        if (n == 0) clean++;
+                        cells.Append(string.Format(CultureInfo.InvariantCulture,
+                            "{0,5}", n));
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    {0,5:F2} {1,5:F0} |{2} | {3,4}  {4}/8   {5,5}",
+                        wing, lead, cells, total, clean, issued));
+                }
             }
 
             // All threats, weak set, every opening: what still lands and from
