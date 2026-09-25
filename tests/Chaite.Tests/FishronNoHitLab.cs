@@ -951,12 +951,12 @@ namespace Chaite.Tests
                             "    c{0} t{1,3} along {2,7:F1} boss {3,7:F1} " +
                             "perp {4,6:F1} req {5,4:F0} room {6,7:F1} " +
                             "ply=({7:F0},{8:F0}) v=({9:F1},{10:F1}) gnd={11} " +
-                            "ctrl={12}{13}{14}{15}{16}",
+                            "wing={12:F0} ctrl={13}{14}{15}{16}{17}",
                             chargeOrdinal, world.Tick, numerator, bossAlong,
                             perpendicular, requiredClearance,
                             perpendicular - requiredClearance,
                             playerX, playerY, frame.Velocity.X,
-                            frame.Velocity.Y, frame.Grounded,
+                            frame.Velocity.Y, frame.Grounded, frame.WingTime,
                             controls.Left ? "L" : "-", controls.Right ? "R" : "-",
                             controls.Up ? "U" : "-", controls.Down ? "D" : "-",
                             controls.Jump ? "J" : "-"));
@@ -1226,6 +1226,7 @@ namespace Chaite.Tests
             private readonly bool _climb;
             private readonly float _climbAbove;
             private readonly float _dashAim;
+            private readonly int _jumpPulse;
             private readonly float _lead;
             private int _lastState = int.MinValue;
             private bool _dashIssued;
@@ -1233,7 +1234,7 @@ namespace Chaite.Tests
 
             public CorridorEscape(bool useDash, float dashLead, int dashAtTimer = 0,
                 bool climb = false, float lead = 0f, float climbAbove = 0.75f,
-                float dashAim = 0.85f)
+                float dashAim = 0.85f, int jumpPulse = 0)
             {
                 _useDash = useDash;
                 _dashLead = dashLead;
@@ -1242,6 +1243,7 @@ namespace Chaite.Tests
                 _lead = lead;
                 _climbAbove = climbAbove;
                 _dashAim = dashAim;
+                _jumpPulse = jumpPulse;
             }
 
             public void Reset()
@@ -1461,7 +1463,8 @@ namespace Chaite.Tests
                 var normalVertical = Math.Abs(_ux.X);
                 if (_climb && !escapeDown && normalVertical > _climbAbove)
                 {
-                    controls.Jump = true;
+                    controls.Jump = _jumpPulse <= 0 ||
+                        world.Tick % _jumpPulse == 0;
                     controls.Up = true;
                     if (altitude > 420f) controls.Up = false;
                 }
@@ -1910,6 +1913,26 @@ namespace Chaite.Tests
                 Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                     "  dashAt={0,2} firstHit={1,5} charges={2,3}",
                     at, fight.Ticks, fight.Charges));
+            }
+            Console.WriteLine();
+            // The admitted routes require the Frog Leg (FormulaRouteCatalog.Select
+            // gates both wing routes on frogLeg) and it is worth +2.4 jump speed,
+            // but the fixture had been running the bare 5.01. Worse, the climb
+            // controller holds Jump continuously, and native only refills the
+            // wing budget on a RELEASE edge while airborne. Holding forever
+            // therefore spends the wing once and never refills it, which is a
+            // candidate explanation for the flat 4.6 px/tick ceiling that every
+            // earlier sweep ran into.
+            Console.WriteLine("== frog leg + jump release (does the wing refill?) ==");
+            foreach (var js in new[] { 5.01f, 7.41f })
+            foreach (var pulse in new[] { 0, 2, 3, 4 })
+            {
+                var fight = RunFight(new CorridorEscape(true, 240f, 8, true,
+                    0f, 0.75f, 0.85f, pulse), 8000, maxHits: 1, bossOnly: true,
+                    bubbles: true, jumpSpeed: js);
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "  jumpSpeed={0,5:F2} pulse={1} firstHit={2,5} charges={3,3}",
+                    js, pulse, fight.Ticks, fight.Charges));
             }
             Console.WriteLine();
             Console.WriteLine("== threat-class isolation (charges always live) ==");
