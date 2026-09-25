@@ -2768,6 +2768,82 @@ namespace Chaite.Tests
                 Console.WriteLine("    (no angle entries parsed)");
             }
 
+            // WHERE do the contacts happen, by phase? The guide treats the three
+            // phases as separate problems ("3+1+3+1", "formula time", "jumping
+            // rope"), and every run so far has conflated them into one 8000-tick
+            // number. If one phase is responsible for most of the contacts, the
+            // work belongs there rather than spread over the whole fight.
+            Console.WriteLine();
+            Console.WriteLine("== contacts by phase (weak set) ==");
+            foreach (var startX in new[] { 2400f, 3300f, 4800f, 5800f })
+            {
+                var run = RunFight(new CorridorEscape(true, WeakWings().Lead,
+                    WeakWings().DashAt, true, 0f, WeakWings().ClimbAbove,
+                    WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                    WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                    maxHits: 999, bossOnly: true, bubbles: true,
+                    startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                    wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                var p1 = 0;
+                var p2 = 0;
+                var p3 = 0;
+                foreach (var line in run.HitLog)
+                {
+                    if (!line.Contains("src boss")) continue;
+                    if (line.Contains("phase One")) p1++;
+                    else if (line.Contains("phase Two")) p2++;
+                    else p3++;
+                }
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "    startX={0,5:F0} total={1,4} phase1={2,4} phase2={3,4} " +
+                    "phase3={4,4}", startX, p1 + p2 + p3, p1, p2, p3));
+            }
+
+            // Phase 1 only. The by-phase breakdown showed every contact in the
+            // whole fight happens in phase one; phases two and three are already
+            // clean at every opening. Phase one is the "5+1" burst, and it is
+            // also the only phase whose park offset is 300 rather than 360, so
+            // the search belongs here and nowhere else.
+            Console.WriteLine();
+            Console.WriteLine("== phase 1 parameter search (weak, contacts in p1 only) ==");
+            var bestRow = "";
+            var bestCount = 9999;
+            foreach (var above in new[] { 0.80f, 0.85f, 0.88f, 0.90f, 0.93f })
+            {
+                foreach (var lead in new[] { 120f, 180f, 240f, 300f })
+                {
+                    var total = 0;
+                    var worst = 0;
+                    foreach (var startX in new[] { 2400f, 2800f, 3300f, 3800f,
+                        4300f, 4800f, 5300f, 5800f })
+                    {
+                        var run = RunFight(new CorridorEscape(true, lead,
+                            WeakWings().DashAt, true, 0f, above,
+                            WeakWings().DashAim, 0, WeakWings().ClimbCap,
+                            WeakWings().HoverDescend, 0, "none", false, 0f), 8000,
+                            maxHits: 999, bossOnly: true, bubbles: true,
+                            startX: startX, jumpSpeed: WeakWings().JumpSpeed,
+                            wingTimeMax: WeakWings().FlyTicks, autoJump: true);
+                        var n = 0;
+                        foreach (var l in run.HitLog)
+                            if (l.Contains("src boss")) n++;
+                        total += n;
+                        if (n > worst) worst = n;
+                    }
+                    if (worst < bestCount)
+                    {
+                        bestCount = worst;
+                        bestRow = string.Format(CultureInfo.InvariantCulture,
+                            "above={0:F2} lead={1:F0} sum={2} worst={3}", above,
+                            lead, total, worst);
+                    }
+                    Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                        "    above={0:F2} lead={1,3:F0} sum={2,5} worst={3,4}",
+                        above, lead, total, worst));
+                }
+            }
+            Console.WriteLine("    BEST: " + bestRow);
+
             // All threats, weak set, every opening: what still lands and from
             // where. Bubbles and sharkrons should be the only sources.
             Console.WriteLine();
