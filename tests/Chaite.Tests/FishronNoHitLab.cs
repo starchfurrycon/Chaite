@@ -444,7 +444,20 @@ namespace Chaite.Tests
                         world.State = 10;
                         world.StateTimer = 0;
                         world.AttackCounter++;
-                        if (world.AttackCounter >= 9) world.AttackCounter = 0;
+                        // The burst length is not a flat number. Native AI_069
+                        // sets ai[3] and num2 = flag3 ? 3 : 5, so phase one
+                        // lunges FIVE times per burst and phase two only three,
+                        // before a projectile attack resets the counter. The
+                        // wiki states the same independently: "lunges at the
+                        // player exactly five times ... before using one of two
+                        // projectile attacks" in phase one, and "three times
+                        // instead of five" in phase two. A flat nine was used
+                        // here, which is neither, and it is why the run reported
+                        // a contact at "charge 5" with a timer past the
+                        // hover-sequence bound: the state really was mid-burst
+                        // at a position the flat cycle put it.
+                        var burst = world.Phase == FightPhase.One ? 5 : 3;
+                        if (world.AttackCounter >= burst) world.AttackCounter = 0;
                         world.HoverOffset = 0f;
                     }
                     return;

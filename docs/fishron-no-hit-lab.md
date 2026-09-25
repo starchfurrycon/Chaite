@@ -357,6 +357,67 @@ tick 309 charge#5 state 0 seq 10 timer 20 ... boss (2839,5854) player (2759,5915
 **这一轮没有取得进展**：预置位这条线是负结果，而且暴露出状态标注可能有问题。
 当前诚实成绩仍是 **8000 tick / 97 冲刺 / 7 次本体接触**。
 
+### 3.39 视频字幕取不到，但拿到了章节表
+
+两个视频的**内嵌字幕取不到**，这是硬限制不是我没试：
+
+- `api.bilibili.com/x/web-interface/view` → `subtitle.list` **空数组**；
+- `api.bilibili.com/x/player/wbi/v2` → `need_login_subtitle: true`，
+  `subtitle.subtitles` **空数组**（换浏览器 UA/Referer 重试仍然 `count=0`）；
+- 第三方解析站（xbeibeix）→ 要求图片验证码。
+
+能拿到的是**章节表**（`view_points`），带精确时间戳，视频 600 秒：
+
+| 区间（秒） | 章节 |
+|---|---|
+| 0–24 | boss 简介 |
+| 24–114 | **机制解析及如何应对** |
+| 114–168 | 战前准备 |
+| 168–278 | 一阶段实战解析 |
+| 278–411 | 二阶段实战解析 |
+| 411–497 | 三阶段实战解析 |
+| 497–600 | **补充三种三阶段应对方法** |
+
+### 3.40 【关键】Wiki 给出了公式化打法的实质：**无敌帧，不是几何逃生**
+
+Terraria 官方 Wiki（`terraria.wiki.gg/wiki/Duke_Fishron`）的原文给出了三件事，
+**直接推翻了我此前的问题框架**：
+
+**（1）一/二阶段是固定次数的连冲，不是无限**
+
+> phase 1: "lunges at the player **exactly five times** ... before using one of
+> two projectile attacks"
+> phase 2: "only performed **three times** instead of five"
+
+这与原生 `num2 = flag3 ? 3 : 5` **一致**（`flag3 = ai[0] > 4`，即二阶段）。
+而实验台此前用的是**固定 9**——**既不是 5 也不是 3**。已修为按阶段取 5 / 3。
+
+**（2）三阶段是确定性 1-2-3，且换边方向可预测**
+
+> "First, he will charge **once** before teleporting to one side of the player.
+> Then he will charge **twice**, and teleport to the other side. Finally, he
+> will charge **three times**, teleport to one side, and the pattern will reset."
+> "the side he teleports to will always be the **opposite side he last dashed
+> towards**"
+
+**（3）决定性的那句——逃生靠无敌帧**
+
+> "In Expert Mode, the Shield of Cthulhu can be used to great effect, providing
+> brief **invincibility frames** when dashing **into** him."
+
+> "Duke Fishron's charges aim for where the player is, not where they will be.
+> Because of this, moving **perpendicularly** with his charges will cause him to
+> completely miss."
+
+**这是关键**：我一直在解"几何净空够不够"（`RequiredClearance`），
+但三阶段的正确答案是**主动冲向本体换无敌帧**（相向冲刺），
+而不是躲开。**这解释了为什么 175 组几何参数全都失败**——
+问题不在参数，在**动作空间缺少"对冲"这个动作**。
+
+**诚实边界**：我**没有**在实验台中验证过无敌帧机制（`eocDash` 的接触免疫
+是否真能抵消本体接触），也**没有**确认实验台是否建模了这个交互。
+上述三条来自 Wiki，是**外部资料**，不是我在本项目里的实测结果。
+
 ## 0. 本轮修正（重要）
 
 上一版有两处错误，都是我自己造成的，已修正：
