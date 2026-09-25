@@ -1552,21 +1552,29 @@ namespace Chaite.Tests
         public static void FishronStartSweep(float first, float last, float step)
         {
             Console.WriteLine("== fine opening-position sweep ==");
-            var best = int.MaxValue;
+            var best = 0;
+            var bestStart = 0f;
             var zeros = 0;
             for (var sx = first; sx <= last; sx += step)
             {
+                // maxHits must be 1 here. With maxHits = 8 every failing start
+                // stops on its eighth contact and reports exactly 8, so the
+                // count cannot tell a start that dies at charge 2 from one that
+                // survives to charge 12. Stopping on the FIRST contact turns
+                // the metric into "how long until anything lands", which is
+                // strictly more informative and is what the sweep needs.
                 var fight = RunFight(new CorridorEscape(true, 240f, 8, true),
-                    8000, maxHits: 8, bossOnly: false, bubbles: false,
+                    8000, maxHits: 1, bossOnly: false, bubbles: false,
                     startX: sx);
                 var contacts = 0;
                 foreach (var line in fight.HitLog)
                     if (line.Contains("src boss")) contacts++;
-                if (contacts < best)
+                if (fight.Ticks > best)
                 {
-                    best = contacts;
+                    best = fight.Ticks;
+                    bestStart = sx;
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                        "  startX={0,7:F1} ticks={1,5} charges={2,3} " +
+                        "  startX={0,7:F1} firstHitTick={1,5} charges={2,3} " +
                         "bossHits={3,3}   <- best so far", sx, fight.Ticks,
                         fight.Charges, contacts));
                 }
@@ -1578,8 +1586,9 @@ namespace Chaite.Tests
                         sx, fight.Ticks, fight.Charges));
                 }
             }
-            Console.WriteLine("  zero-hit starts: " + zeros + ", best bossHits=" +
-                best);
+            Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                "  zero-hit starts: {0}, latest first contact: tick {1} at " +
+                "startX={2:F1}", zeros, best, bestStart));
         }
 
         private static void FishronNoHitLab()
