@@ -955,8 +955,29 @@ namespace Chaite.Core
             var y = player.Center.Y;
             // Turning back at a band edge is part of the reviewed W cycle, not
             // an exception to it: the turnaround charges use the same dash.
-            if (x <= _bandLeft && horizontal < 0) horizontal = 1;
-            else if (x >= _bandRight && horizontal > 0) horizontal = -1;
+            //
+            // The corner case is what a wall must never do: if the escape is
+            // pressed against an edge AND the boss is charging down the other
+            // axis, then simply reversing the horizontal input is not enough,
+            // because the reversed value is recomputed away on the next tick and
+            // the player oscillates on the wall. A grounded player there has no
+            // mobility at all, so the wall decides the fight.
+            //
+            // MEASURED (dense native trace, hit at tick 3019): the player held
+            // plX 640 with plvx 0.0 for sixteen consecutive ticks -- _bandLeft is
+            // worldLeft + BandEdgeMargin = 640 -- while the boss descended
+            // vertically at bovy 15.8 and the player climbed at plvy -6.2 into
+            // it. The horizontal axis was the only escape and the wall had
+            // cancelled it.
+            //
+            // The fix is to spend the wall on the tangential axis: when a wall
+            // cancels the horizontal escape, climb or dive along the wall rather
+            // than standing on it, so the boss's line is left vertically even
+            // though it cannot be left horizontally.
+            var atLeftWall = x <= _bandLeft;
+            var atRightWall = x >= _bandRight;
+            if (atLeftWall && horizontal <= 0) horizontal = 1;
+            else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
             else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;
         }
