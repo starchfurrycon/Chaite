@@ -3641,3 +3641,73 @@ instructions to `Player.Update`**, which avoids that contract entirely.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 47. Round 86: the plugin's whole control pipeline is correct -- the controls are cleared between the restore and the next tick's entry
+
+### 47.1 The plugin-side trace
+
+The plugin has no logger, so a trace was added on its own side, writing to the path in `CHAITE_DIAG_FILE`
+(pure `System.IO`, no new instructions in `Player.Update`, so the probe's IL validator is untouched). Four
+points per tick: the entry state read before anything is written (`D_ENTRY`), the resolved plan and its
+post-write fields (`A_APPLY`), the snapshot taken for staging (`B_CAPTURE`), and the staged restore's
+written and post-write fields (`C_RESTORE`). Replaying the jump-only route:
+
+```
+D_ENTRY   t=241 inJ=False inL=False
+A_APPLY   t=241 J=True JA=Hold L=-1 D=False Dash=False postJ=True postL=True
+B_CAPTURE t=241 J=True L=True D=False Dash=False liveJ=True liveL=True
+C_RESTORE t=241 wroteJ=True wroteL=True postJ=True postL=True
+D_ENTRY   t=242 inJ=False inL=False
+A_APPLY   t=242 J=True JA=Hold L=-1 D=False Dash=False postJ=True postL=True
+B_CAPTURE t=242 J=True L=True D=False Dash=False liveJ=True liveL=True
+C_RESTORE t=242 wroteJ=True wroteL=True postJ=True postL=True
+D_ENTRY   t=243 inJ=False inL=False
+... identical on every tick through 246
+```
+
+### 47.2 What this establishes
+
+**The plugin's control path is correct end to end, and §44/§46's staging hypothesis is wrong.** On every
+tick the plan resolves the jump (`J=True`, `JumpAction=Hold`), the write lands (`postJ=True`,
+`postL=True`), the staging snapshot captures exactly that (`J=True`, `L=True`), and the restore writes it
+back and reads it back as `True`. There is no stale or empty snapshot: the two-stage
+`CapturePendingInput`/`ApplyPendingInput` round-trip is faithful.
+
+**The loss is after the restore and before the next tick's entry.** `C_RESTORE` ends tick *N* with
+`postJ=True postL=True`, and the very next line of the trace is `D_ENTRY` for tick *N+1* reading
+`inJ=False inL=False`. Nothing in the plugin runs between those two points, so **the clear happens inside
+the engine, between the end of one `Player.Update` and the entry of the next** -- which is precisely where
+`ResetControls` sits (`Player.Update` calls it on entry for the local player, §37). And the same trace run
+in the live takeover reaches the movement region carrying `controlJump=True`, so in live the value
+survives that same window.
+
+That is the whole defect, stated exactly: **in replay mode the controls written during tick N do not
+survive into tick N+1, while in live mode they do.** Every earlier symptom follows from it -- the body
+never becomes airborne, `velocity` stays exactly `(0,0)`, `py` is frozen, `wingTime` stays at 130, and the
+horizontal channel fails too because acceleration only accumulates across frames of held input. §41's
+"one frame late" and §43's "`controlJump` never reaches a frame" were both correct observations of this
+same fact from different observers.
+
+### 47.3 Where the live path differs
+
+Since the plugin's writes and staging are provably identical in structure, the remaining difference is in
+what the live mode does that replay does not: a mechanism that re-establishes the controls after the
+engine's entry-time clear. In the live probe run, `Player.Update` reads its own inputs from the native
+input layer before the entry clear, and the probe's live takeover is measured to work; in replay the
+route's controls are supplied only through the plugin. The next measurement is therefore the **live**
+run's same four-point trace: if `D_ENTRY` is `True` in live where it is `False` in replay, the live path
+has a re-supply point the replay lacks, and that point is the thing the replay must be routed through.
+
+### 47.4 Status
+
+- **Tree clean** apart from the untracked `tmp/`; all instrumentation reverted, solution builds clean.
+- **Established (measured, whole pipeline):** in replay the plan resolves, writes, snapshots and restores
+  `controlJump`/`controlLeft` as `True` inside every tick, and the value is `False` again at the next
+  tick's entry. The clear is in the engine between ticks, not in the plugin.
+- **Correction:** §44's and §46's "the staged snapshot drops the jump" is withdrawn -- the snapshot is
+  faithful (`B_CAPTURE J=True`, `C_RESTORE wroteJ=True postJ=True` every tick).
+- **Next:** the same four-point trace on a **live** run, to find the live re-supply point that replay
+  lacks.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
