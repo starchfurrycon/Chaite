@@ -848,50 +848,27 @@ namespace Chaite.Core
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
             plan.ToggleMount = script.ToggleMount;
-            // A stalled player is never left stalled under a live charge.
-            //
-            // This is the last place the plan is still ours, so the guarantee is
-            // enforced here rather than trusted to every branch upstream. The
-            // measured failure it prevents: on a charge the script can return a
-            // neutral horizontal -- by design, to vary the dodge -- and a player
-            // with no horizontal speed cannot leave the charge line. AI_069
-            // hovers above the player and charges down at 14.7 to 17.0 px/tick,
-            // while ground acceleration under the move-speed debuff is about
-            // 0.08 px/tick^2, so a standstill is a loss no matter which way the
-            // script intended to go. A neutral horizontal also mis-aims the
-            // dash, which writes velocity.X in the facing direction.
-            //
-            // MEASURED (dense native trace, tick 3005): plan horizontal 0,
-            // applied controls L 0 and R 0, player at plX 640 with vx 0.00 for
-            // sixteen consecutive ticks, boss descending from x 597 to x 508 at
-            // bovy 15.8; at contact the boxes overlapped 14 px horizontally and
-            // 29 px vertically. Charge states are 1, 6 and 11.
-            if (IsFishronChargeState(input.NativeState) &&
-                Math.Abs(snapshot.Player.Velocity.X) < ChargedPlayerSpeedFloor)
+            // TEMPORARY INSTRUMENTATION (remove once resolved): record the plan
+            // value at the point of last write in PlanFormula. The script trace
+            // proves FishronWingScript returns +/-1 on every tick, so a plan
+            // horizontal of 0 must be written here or later on this path.
+            if (Environment.GetEnvironmentVariable("CHAITE_GUARD_TRACE") == "1")
             {
-                // Fleeing "away from the boss" is not enough on its own: if the
-                // boss is on the far side of the arena the away direction points
-                // INTO the wall, and a player pressed against the wall has
-                // velocity zero no matter what input it is given. The escape
-                // direction therefore has to be one the player can actually
-                // travel in.
-                //
-                // MEASURED (guard trace, 1065 charge-state rows): the script
-                // asks for -1 and the planner forwards -1, yet vx stays 0.00 and
-                // the player remains at plX 640, which is _bandLeft =
-                // worldLeft + BandEdgeMargin. The boss started on the far side,
-                // so "away" was a wall.
-                //
-                // The arena edge is expressed as remaining clearance rather than
-                // an absolute coordinate: the planner does not know the world
-                // origin, but it does know how much room is left on each side.
-                var wantsLeft = snapshot.Player.Center.X <= target.Center.X;
-                const float WallMargin = 12f;
-                var atLeftWall = snapshot.Arena.ClearanceLeft <= WallMargin;
-                var atRightWall = snapshot.Arena.ClearanceRight <= WallMargin;
-                if (wantsLeft && atLeftWall) wantsLeft = false;
-                else if (!wantsLeft && atRightWall) wantsLeft = true;
-                plan.Horizontal = wantsLeft ? -1 : 1;
+                try
+                {
+                    System.IO.File.AppendAllText(
+                        System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                            "guard-trace.jsonl"),
+                        "{\"state\":" + input.NativeState +
+                        ",\"vx\":" + snapshot.Player.Velocity.X.ToString("0.###",
+                            System.Globalization.CultureInfo.InvariantCulture) +
+                        ",\"scriptHor\":" + script.Horizontal +
+                        ",\"planHor\":" + plan.Horizontal +
+                        ",\"drop\":" + (plan.Drop ? "true" : "false") +
+                        ",\"dash\":" + (plan.Dash ? "true" : "false") +
+                        ",\"phase\":\"" + (script.Phase ?? "") + "\"}\n");
+                }
+                catch { }
             }
             if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
@@ -899,18 +876,6 @@ namespace Chaite.Core
             RememberPlan(plan);
             return plan;
         }
-
-        /// <summary>Horizontal speed below which a formula-route plan refuses to
-        /// stay neutral while the boss is charging. A charge closes at 14.7 to
-        /// 17.0 px/tick and wing cruise is a measured 13.87, so a player this far
-        /// below cruise cannot leave the charge line before it arrives.</summary>
-        private const float ChargedPlayerSpeedFloor = 6f;
-
-        /// <summary>AI_069's charge states. A charge writes its velocity once at
-        /// state entry and then travels a fixed distance in a straight line, so
-        /// these are the states in which standing still is fatal.</summary>
-        private static bool IsFishronChargeState(float nativeState) =>
-            nativeState == 1f || nativeState == 6f || nativeState == 11f;
 
         private static bool TryGetFishronEnrage(CombatSnapshot snapshot,
             int npcKey, out DukeFishronNativeEnrageObservation observation)

@@ -409,3 +409,86 @@ closes three to four times faster, and two contacts happen with a full budget in
 So **neither direction choice nor wing exhaustion is the binding constraint** -- the open
 question is why the player is on foot (4.5 px/tick) rather than flying (13.87) at the
 moment of contact.
+
+## 9. Round 48: the controls the player actually receives
+
+The prehit stream (`prehit-observations.jsonl`, 48 rows per hit) is the first artifact that
+records the **applied** controls alongside the plan. Reading the window before hit 1
+(hurtTick 3019) is decisive:
+
+```
+ off  tick   vx     vy   wing | L R U D J Dash | phase
+ -44  2975  0.00   8.62     0 | 0 0 0 1 1    1 | fishron-wing-precharge-jump
+ -32  2987  0.00  10.01     0 | 0 0 0 1 1    1 | fishron-wing-precharge-jump
+ -24  2995  0.00  10.01     0 | 0 0 0 1 1    1 | fishron-wing-charge-horizontal-dash
+ -12  3007  0.00  10.01     0 | 0 0 0 1 1    1 | fishron-wing-charge-horizontal
+  -4  3015  0.00  -6.21   130 | 0 0 0 1 1    1 | fishron-wing-charge-horizontal
+   0  3019  4.50  -3.50   130 | 0 1 0 1 1    1 | fishron-wing-personal-space
+```
+
+For **44 consecutive ticks** of an incoming charge the player receives **no horizontal
+input at all** (`L 0`, `R 0`), holds `Down`, and falls at `vy 10.01` (= `maxFallSpeed`).
+Horizontal input appears only on the frame of the hit itself. So the player is not
+"choosing a bad direction" -- it is receiving **no direction**.
+
+### 9.1 The script is not the source of the zero
+
+Instrumenting `FishronWingScript`'s return (gated on `CHAITE_SCRIPT_TRACE`, since removed)
+over 3160 ticks shows it **never returns a neutral horizontal**:
+
+```
+ phase / hor        count        phase / hor / vert     count
+ precharge-jump  +1   400        precharge-jump  +1 -1    400
+ precharge-jump  -1   390        precharge-jump  -1 -1    390
+ charge-horizontal -1 222        tornado-clear   -1 +1    256
+ charge-horizontal +1 199        bubble-line     +1 +1    240
+```
+
+and instrumenting the last write to `plan.Horizontal` in `PlanFormula` (gated on
+`CHAITE_GUARD_TRACE`, since removed) gives
+
+```
+ rows where scriptHor != 0 but planHor == 0 : 0
+```
+
+so the planner's pledge is `+/-1` on every tick.
+
+### 9.2 Ruled out: the neutral-hold safety gate
+
+`BossStrategyCatalog` line 7240 calls `PriorityBossThreatGate.TryGetNeutralHoldReason`,
+and `UnmodeledThreatSafetyHold` (line 7731) sets `HoldNeutralControls = true`, which
+`TerrariaFacade.ApplyPlan` honours by clearing controls -- exactly the observed `L 0 R 0`.
+The gate fires for a Fishron threat of type 384..386 (bubble / shark / tornado) whose
+native trajectory has no proven envelope (`HostileProjectileMotion.cs:779-796`).
+
+This is **not** the cause on the current path, because `CombatPlanner.Plan` dispatches the
+formula route first and returns:
+
+```
+ CombatPlanner.cs:536  if (_formulaRoute != FormulaRoute.None)
+ CombatPlanner.cs:537      return PlanFormula(snapshot);
+ CombatPlanner.cs:566  if (directive.HoldNeutralControls)   // unreachable on that route
+```
+
+So `PlanFormula` runs and the hold branch is never reached.
+
+### 9.3 Open, and stated as open
+
+The planner pledges `+/-1`, the script pledges `+/-1`, and the game receives `0`. The
+44-tick window above says the controls are cleared rather than steered, but **the code
+that clears them has not been identified.** Plausible remaining sites are the
+non-`PlanFormula` control path in `TerrariaFacade` (line 3720 and the pending-control
+writes around 3910) and any consumer that runs after `PlanFormula` returns. This has not
+been measured, and it should be measured by instrumenting `ApplyPlan` from the probe
+(`GameProbe.ObserveApplyPlanBefore` already receives the `ControlPlan` by value) rather
+than by inferring it.
+
+### 9.4 The neutral-hold gate is still a real defect for this fight
+
+Independently of 9.2, the gate as written would neutral-hold the player whenever a
+Fishron bubble is live without a proven trajectory sample, and the owner's own reading is
+that **bubbles are a one-hit non-threat** whose only requirement is that horizontal speed
+be maintained. A hold that zeroes horizontal speed is therefore the opposite of the
+correct response to a bubble. This should be narrowed or exempted for the formula route,
+but it was **not** changed this round because it is not on the measured failing path and
+changing it could not be validated against this failure.
