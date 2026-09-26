@@ -227,6 +227,24 @@ namespace Chaite.Core
         /// missing, malformed or negative value falls back to 0, which reproduces
         /// the reviewed circuit exactly.</summary>
         private const string RefillGuardVariable = "CHAITE_REFILL_GUARD";
+        private const string CoLocationRoutesVariable = "CHAITE_COLOCATION_ROUTES";
+        private const string LandingMarginVariable = "CHAITE_LANDING_MARGIN";
+        private const float LandingMarginBudget = 30f;
+
+        /// <summary>Whether the co-location lift applies to this route. Read from
+        /// CHAITE_COLOCATION_ROUTES (a comma-separated list of `strong` / `weak`)
+        /// so the loadout gate can be swept without a rebuild. The default is
+        /// `strong` alone, which is the measured configuration.</summary>
+        private static bool CoLocationRoute(FormulaRoute route)
+        {
+            var raw = Environment.GetEnvironmentVariable(CoLocationRoutesVariable);
+            if (string.IsNullOrEmpty(raw)) return route == FormulaRoute.FishronStrongWingsDash;
+            var weak = raw.IndexOf("weak", StringComparison.OrdinalIgnoreCase) >= 0;
+            var strong = raw.IndexOf("strong", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (route == FormulaRoute.FishronStrongWingsDash) return strong;
+            if (route == FormulaRoute.FishronFairyWingsDash) return weak;
+            return false;
+        }
 
         private static float ReadRefillGuard()
         {
@@ -557,7 +575,7 @@ namespace Chaite.Core
             // (`_chargeNormalVertical <= 0`) suppressed the rule COMPLETELY -- the
             // in-script counter read 0 while a post-hoc count said 67 -- so it
             // was removed; the gate belongs on the loadout, not on the latch.
-            if (input.Route == FormulaRoute.FishronStrongWingsDash &&
+            if (CoLocationRoute(input.Route) &&
                 dash && vertical >= 0 && !player.OnGround)
             {
                 var gapY = Math.Abs(player.Center.Y - boss.Center.Y);
@@ -1328,7 +1346,33 @@ namespace Chaite.Core
             if (atLeftWall && horizontal <= 0) horizontal = 1;
             else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
-            else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;
+            else if (y >= _floorY - LandingMargin(player) && vertical > 0) vertical = 0;
+        }
+
+        /// <summary>Vertical standoff kept above the floor support. Normally
+        /// FloorMargin, but once the flight bar is drained the standoff is
+        /// dropped so the player can actually LAND and refill.
+        ///
+        /// MEASURED (game-probe-pin640-strong-6k and -weak-6k): over 6000 ticks
+        /// the player is on the ground for 0.0% of them -- it never lands at all
+        /// -- while wingTime is exactly 0 for 33.5% (strong) and 24.8% (weak) of
+        /// the fight. The native refill at Player.cs:26992 only fires on the
+        /// landing tick, so those drained thirds are flown with no flight at all.
+        /// This is the most likely cause of the residual hits, and it is also why
+        /// §89's floor-clearance rule made things worse: that rule forbade the
+        /// very landing the bar needs.
+        ///
+        /// CHAITE_LANDING_MARGIN overrides the drained-bar standoff for
+        /// measurement; a negative value disables the mode entirely.</summary>
+        private static float LandingMargin(PlayerSnapshot player)
+        {
+            var raw = Environment.GetEnvironmentVariable(LandingMarginVariable);
+            float value;
+            if (string.IsNullOrEmpty(raw) ||
+                !float.TryParse(raw.Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out value) || value < 0f)
+                return FloorMargin;
+            return player.WingTime <= LandingMarginBudget ? value : FloorMargin;
         }
 
         /// <summary>Decomposes a separation vector into native input.

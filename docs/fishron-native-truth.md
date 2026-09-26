@@ -6912,3 +6912,57 @@ in the other direction) and it costs a full investigation each time if not remem
 - **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 93. Round 132: the player never lands, so the flight bar never refills
+
+### 93.1 The measurement
+
+Across a full 6000-tick fight, on **both** loadouts:
+
+```
+                          maxWingTime   wingTime == 0        onGround
+strong (Fishron wing)         180       2009 ticks (33.5%)     0.0%
+weak   (Fairy wing)           130       1485 ticks (24.8%)     0.0%
+```
+
+**The player never touches the ground in 6000 ticks.** The native refill is the landing tick
+(`Player.cs:26992` restores `wingTime = wingTimeMax`), so the bar is filled **exactly once, at the start**, and
+is then drained permanently. The strong wing therefore spends **a third of the fight with no flight at all**,
+and the weak wing a quarter.
+
+This also **explains §89's failure** from the other direction. The floor-clearance rule ordered a climb whenever
+the ground was within 160 px, which forbids the very landing the bar needs; its regression was not mysterious.
+
+The mechanism is `ApplyArena`'s floor clamp: `y >= _floorY - FloorMargin` (90 px) zeroes a downward command, so
+the player hovers about 90 px up with an empty bar rather than descending the last stretch.
+
+### 93.2 Making it testable, and measuring it
+
+`CHAITE_LANDING_MARGIN` was added: when `wingTime <= 30`, the floor standoff drops to the given value
+(default off, so the fixed circuit is unchanged). Measured:
+
+```
+                        baseline        landing enabled (margin 0 or 20)
+strong   ticks/hits/death/contacts   6000/2/FALSE/3     6000/2/FALSE/3     (identical)
+weak     ticks/hits/death/contacts   6000/4/FALSE/5     6000/5/FALSE/2     (contacts down, hits up)
+```
+
+The weak wing's **body contacts fall from 5 to 2** while its **total hits rise from 4 to 5** -- the shark
+contact replaces a body contact. So landing genuinely changes the fight, but once again **redistributes** rather
+than removes (the sixth instance of this pattern). The hook is kept **off by default** because it does not
+improve either arm, and because the "never lands" fact is itself a finding worth not having to rediscover.
+
+### 93.3 Status
+
+- **Added, off by default, verified inert:** `CHAITE_LANDING_MARGIN` and `CHAITE_COLOCATION_ROUTES`, both
+  defaulting to the fixed circuit; a run with no `CHAITE_*` variables set still measures
+  `6000 / 2 hits / FALSE / 3 contacts` for the strong wing.
+- **Measured:** `onGround` is **0.0%** for both loadouts over 6000 ticks; `wingTime == 0` for 33.5% (strong) and
+  24.8% (weak).
+- **Measured:** drained-bar landing leaves the strong wing identical and moves the weak wing's contacts 5 -> 2
+  while its hits go 4 -> 5.
+- **Established:** the flight bar is refilled once, at the start, and never again; §89's regression is explained
+  by this rather than by altitude alone.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
