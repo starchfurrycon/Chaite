@@ -588,3 +588,78 @@ should assert "horizontal input is held unless the arena edge makes that directi
 impossible". That is checkable with the same continuity statistic used in 10.1: the 93
 breaks and the 1128 near-zero ticks are the target, and a correct fix drives those to near
 zero without needing the plan-level contradiction to be resolved first.
+
+## 11. Round 50: the continuity guard was tested and refuted
+
+Round 49 left two things: the owner's requirement that horizontal input must never be
+released, and an unresolved contradiction about where the neutral horizontal comes from.
+This round tested the requirement directly rather than continuing to chase the trace.
+
+### 11.1 `ApplyPlan` runs exactly once per tick
+
+The first candidate explanation for the contradiction is now dead. Instrumenting the probe's
+`ApplyPlan` entry hook with the tick number gives
+
+```
+ ApplyPlan calls per tick -> how many ticks: {1: 3160}
+ ticks with >1 call     : 0
+ zero-hor rows          : 1000
+ zero-hor rows on ticks with more than one call : 0
+```
+
+So the applied call and the traced call are the same call, and the contradiction in 10.3
+stands unresolved rather than being explained by double invocation.
+
+### 11.2 The guard, and why it is reverted
+
+I implemented the owner's requirement at the point the controls are actually written --
+`TerrariaFacade.ApplyPlan`, immediately after the normal `controlLeft` / `controlRight`
+writes, so it cannot be overridden by any upstream layer:
+
+- if the plan's horizontal is 0 while a Fishron is in charge state 1, 6 or 11, hold a
+  horizontal direction instead of releasing, and request a dash when the native dash is
+  ready, because a dash writes `velocity.X` in the facing direction and is the only fast
+  way to restore lost speed;
+- the direction is the perpendicular to the charge line, resolved to the side that opens
+  the gap to the boss.
+
+It **improved continuity exactly as intended and still lost**:
+
+| run | horizontal input held | \|vx\| < 0.5 | ticks | hits | boss damage |
+|---|---|---|---|---|---|
+| baseline (no guard) | 5822 / 8685 (67%) | 1128 (13%) | 8684 | **8** | 37 |
+| guard, raw perpendicular sign | 6458 / 8243 (78%) | 822 (10%) | 8242 | 12 | 153 |
+| guard, perpendicular resolved away from boss | -- | -- | 7564 | 11 | 105 |
+
+The first version took the raw cross product, which picks whichever perpendicular has
+positive orientation; half of those fly the player *into* the incoming boss. Correcting the
+sign to always open the gap changed the result from 12 hits to 11, so the sign mattered, but
+**both signs are worse than doing nothing**, and the corrected version also produced the
+first `npc contact 1` seen in any run.
+
+The guard is therefore **reverted** and `TerrariaFacade` and `GameProbe` are back at their
+previous revisions. The pinned native result returns to `validBattle True`, ticks 8684,
+hits 8, boss damage 37.
+
+### 11.3 What the refutation establishes
+
+This is a real result, not just a failed edit. Continuity is **necessary but not
+sufficient**, and the guard's mechanism of improving continuity while overriding the
+script's direction made the fight *worse*. That is direct evidence that:
+
+1. the reviewed circuit's **direction choice is better than a geometric perpendicular**
+   computed at the facade, and
+2. the 13% of ticks at `|vx| < 0.5` are **not** by themselves the binding constraint --
+   otherwise holding the axis continuously would have helped.
+
+So the open question is not "why is the horizontal zero" but "**when** the player should
+spend its horizontal speed and when it should keep it", which is a scheduling question
+about the circuit, not a missing-input bug to be patched at the application layer.
+
+### 11.4 Consequence for the next round
+
+The next round should not add another facade-level guard. It should test the scheduling
+hypothesis inside the reviewed circuit, where the state machine already knows the phase:
+for instance, keeping the horizontal axis under the circuit's control across a phase
+transition rather than letting it fall to neutral, and measuring with the same continuity
+statistic plus the hit count. No native zero has been observed on either loadout.
