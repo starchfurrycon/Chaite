@@ -3245,3 +3245,76 @@ one replay frame, which is the next measurement.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 42. Round 81: the replay body ignores controls the engine can see, and the difference is not identity
+
+### 42.1 The identity measurement
+
+Section 41 left two candidates: the replay drives the world through a different update entry, or
+`Player.Update` runs on a body the engine does not consider locally controlled (so it skips the
+`i == Main.myPlayer` branch that `ResetControls` and the local-input path live in). Both are settled by
+logging the `Player.Update` prefix -- which is after `ResetControls` has had its chance and before the
+movement code runs. Same route, same tick window, two runs:
+
+```
+LIVE
+UPD ident t=239 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=False J=False vx=0.00 vy=0.00  py=7958
+UPD ident t=240 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=False J=False vx=0.00 vy=0.00  py=7958
+UPD ident t=241 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=True  J=True  vx=0.00 vy=-6.48 py=7952
+UPD ident t=242 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=True  J=False vx=0.00 vy=-6.34 py=7945
+
+REPLAY
+UPD ident t=239 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=False J=False vx=0.00 vy=0.00  py=7958
+UPD ident t=240 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=False J=False vx=0.00 vy=0.00  py=7958
+UPD ident t=241 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=False J=False vx=0.00 vy=0.00  py=7958
+UPD ident t=242 whoAmI=0 myPlayer=0 active=True dead=False isFilm=False netMode=0 L=True  J=False vx=0.00 vy=0.00  py=7958
+```
+
+**Every engine field is identical between the two runs** -- `whoAmI=0`, `myPlayer=0`, `active=True`,
+`dead=False`, `isControlledByFilm=False`, `netMode=0` -- on every logged tick. So neither candidate
+holds: the replay is not using a different update entry, and the body **is** the locally controlled
+player by every field the engine checks. Yet at `t=241` the live body has `L=True J=True` and
+`vy=-6.48` while the replay body has `L=False J=False` and `vx=vy=0.00`, and at `t=242` the replay
+holds `L=True` with the velocity **still exactly zero**.
+
+### 42.2 The defect, stated exactly
+
+Combining 42.1 with 41.1, the replay node reads: the plan is reached and read every tick
+(`replayFrame=0`), exactly one write per tick is issued, the written controls are visible on the
+player's own fields, the local-player branch is the one that runs, and **the body does not move on any
+channel**. Section 41's "one frame late" also turns out to be a *symptom* rather than the cause: at
+`t=242` the write is no longer late at all (it was issued the previous tick and is visible now) and the
+body still does not move. So there is no ordering left to repair -- the controls are readable by the
+engine at the moment the movement code runs, and the movement code does not act on them.
+
+That means the remaining difference is **not in the player object's input state at all**, but in the
+world/update path the replay drives: the replay's `Player.Update` is executing, but whatever converts
+`controlLeft`/`controlJump` into `velocity` is either not reached or is being undone inside the same
+frame. The next measurement is accordingly not another identity probe but a position probe at the
+**two ends of one `Player.Update`** in replay mode -- log `position`/`velocity` at the prefix and at
+every `ret` of `Player.Update`. If the body moves at all inside the frame and is restored before the
+next tick, the difference is a writer that runs after `Player.Update`; if it does not move at all
+inside the frame, the movement code itself is not being reached and the probe's replay loop is driving
+a different world update than the live one.
+
+### 42.3 Honest position on the objective
+
+The objective's acceptance口径 is the native per-tick replay, and it is still not a faithful replayer:
+a route harvested from a 1-hit live run replays to **6 hits and a death**. The three probe/harvester
+bugs fixed in §34 were real and necessary, and the route now reaches the plan, but this last gap is a
+difference in how the *world* advances between live and replay that has resisted five rounds of
+instrumentation (35, 36, 37, 41, 42). Until it is closed there is no way to accept **any** circuit on
+the replay channel, and no native zero-hit fight exists for either loadout -- weak wing, policy off,
+guard 0 measures **4 hits at 3000 ticks**.
+
+### 42.4 Status
+
+- **Diagnostics reverted**, tree builds clean, `git status` shows only the untracked `tmp/`.
+- **Excluded:** a different update entry, and a non-local player identity -- all engine fields logged
+  identical between live and replay on every tick.
+- **Established:** the replay reads the route, writes once per tick, the write is visible on the
+  player's fields, the local branch runs, and the body does not move on any channel.
+- **Next measurement:** log `position`/`velocity` at the `Player.Update` prefix and at each `ret` of
+  `Player.Update` in replay mode, to separate "moves inside the frame then restored" from "never moves
+  inside the frame".
+- **No native zero over a full fight on either loadout.**
