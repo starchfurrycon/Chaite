@@ -861,8 +861,16 @@ namespace Chaite.Core
                     // overlapped 14 px horizontally and 29 px vertically.
                     // Native Y grows downward, so running away from a Boss above
                     // means descending: vy positive.
+                    //
+                    // The sign was then inverted. `boss.Center.Y >= player.Center.Y
+                    // ? 1 : -1` returns 1 when the Boss is BELOW the player (larger
+                    // Y, since native Y grows downward), and 1 means descend -- so
+                    // the latch drove the player down into a Boss that was already
+                    // underneath it, and up into one that was above. Both branches
+                    // closed the gap. Increasing the vertical gap requires moving
+                    // toward +Y when the Boss is at smaller Y, which is this:
                     _personalSpaceVertical =
-                        boss.Center.Y >= player.Center.Y ? 1 : -1;
+                        boss.Center.Y <= player.Center.Y ? 1 : -1;
                 }
                 horizontal = _personalSpaceHorizontal;
                 vertical = _personalSpaceVertical;

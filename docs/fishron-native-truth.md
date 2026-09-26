@@ -1491,3 +1491,108 @@ Nothing was changed in the circuit this round -- the measurement did not yet sup
 edit, and the previous two rounds showed that a plausible edit here can be bit-identical. The
 pinned result is unchanged: weak wing 8684 ticks / **8 hits** / 37 damage / death; strong wing
 11000 ticks / **11 hits** / 76 damage / alive. **No native zero on either loadout.**
+
+## 21. Round 60: a real sign bug in the personal-space escape
+
+This round went after the hits that the geometry says should be avoidable, and found an
+actual inverted sign. It is a correctness fix; it does not yet reduce the hit count, and both
+facts are recorded.
+
+### 21.1 Where the hits actually are
+
+All 8 hits from the dense weak-wing stream, with the boss state, the vertical offset
+(`player.y - boss.y`, native Y growing downward) and the player's phase at the hit tick:
+
+```
+ tick   state  dy       wingTime  phase
+  3019     0   +71.0       130     personal-space
+  3807     1   -32.9       119     charge-horizontal
+  5801     1   -28.9         0     charge-descend
+  7204     0   -36.8         0     personal-space
+  7538     0   -33.6         0     personal-space
+  7884     1   +80.4         0     charge-descend
+  8282     1  +227.2         0     charge-descend
+  8322     0   +14.0         0     tornado-clear
+```
+
+Against a 150x100 boss and a 20x42 player, contact needs `|dx| < 85` and `|dy| < 71`. Five of
+the eight sit inside that box. Three are in `personal-space`, which is the branch that runs when
+the boss body is closest, and one of those three still had `wingTime 130` -- so for that hit the
+flight budget was not the reason.
+
+### 21.2 The inverted sign
+
+`FishronWingScript`, in the personal-space latch:
+
+```csharp
+_personalSpaceVertical = boss.Center.Y >= player.Center.Y ? 1 : -1;
+```
+
+Native Y grows downward, so `boss.Center.Y >= player.Center.Y` means the boss is **below** the
+player, and `1` means **descend**. The latch therefore drove the player **down into a boss that
+was already underneath it**, and **up into a boss that was above** -- both branches closed the
+vertical gap. Increasing the vertical gap requires moving toward +Y exactly when the boss is at
+smaller Y:
+
+```csharp
+_personalSpaceVertical = boss.Center.Y <= player.Center.Y ? 1 : -1;
+```
+
+The comment above the line already stated the intended rule ("running away from a Boss above
+means descending: vy positive") and the code implemented its opposite. This is the same class of
+error the horizontal latch was fixed for in section 17, in the same three lines.
+
+### 21.3 Effect: correct, but not yet sufficient
+
+The fix changes which hits happen without changing how many:
+
+| | before (rounded) | after |
+|---|---|---|
+| weak wing | 8684 ticks, **8 hits**, 37 damage, death | 8684 ticks, **8 hits**, 37 damage, death |
+| strong wing | 11000 ticks, **11 hits**, 76 damage, npc contact 3 | 11000 ticks, **11 hits**, 76 damage, npc contact 3 |
+
+The hit *set* did change, and in the intended direction:
+
+```
+ before:  3019(ps) 3807(ch) 5801(cd) 7204(ps) 7538(ps) 7884(cd) 8282(cd) 8322(tc)
+ after :  3032(pj) 3810(ch) 5806(cd) 7229(bl) 7545(ps) 7899(ps) 8295(cd) 8340(tc)
+```
+
+`personal-space` hits fell from three to two, and the tick-3019 hit -- the specific one the code
+comment cited as evidence -- is gone, replaced by a `precharge-jump` hit at 3032 where the
+player had `wingTime 126` and therefore full mobility. The remaining personal-space hit at 7545
+is now at `dy = -0.3`, i.e. the player and the boss centre are level with each other, which is
+the geometry where a perpendicular escape has no vertical component to work with.
+
+So the sign is right, the branch is doing what it says, and 8 hits remain. This is the fourth
+consecutive round in which a geometrically justified change left the count unchanged, which says
+the count is governed by something these local corrections do not touch.
+
+### 21.4 What the evidence now points at
+
+Three independent measurements agree on the same coarse fact: the fight is lost while the player
+is out of flight budget.
+
+- `wingTime == 0` before **14 of 19** hits (section 13.3), and **5 of 8** here.
+- `wingTime == 0` on **58 percent** of the whole fight, with only 23 refills in 8446 ticks
+  (section 18.2).
+- The budget covers **121 percent** of the arena's landing cycle, so it always expires just
+  before a landing (section 19.2).
+
+The video measurement in section 20.2 adds the other half: the human player changes vertical
+direction **318 times in 80 seconds**, roughly four per second, on a much shallower arena. The
+circuit holds `Down` on 84.5 percent of airborne ticks and reverses vertical direction rarely.
+
+That combination -- a sparse, mis-timed vertical rhythm against a budget that runs out just
+before each landing -- is the mechanism, and none of the four fixes tried so far (locked
+perpendicular, refill descent, free-fall descent, personal-space sign) changes either side of
+it. A fix has to change the **vertical cadence**, not the direction of any single branch.
+
+### 21.5 Status
+
+- Correctness fix kept: the personal-space vertical sign, verified against a full native run and
+  the unit suite (**750 passed, 8 failed**, all 8 the pre-existing missing
+  `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`).
+- Pinned result unchanged and not to be overstated: weak 8684 ticks / **8 hits** / 37 damage /
+  death; strong 11000 ticks / **11 hits** / 76 damage / alive. **No native zero on either
+  loadout.**
