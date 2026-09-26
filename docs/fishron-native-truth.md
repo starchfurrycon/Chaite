@@ -7050,7 +7050,83 @@ improve either arm, and because the "never lands" fact is itself a finding worth
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
+## 96. Round 135: the dash-suppression rule was never wired, and §95.2 is retracted
+
+### 96.1 The call site was dead code
+
+The dash-suppression block added in §95 was placed inside `DecideMovement`. That method is the **trained-policy
+hook**, and its second statement is:
+
+```csharp
+var learned = LearnedPolicy.ForRoute(input.Route);
+if (learned == null) return;          // <-- no policy configured => returns here
+```
+
+Every native run in this session is made **without `CHAITE_POLICY_FILE`**, so `learned` is always null and
+`DecideMovement` returns before reaching the block. **The rule never executed in any §95 measurement.** The
+active charge path is `ChargeEscape`, which is where the dash proposal is actually produced.
+
+Wiring it there is not possible as written: `ChargeEscape` is an instance method and takes no
+`FormulaInput`, so it has no route. A `_dashSuppressRoute` field latched in `Tick` was added to bridge that.
+
+### 96.2 With the rule actually wired, the parameter does nothing measurable
+
+Once the block was in the live path, the threshold stopped discriminating:
+
+```
+weak wing, CHAITE_DASH_SUPPRESS = 0    6000 / 3 hits / FALSE / 3 contacts
+weak wing, CHAITE_DASH_SUPPRESS = 50   6000 / 3 hits / FALSE / 3 contacts
+weak wing, CHAITE_DASH_SUPPRESS = 90   6000 / 3 hits / FALSE / 3 contacts
+strong wing, CHAITE_DASH_SUPPRESS = 0  6000 / 2 hits / FALSE / 4 contacts
+strong wing, CHAITE_DASH_SUPPRESS = 90 6000 / 2 hits / FALSE / 4 contacts
+```
+
+Identical at 0 and at 50/90, while **30 kills the weak wing** (3065 ticks, 8 hits, death). A parameter whose
+value is irrelevant except at one setting is not being applied where it is believed to be. So:
+
+- **§95.2 is RETRACTED.** The claim that "`CHAITE_DASH_SUPPRESS` at 90 removes the t=2486 hit" is **not
+  established** -- the rule was not running. The sweep numbers in §95.2 (2 / 8 / 2 / 8 / 7) are **not a
+  measurement of dash suppression** and must not be cited.
+- Any apparent weak-wing movement (4 contacts -> 3) across those runs is **not attributable** to this
+  parameter, and the difference is not confirmed.
+
+### 96.3 What survives, and the fix
+
+§95.1's **hit anatomy is sound** and is the round's real result: the two strong-wing hits were located by direct
+native trace, the contact test `|dx| < 85 && |dy| < 71` was verified against all three, and the t=2486 escape
+provably runs along the charge normal. The trace work does not depend on the rule.
+
+The dash-suppression code is **removed**, not left dormant: a rule that is believed to be active and is not is
+worse than no rule, because it corrupts every later comparison -- which is exactly what §95.2 did.
+
+### 96.4 Baseline, re-measured after full revert
+
+```
+strong wing   6000 / 2 hits / death FALSE / 3 npc contacts   boss damage 33
+weak wing     6000 / 4 hits / death FALSE / 5 npc contacts   boss damage 87
+```
+
+The same binary produces the same fight on repeat, so these runs are deterministic; the ~30 HP damage
+variations seen in §95.2 were produced by the partially-wired variant, not by noise.
+
+### 96.5 Status
+
+- **Retracted:** §95.2 in full (the suppression was never executing; its sweep is not evidence).
+- **Removed:** the dash-suppression block, `DashSuppressGap`, `_dashSuppressRoute`, and
+  `CHAITE_DASH_SUPPRESS`.
+- **Corrected:** `DecideMovement` is a **policy-only hook that returns immediately with no policy configured**;
+  engine-behaviour rules must live in `ChargeEscape` or `Cruise`.
+- **Verified:** reverted tree reproduces `strong 6000/2/FALSE/3` and `weak 6000/4/FALSE/5`, and the runs are
+  deterministic across repeats.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
+
+> **§95.2 is RETRACTED by §96.** The dash-suppression rule was placed in `DecideMovement`, which returns
+> immediately when no policy is configured, so it never executed and §95.2's sweep is not a measurement of
+> anything. **§95.1 below is unaffected and remains the round's real result.**
 
 ### 95.1 The hit anatomy, measured at last
 
@@ -7071,6 +7147,9 @@ charge axis** where 14.5 cannot outrun 16.97, and it **replaces the climb for ni
 is then incomplete by the time the boss arrives.
 
 ### 95.2 Suppressing that dash works, and then relocates
+
+> **RETRACTED by §96.** The rule was never executing (it sat in the policy-only hook), so nothing below is a
+> measurement of dash suppression. Kept only so the retraction has something to point at.
 
 `CHAITE_DASH_SUPPRESS` suppresses a ready dash during a charge while the vertical gap is under the threshold,
 leaving those frames to the vertical escape. At 90 it **removes the t=2486 hit entirely** -- the player holds a

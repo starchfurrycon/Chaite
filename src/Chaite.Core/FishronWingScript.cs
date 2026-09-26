@@ -229,25 +229,6 @@ namespace Chaite.Core
         private const string RefillGuardVariable = "CHAITE_REFILL_GUARD";
         private const string CoLocationRoutesVariable = "CHAITE_COLOCATION_ROUTES";
         private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
-        private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
-
-        /// <summary>Vertical gap below which a ready dash is suppressed during a
-        /// charge, so the frames go to the vertical escape instead of a
-        /// horizontal dash that cannot outrun the charge. 0 (the default) leaves
-        /// the fixed circuit unchanged. See the call site for the measurement.</summary>
-        private static float DashSuppressGap
-        {
-            get
-            {
-                var raw = Environment.GetEnvironmentVariable(DashSuppressVariable);
-                float value;
-                if (string.IsNullOrEmpty(raw) ||
-                    !float.TryParse(raw.Trim(), NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out value) || value <= 0f)
-                    return 0f;
-                return value;
-            }
-        }
 
         /// <summary>Whether the drained-bar refill also drops the jump command at
         /// the apex, so the native `velocity.Y == 0 && releaseJump` clause
@@ -965,28 +946,7 @@ namespace Chaite.Core
             // which is exactly a timing the old latch could not express.
             if (!_dashIssued && mobility != null && mobility.CanDash &&
                 mobility.DashReady)
-            {
-                // The charge's one dash is HORIZONTAL (dashType 2, speed ~14.5),
-                // so it can only help if the horizontal axis is the one that is
-                // actually short. When the escape is mostly vertical the dash
-                // buys nothing along the line that matters and spends the charge.
-                //
-                // MEASURED, game-probe-pin640-strong-6k, the hit at t=2486:
-                // at the lock the escape normal is 97% vertical (11.8, 60.7),
-                // but the script burned the dash to vx -14.50 while the boss
-                // charged at +16.97 -- i.e. ALONG the charge axis, where 14.5
-                // cannot outrun 17. The vertical escape was left at |dy| 40.2
-                // against the 71 needed, and contact followed.
-                //
-                // Suppressing the dash leaves those frames to the vertical
-                // escape instead. CHAITE_DASH_SUPPRESS is the vertical-gap
-                // threshold; the default 0 keeps the fixed circuit unchanged.
-                if (DashSuppressGap > 0f &&
-                    Math.Abs(player.Center.Y - boss.Center.Y) < DashSuppressGap)
-                    dash = false;
-                else
-                    dash = true;
-            }
+                dash = true;
         }
 
         /// <summary>Everything that is not a charge.
