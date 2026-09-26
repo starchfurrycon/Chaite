@@ -7049,3 +7049,65 @@ improve either arm, and because the "never lands" fact is itself a finding worth
 - **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 95. Round 134: the escape direction is correct; the dash perturbs it
+
+### 95.1 The hit anatomy, measured at last
+
+With the correct sizes (boss `150x100`, player `20x42`, so contact is `|dx| < 85 && |dy| < 71`), the two
+strong-wing hits resolve cleanly. At the t=2486 lock:
+
+```
+t=2473  lock forms.  dx +242.2  dy -14.9   player vx -5.85, climbing at vy ~ -7
+t=2474  the charge's ONE dash fires: vx -14.50 while the BOSS charges at +16.97
+t=2479  the dash clears the wall and reverses: vx +9.00, climb resumes at (16.1, -4.28)
+t=2486  contact: dx +1.9, dy -38.2   (needed |dy| >= 71)
+```
+
+So the script's **escape direction is already correct** -- it is climbing, and after the wall it climbs at
+`(16.1, -4.28)`, which has positive dot product on the charge normal `(11.8, 60.7)`. The owner's W-rule is being
+followed. What goes wrong is the **dash**: it is horizontal (`dashType 2`, `vx ~ 14.5`), it fires **along the
+charge axis** where 14.5 cannot outrun 16.97, and it **replaces the climb for nine frames**. The vertical escape
+is then incomplete by the time the boss arrives.
+
+### 95.2 Suppressing that dash works, and then relocates
+
+`CHAITE_DASH_SUPPRESS` suppresses a ready dash during a charge while the vertical gap is under the threshold,
+leaving those frames to the vertical escape. At 90 it **removes the t=2486 hit entirely** -- the player holds a
+sustained climb (`vy` ~ -8 to -10 through the lock) and clears the boss's altitude by 170 px. But the fight
+relocates the hits to t=3259 and t=4271, both phase-two signatures at `dy ~ 0`.
+
+Sweeping the threshold shows a **sharp optimum, not a plateau** -- the sixth such parameter:
+
+```
+suppress  =  40   2 hits        suppress  =  90   2 hits   (relocated)
+suppress  =  60   8 hits        suppress  = 120   8 hits
+suppress  = 150   7 hits        weak wing, 60     9 hits, DEAD at 5313
+```
+
+**This is the tenth trajectory-altering rule to cost more than it bought.** It is kept, **off by default**
+(`CHAITE_DASH_SUPPRESS` unset => 0 => the fixed circuit), because the mechanism is real and measured; it is not
+a fix.
+
+### 95.3 What this closes
+
+The residual hits are **not** a mis-aimed escape: the script already climbs along the charge normal, and the
+relocated hits appear wherever the clock puts them. Both loadouts are now understood to be limited by the same
+thing -- **a fixed flight budget against a faster, equally deterministic boss, inside a runway that cannot be
+lengthened**. The arena is tiles 1..400 of a 4200-tile world with the player clamped to `leftWorld + 640`
+(`BordersMovement`), so the usable corridor is about **5728 px** and the world edge bounds it; widening the arena
+is not available either.
+
+### 95.4 Status
+
+- **Measured:** the contact test is `|dx| < 85 && |dy| < 71` (boss 150x100, player 20x42), verified against all
+  three strong-wing hits.
+- **Measured:** the t=2486 escape is already along the charge normal; the failing element is the nine-frame
+  horizontal dash fired along the charge axis at `vx -14.50` against a `+16.97` charge.
+- **Measured:** `CHAITE_DASH_SUPPRESS` removes that hit and relocates the fight to `dy ~ 0` phase-two hits.
+- **Measured:** the suppress threshold is a sharp optimum (2 / 8 / 2 / 8 / 7 hits at 40 / 60 / 90 / 120 / 150),
+  the sixth such parameter and the tenth regression.
+- **Added, off by default, verified inert:** `CHAITE_DASH_SUPPRESS`; unset means the fixed circuit.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
