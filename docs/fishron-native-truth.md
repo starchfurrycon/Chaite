@@ -3052,3 +3052,67 @@ ground, which is exactly the state the cycle cannot leave.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 39. Round 78: the JumpMovement driver is blocked by the JIT, not by the design
+
+### 39.1 What was built
+
+Section 38.3 named the fix: the circuit must also run on a frame where `WingMovement` is not entered,
+because that is the only state from which a takeoff can be staged. `JumpMovement` is entered from the
+ground and already carries the `MotionBeforeJump` observer, so it is the natural second driver. Three
+changes were made:
+
+1. `Runtime.Tick` gained a once-per-native-tick gate (`_lastTickFrame`), because it is now reached from
+   two hooks and a second entry in the same tick would advance the route twice, re-plan and re-stage.
+2. `GameProbePatcher` injected a `TickFromJump(player, 0)` call into `Player.JumpMovement`, placed
+   **after** the `MotionBeforeJump` observer so the probe's own validation (`prepare-game-probe.ps1`,
+   which requires `MotionBeforeJump` to remain at instruction 1) still passes.
+3. `GameProbe` gained the `TickFromJump` hook, a no-op in motion cases, which calls
+   `Chaite.Plugin.Runtime.Tick(player, 0)`.
+
+### 39.2 The result
+
+The first attempt failed the probe's own IL validation:
+
+```
+Motion preJump observer must precede the original JumpMovement body.
+```
+
+Inserting the call after the observer instead cleared that check, and the run then failed at the
+runtime:
+
+```
+FAIL System.InvalidProgramException: JIT Compiler encountered an internal limitation.
+   at Terraria.Player.JumpMovement()
+   at Terraria.Player.Update(Int32 i)
+   at ChaiteGameProbe.RunHeadless()
+```
+
+That is raised before a single tick runs (`ticks: 0`, `valid battle: False`, `boss seen: False`). The
+injected call pushes two arguments, so `JumpMovement.Body.MaxStackSize` was raised to 2 as well -- the
+method's computed stack depth predates the new instructions -- and the failure is **unchanged**. The
+runtime is therefore not rejecting the IL for a stack-depth reason; `Player.JumpMovement` in 1.4.5.8
+is JIT-fragile and adding instructions to it trips the JIT's internal limits.
+
+This is a property of the target, not of the change: the same three-part design is sound (39.1) and the
+route-advance concern is handled by the tick gate. What is needed is a **different insertion point that
+is not inside a hot, JIT-sensitive `Player` method** -- for example driving the circuit from the probe's
+existing `BeforeUpdate` prefix on `Main.DoUpdate`, which is a large method that the patcher already
+successfully modifies, and staging the takeoff there instead of inside a movement method.
+
+### 39.3 Reverted
+
+All three edits are reverted; the tree builds clean and `git status` shows only the untracked `tmp/`.
+The discarded runs (`jumpdrive2`, `jumpdrive3`) never reached a fight, so no measurement from them is
+used.
+
+### 39.4 Status
+
+- **Blocked (not abandoned):** driving the circuit from `JumpMovement` fails with a JIT
+  `InvalidProgramException` before the first tick, independent of `MaxStackSize`.
+- **Next insertion point:** the `Main.DoUpdate` prefix (`BeforeUpdate`), which the patcher already
+  modifies successfully and which runs every tick regardless of the movement state.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit, because the replay
+  body still never leaves the ground.
+- **No native zero over a full fight on either loadout.**
