@@ -2888,3 +2888,84 @@ top of `Player.Update`, and immediately after it -- to name the exact instructio
 - The dense route replays to **6 hits and a death** against the recorded 1 hit, so the acceptance
   channel is still not a faithful replayer.
 - **No native zero over a full fight on either loadout.**
+
+## 37. Round 76: the native control reset, and the replay/plugin phase error
+
+### 37.1 The mechanism is named
+
+`Player.Update` calls a private `ResetControls()` **on entry** for the local player
+(`Player.cs:24973-24975`):
+
+```
+if (i == Main.myPlayer && !isControlledByFilm)
+{
+    ResetControls();
+    ...
+```
+
+and `ResetControls` (`Player.cs:29298`) clears `controlUp`, `controlLeft`, `controlDown`,
+`controlRight`, `controlJump`, `controlUseItem` and the rest. That is the only place in the whole
+decompile that clears the player's controls unconditionally for the local player -- the other reset
+sites are gated on `Main.mapFullscreen` (25003), `spectating >= 0` (25021), a creative-menu branch
+(25068), `CCed` (25450) and the film stage, and all of those are false in this fight. So **every frame
+the controls are wiped at the top of `Player.Update`**, and any write that lands before that point is
+discarded.
+
+### 37.2 The measured A/B, on the same tick
+
+`applyCalls` (the plugin's `ApplyPlan` count) was sampled at the tick entry across five consecutive
+ticks in both modes. The two runs are identical up to t=240 and then separate:
+
+```
+LIVE    t=239 applyCalls=0 L=False J=False vx=0.00 vy=0.00  py=7958
+        t=240 applyCalls=0 L=False J=False vx=0.00 vy=0.00  py=7958
+        t=241 applyCalls=1 L=True  J=True  vx=0.00 vy=-6.48 py=7952
+        t=242 applyCalls=2 L=True  J=False vx=0.00 vy=-6.34 py=7945
+        t=243 applyCalls=3 L=True  J=False vx=0.00 vy=-6.21 py=7939
+
+REPLAY  t=239 applyCalls=0 L=False J=False vx=0.00 vy=0.00  py=7958
+        t=240 applyCalls=0 L=False J=False vx=0.00 vy=0.00  py=7958
+        t=241 applyCalls=1 L=False J=False vx=0.00 vy=0.00  py=7958
+        t=242 applyCalls=2 L=True  J=False vx=0.00 vy=0.00  py=7958
+        t=243 applyCalls=3 L=True  J=False vx=0.00 vy=0.00  py=7958
+```
+
+`applyCalls` advances **identically** in both runs, and `isControlledByFilm` is `False` and
+`myPlayer` is 0 in both, so the plugin is invoked the same number of times and the film branch is not
+involved. The difference is what the controls read at the tick entry: in the live run t=241 shows
+`L=True J=True` with the body already at `vy=-6.48` and rising, whereas in the replay t=241 shows
+`L=False J=False` with `vy=0.00` and `py` frozen at the spawn value **for all five ticks**.
+
+So in the replay the write is being issued and then erased before the update reads it, while in the
+live run the same write survives. Combined with 37.1 this is a **phase error**: the plugin's tick
+runs in a place where its write lands ahead of `ResetControls` in the replay, and after it in the
+live path. `Runtime.Tick` is reached either from the native update or from a probe callback, and the
+mode changes which.
+
+### 37.3 The fix this points to
+
+The write must land **after** `Player.Update`'s `ResetControls` and before the movement code reads
+the controls. The probe already owns a hook at exactly that point -- `MotionAfterInput(player)`, which
+fires after the native input phase -- so the replay path can be repointed there instead of running the
+plugin earlier in the frame. Testing that is the next step.
+
+### 37.4 Correction to §35's reading
+
+§35 concluded that "the write does not persist" and left open whether the body ignores a persistent
+write. 37.1 names the reason it does not persist, and §36's finding that every refusal flag was
+identical (`CCed`, `frozen`, `webbed`, `stoned`, `dead`, `mapFullscreen`, `gameMenu`) is consistent:
+this is not a state lock, it is the unconditional per-frame reset. §35's elimination of the jump gate
+also still holds, since `ResetControls` would erase a gate-free `controlLeft` in exactly the same way
+-- which is why the horizontal channel failed identically.
+
+### 37.5 Status
+
+- **Reverted:** the `ORDER` diagnostic; the §34 fixes (`actualAtApplyReturn` on every row, `fresh`,
+  `gameUpdateCount`) are intact and the tree is clean.
+- **Established:** `Player.Update` runs `ResetControls()` on entry for the local player, and in replay
+  mode the plugin's control write is erased before the update reads it, while in the live run the same
+  write survives. Same `applyCalls`, same player, `isControlledByFilm` false in both.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**; the 600-tick configurations that report 0
+  hits are run-length artefacts (Boss at full life).
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
