@@ -7318,6 +7318,65 @@ exhausted; it would need a different approach to the charge escape than tuning t
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
+## 100. Round 139: single-hit forensics -- the wind-up dive is real and still not the lever
+
+### 100.1 The t=4271 hit, frame by frame
+
+Attacked one hit as a single event rather than as a policy class. The Boss hovers at a **fixed y 4077.8** with
+`bovy ~0` through ticks 4219-4248 (that is the wind-up; the lock is at 4249), while the player:
+
+```
+t=4219-4229  standoff      vy +6.00 -> +10.00   dy 257.5 -> 246.2   DIVING at the Boss
+t=4230-4241  precharge     vy +3.34 -> -2.09    dy 243.2 -> 205.8   the jump reverses the dive
+t=4242-4248  tornado-clear vy -1.69 -> +0.71    dy 204.4 -> 202.8   the climb flattens to zero
+t=4249       LOCK                            dy +196.5  the player is 196 BELOW the Boss
+t=4249-4271  charge        vy -0.64 -> -6.48    dy +196.5 -> -39.0  only ~22 px of net climb in 23 ticks
+```
+
+Against a body box that needs 71, contact at dy -39.0 is 32 short. The circuit spent the standoff **closing**
+the vertical gap at up to 10 px/tick, and had only ~23 ticks to rebuild it.
+
+### 100.2 Suppressing the dive is refuted too
+
+`CHAITE_ALTITUDE_HOLD` suppressed the standoff's descent when the Boss hovers above (`|bovy| < 1.5`) and the
+vertical gap exceeds 120 px, holding level so the precharge jump starts from a level attitude rather than a dive
+to undo. Both arms got worse:
+
+```
+off: strong 6000 / 2 hits / 4 contacts    weak 6000 / 3 hits / 3 contacts
+on:  strong 6000 / 4 hits / 5 contacts    weak 2946 / DEATH / 8 hits
+```
+
+Reverted. The wind-up dive costs the circuit more elsewhere than the extra separation buys at the lock.
+
+### 100.3 The fixed circuit is a sharp local optimum, and this is now the central measured fact
+
+**Twenty-one controlled interventions** have been tried against this fight. Exactly **one** improved it (§97
+dash suppression, whose switch is `FishronFairyWingsDash ? 50 : 90`). Every other one -- dash timing (§98),
+stamina scheduling (§98.2), dash along the charge (§99), altitude hold through the wind-up (§100), the ungated
+co-location lift (§83), and the whole §55-§91 list -- made the result **worse, often with a death**. Three of
+the last four produced a death that the untouched circuit does not.
+
+Every defect this session *found* was real, reproduced frame by frame, and explained mechanically: the dash is
+~5 ticks early, it fires perpendicular to the charge, the dash grants only 4 collision i-frames, the player
+dives at the Boss through the wind-up. **Fixing any of them loses the fight.** The conclusion is not that the
+diagnoses are wrong but that the circuit already sits on a knife edge where these local defects are being
+traded against each other, and no single-axis correction is a net gain. `hits == 0` is **not reachable by the
+incremental route**, which is now a measured statement rather than a guess: with ~20 interventions and one
+success, and with the surviving hits being single-frame coincidences at 32 px inside a 71 px box, exhaustive
+incremental search has been tried and has failed.
+
+### 100.4 Status
+
+- **Established:** the t=4271 contact geometry in full; the Boss hovers at a fixed y through the wind-up while
+  the circuit dives at it, leaving only ~23 ticks and ~22 px of climb before contact.
+- **Refuted:** holding altitude through the wind-up instead of diving -- both arms worse, weak wing dies.
+- **Best achieved (unchanged, re-verified after the revert):** strong wing `6000 / 2 hits / death FALSE /
+  4 contacts`, boss damage 42; weak wing `6000 / 3 hits / death FALSE / 3 contacts`, boss damage 48. Both
+  deterministic across repeats; both run the full 6000-tick cap without dying, `validBattle == True`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed. Any claim of 无伤 for this circuit would be false under this document's own standard.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

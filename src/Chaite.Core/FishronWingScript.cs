@@ -233,6 +233,7 @@ namespace Chaite.Core
         private const string DashDelayVariable = "CHAITE_DASH_DELAY";
 
 
+
         /// <summary>Ticks to wait after the charge lock before spending the
         /// charge's single dash.
         ///
@@ -1250,6 +1251,26 @@ namespace Chaite.Core
             }
             if (Math.Abs(gap) < StandoffPixels)
             {
+                // REFUTED: holding altitude through the wind-up instead of diving
+                // (CHAITE_ALTITUDE_HOLD).
+                //
+                // The dive is real and it is expensive. MEASURED
+                // (game-probe-rv-strong, the t=4271 hit): during the standoff at
+                // ticks 4219-4229 the circuit drove the player DOWN at vy +6.0
+                // rising to +10.00, cutting dy from 257.5 to 246.2 while the Boss
+                // hovered with bovy ~0 at a fixed y 4077.8. The precharge jump then
+                // had to reverse that dive, and the entire climb before contact
+                // came to about 22 px -- dy was only -28.8 at the lock and -39.0
+                // at contact, against the 71 the body box needs.
+                //
+                // Suppressing the dive while the Boss hovers above nevertheless
+                // made BOTH arms worse:
+                //
+                //   off: strong 6000/2 hits/4 contacts   weak 6000/3/3
+                //   on:  strong 6000/4 hits/5 contacts   weak 2946/DEATH/8
+                //
+                // Interfering with the wind-up dive costs the circuit more
+                // elsewhere than the extra separation buys at the lock.
                 horizontal = AwayFromBossAxis(gap);
                 vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-standoff";
