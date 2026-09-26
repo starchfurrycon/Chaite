@@ -7803,6 +7803,90 @@ leg schedule          _legCharges 0, branch shadowed                       §107
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. The objective remains **active and
   incomplete**, and no native zero is claimed.
 
+## 108. Round 146: the t=4271 mechanism is corrected -- no rear-end, and the uniform i-frame economy
+
+### 108.1 §102.1's "rear-end" reading was wrong
+
+Every prior account of the `t=4271` hit -- including §102.1, and the code comment it produced -- held that the
+dash-body-hit **reversed the player's travel**, that the Boss then **overtook from behind**, and that the hit was a
+rear-end. Reading the dense trace tick-by-tick refutes all three. The player is **above** the Boss for the entire
+approach:
+
+```
+  tick      dy      dx     pvx     pvy    bvy   wing  eocD  eocH  imm
+  4238   +213.7  +415.9   +7.91  -1.26  +1.91  171     0    -1     0
+  4249   +196.5  +410.2   +4.40  +1.11  +7.34  168     0    -1     0   <- LOCK
+  4250   +189.4  +380.4  -14.50  +0.24  +7.34  167    15    -1     0   <- dash begins
+  4262    +75.5   +68.8   -7.10  -3.66  +7.34  155    13    -1     0
+  4263    +63.9   +62.4   +9.00  -4.28  +7.34  154     9     0     4   <- dash-body-hit
+  4267    +14.6   +36.1   +8.60  -5.38  +7.34  150     5     0     0   <- i-frames END
+  4270    -25.2   +15.3   +8.30  -6.20  +7.34  147     2     0     0
+  4271    -39.0    +8.2   +8.20  -6.48  +7.34  146     1     0     0
+  4272    -49.9    -2.7   +4.50  -3.50  +7.34  145     0    -1    40   <- DAMAGE, life 461 -> 394
+```
+
+The facts, in order:
+
+1. **No rear-end.** `dy` runs +213.7 → +63.9 → −39.0. The player never goes behind the Boss; it passes *through*
+   the Boss's vertical level from above. The Boss is not overtaking from behind, it is **rising into the player
+   from below**.
+2. **The dash did not reverse the travel.** `pvx` is +7.91 at t=4238 moving *away*, and the visible `−7.10 →
+   +9.00` at 4263 is the **dash itself** (`dashType 2` writes `velocity.X = 14.5 * dir`), not a collision recoil.
+   The player was fleeing left, then dashed right into the Boss's path.
+3. **The dash-body-hit was a re-collision on a contact already true.** `dy` +63.9 is *inside* the 71 the two boxes
+   need (`boss 150x100` + `player 20x42`), so at t=4263 the dash struck a Boss the player was already overlapping.
+   Its reward is `GiveImmuneTimeForCollisionAttack(4)` -- **4 ticks**, spent at 4263-4266.
+4. **Damage is the uniform economy, not a burst.** `imm` counts 4,3,2,1,0 across 4263-4267; contact damage then
+   lands at 4272 with `life 461 → 394` and `immuneTime 40`. `eocHit` goes 0 → −1 and `eocDash` 1 → 0 across the
+   damage tick. There is no special mechanism: the i-frames simply ran out approximately 5 ticks before a contact
+   that was continuously available from 4268 onward.
+5. **The closing is kinematic and unavoidable from 4268.** After the lock the Boss holds `bvy +7.34` while the
+   wing tops out at `pvy ≈ −6.2`, so `dy` shrinks ~1.1/tick until the boxes meet. From `dy +196.5` at the lock the
+   collision boundary arrives at t≈4268 and the trace shows exactly that.
+
+### 108.2 The obvious fix is structurally unreachable
+
+The tempting repair -- withhold the dash when the boxes already overlap, so the 4 i-frames are not spent on an
+already-true contact -- was implemented as `CHAITE_OVERLAP_SUPPRESS` (gap `< 71`) and is **inert**:
+
+```
+overlapSuppress 1  strong: hits [3259, 4271]  <-- BYTE-IDENTICAL to the default
+overlapSuppress 1  weak:   4520 / DEATH / 9 hits
+```
+
+The strong result is identical because the new branch is **strictly narrower than the one above it**: §97's
+suppression already fires at gap `< 90`, and `71 < 90`, so any tick my branch could catch is already caught by the
+90 px gate. That also means **§97's branch does not fire at t=4262** (where `dy` is +75.5): if it had, no dash
+would have occurred at 4263 at all. So the dash at 4263 came from the branch structure with `dy` +63.9 *after* the
+move that tick -- the gate is evaluated on the pre-move geometry, which is why a 90 px threshold never sees a
+63.9 px gap. Reverted and the knob deleted.
+
+### 108.3 Consequence for the whole session
+
+This is the **third** time a mechanism-level conclusion has had to be retracted on re-reading the raw trace (§98.2
+stamina, §105 refill, now §102.1 rear-end), and each retraction has *widened* rather than narrowed the set of
+plausible levers. The measured position is therefore:
+
+- the t=4271 hit is a **plain i-frame shortfall against a continuously-available contact**, with the dash spending
+  its 4 ticks early on a contact that was already true;
+- from the lock, the Boss's `bvy +7.34` against a wing ceiling of `pvy ≈ −6.2` closes the gap deterministically,
+  so **no horizontal decision can affect it** -- the only in-principle lever is the vertical gap at the lock, and
+  §100 (altitude hold) plus §83 (co-location lift, ungated) already establish that changing it costs more than it
+  saves.
+
+### 108.4 Status
+
+- **Corrected:** §102.1's rear-end account is **wrong** and is retracted -- there is no overtake and no recoil
+  reversal; the player is above the Boss throughout and passes through its level from above. The dash-body-hit is a
+  re-collision on an already-true contact, and the damage is the ordinary i-frame expiry.
+- **Refuted:** `CHAITE_OVERLAP_SUPPRESS`, a 71 px overlap gate -- inert on the strong wing (byte-identical hits)
+  because it is strictly narrower than §97's existing 90 px gate, and fatal on the weak wing (4520 / death).
+  Reverted and deleted.
+- **Unchanged:** no behavioural change; committed state re-verified (strong 6000/2/no death/4 contacts, weak
+  6000/3/no death/3 contacts).
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-eight controlled interventions, one
+  improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
