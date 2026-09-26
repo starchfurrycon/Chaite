@@ -2574,7 +2574,11 @@ public static class ChaiteGameProbe
             // it handed the policy two hundred tiles of retreat room on both
             // sides where the real start leaves almost none on one.
             int playerStartTileX = PlayerStartTileX(arenaCenterX);
-            player.position = new Vector2(playerStartTileX * 16, arenaStartY * 16 - player.height);
+            // The ground pass builds arenaGroundY .. arenaGroundY+thickness, so the
+            // first SOLID pixel is at arenaGroundY*16. Placing the player's bottom
+            // edge on arenaStartY*16 puts its feet inside that solid pixel. One
+            // pixel of clearance is what a native spawn has, so subtract it.
+            player.position = new Vector2(playerStartTileX * 16, arenaStartY * 16 - 1 - player.height);
             player.fallStart=player.fallStart2=(int)(player.position.Y/16);
             EquipScenario(player);
             // The loadout's mount has to exist in the first episode too. The

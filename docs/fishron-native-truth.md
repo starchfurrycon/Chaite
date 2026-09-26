@@ -2413,3 +2413,76 @@ checked against the recorded value **before** the edit is believed, not after.
 - **No native zero over a full fight on either loadout.** Note also that a 600- and a 900-tick run
   both reported `HITS 0` with the Boss at full life; those are run-length artefacts (the first
   charge lands later than that) and are **not** evidence of a no-hit solution.
+
+## 31. Round 70: the stall is real, and it is not embedding
+
+### 31.1 The instrument chain that produced this
+
+A one-shot world scan was added to the probe's `ApplyPlan` observer (since reverted) and a
+one-shot stall dump firing on the signature "the plan asks for a horizontal and the body does not
+move". On a 700-tick weak-wing run the scan and dump report:
+
+```
+GEOM_SCAN cx=40 cy=498 top=497 bottom=500 centreX=650.0
+          leftSolidTile=40 rightSolidTile=40 wet=False
+          arenaLeft=1 arenaRightExclusive=400 worldSurface=500 rockLayer=750
+          maxTilesX=4200 spawnTileX=200
+
+STALL_FRAME ticks=240 px=650.0 py=7979.0 vx=0.000 vy=0.000
+          planHor=-1 planJump=True planDrop=False
+          ctlL=False ctlR=False ctlJ=False ctlD=False
+          eocDash=0 dash=2 dashDelay=0 wingTime=130 wet=False immune=False
+          grappled=False mount=False frozen=False webbed=False stoned=False
+          dead=False CCed=False
+
+STALL_AFTER ticks=240 ctlL=True ctlR=False ctlJ=True ctlD=False vx=0.000 px=650.0
+```
+
+`STALL_FRAME` fires **at `ApplyPlan` entry**, so its control fields are the pre-write state and
+being false there means nothing. `STALL_AFTER` fires **after** the write and shows
+`ctlL=True, ctlJ=True` with `vx` still exactly `0.000` and `px` still exactly `650.0`.
+
+**So the plugin writes the controls, the engine's own fields read back True, and the body does not
+move.** That rules out the two explanations this round was chasing: it is not a missing control
+write, and it is not `eocDash` (`eocDash=0`, `dashDelay=0`; `dash=2` is simply the equipped
+Shield), and it is not a movement-state lock (`frozen/webbed/stoned/dead/CCed/grappled/mount/wet`
+are all false). The world scan also shows **no solid tile on the player's own rows within 200
+tiles either side**, so it is not a wall.
+
+### 31.2 The embed hypothesis was wrong
+
+`player.position` was `new Vector2(playerStartTileX * 16, arenaStartY * 16 - player.height)`
+(`GameProbe.cs:2577`), which puts the body's bottom edge on the first solid pixel of the floor
+(the ground pass builds `arenaGroundY .. arenaGroundY+thickness`, so solid starts at
+`arenaGroundY*16`). A spawn with one pixel of clearance is what native produces, so the line now
+subtracts 1, and a one-shot spawn log confirmed `bottom=7999.0 groundTopPx=8000`.
+
+**But this did not change the outcome: 4 hits and 66 Boss damage, the same as before, and the
+stall still fires at tick 240 with `py 7979.0`.** The reason is that `py` in the stream is the body
+**centre**, not the feet: centre 7979 with height 42 means the feet were at about 8000, i.e. the
+body was at most **1 px** into the floor, not deeply embedded. My "the player is embedded in the
+ground" reading was therefore wrong, and the stall has some other cause that is still unidentified.
+
+The clearance fix is kept anyway because placing a body inside a solid pixel is wrong on its own
+terms and one pixel is the native spawn clearance; it is recorded here as **not** a hit-count
+improvement.
+
+### 31.3 What the stall is and is not
+
+Still true and unexplained: the plan commands a horizontal, the engine receives it
+(`controlLeft` True), and `velocity.X` stays exactly 0 for up to 163 ticks while horizontal motion
+works normally in other phases of the same run (`precharge-jump` mean |vx| 5.65, `charge-ascend`
+9.44, `charge-horizontal-dash` 14.50, and the identical phases later in the same run move at
+6.7-13.4). Both pinned episodes contain a hit. This is the live defect.
+
+Ruled out this round: missing control write; `eocDash`; dash state; grappled/mount/frozen/CCed;
+a wall on the player's rows.
+
+### 31.4 Status
+
+- **Kept:** one pixel of spawn clearance in `GameProbe.cs` (correctness, not a hit improvement).
+- **Reverted:** the `GEOM_SCAN`, `STALL_FRAME` and `STALL_AFTER` diagnostics.
+- **Tests:** 750 passed, 8 failed -- the same 8 pre-existing failures from the missing
+  `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
+- **No native zero over a full fight on either loadout.**
