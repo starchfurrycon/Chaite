@@ -2260,3 +2260,84 @@ fixed 130-tick resource, not a clamp.
 - Weak wing, policy off, guard 0: **4 hits at 3000-4000 ticks**; **both refuted experiments die
   faster** than the baseline over 6000+ ticks.
 - **No native zero over a full fight on either loadout.**
+
+## 29. Round 68: the refill fall is already minimal; the dash is not the answer either
+
+### 29.1 The refill cycle is physically minimal, not wasteful
+
+Section 23 stopped at "wingTime is empty 15-18% of the time". Measured per episode over one dense
+fight (`artifacts/game-probe-dense-guard0`, 3761 rows, weak wing, policy off, guard 0), there are
+**7 empty-bar episodes**:
+
+```
+episode            length   dash-ticks   wingTime on landing
+t  461-  518         58         0        130
+t  976- 1005         30         1        130
+t 1274- 1363         90         2        130
+t 2247- 2362        116         0        130
+t 2709- 2841        133         1        130
+t 3022- 3097         76         1        130
+t 3499- 3570         72         0        130
+```
+
+`wingTime` is **exactly 0 for every tick of every episode and snaps to the full 130 on the tick
+after the last one** -- never a partial value, always full. That is the native refill at
+`Player.cs:26992`, and it means the episode length *is* the time to return to a surface, not waste.
+The fall itself is clean Newtonian motion at the measured `gravity 0.4`:
+
+```
+ t 2266  pcy 7436.0  pvy +3.44   dpvy +0.40
+ t 2272  pcy 7465.1  pvy +5.84   dpvy +0.40
+ t 2312  pcy 7615.6  pvy +10.01  dpvy +0.31   <- capped at maxFallSpeed
+```
+
+So an earlier estimate in this round (that ~70 ticks of each episode were avoidable) was my own
+arithmetic error: starting from near-zero `vy`, falling the ~800 px from the hover altitude to the
+arena floor at `0.4/tick` climbing to a `10.01` cap takes about 45 ticks, plus the landing. The
+circuit descends to the **floor** rather than the intermediate platform rows because from its hover
+altitude (~7423) the floor is nearer than the row above (~6992), so that choice is also correct.
+
+**The refill cadence is not where the cost is.** It cannot be shortened by deciding differently.
+
+### 29.2 The window has no climb and almost no dash -- and adding the dash still loses
+
+The measured state during those windows: **575 empty-bar ticks**, on which the circuit holds
+`controlDown` **91.8%** of the time and `controlJump` **1.2%** (it must not hold jump: that is what
+lets the fall happen). Dash is active on **1.0%** of empty-bar ticks and **1.2%** of healthy ones,
+i.e. about **46 of 3761 ticks** for the whole fight. So during every refill the player has no climb
+authority and, in the four longest episodes, literally zero dash ticks.
+
+That made the one horizontal tool which costs no `wingTime` look like the answer. A refill dash was
+implemented -- when the bar is empty and the player is airborne, keep the dash issued -- and swept
+in one invocation:
+
+| `CHAITE_REFILL_DASH` | hits | boss damage | dash-active ticks |
+|---|---|---|---|
+| 0 (off, reviewed) | **4** | 66 | 32 |
+| 1 (on) | **5** | 147 | 38 |
+
+**Refuted.** It loses by one hit, and the boss-damage and dash-count columns move in opposite
+directions, which is the signature of a different trajectory rather than a better one. The
+mechanism is plausible but the outcome is not an improvement, so it is reverted.
+
+### 29.3 Where this leaves the vertical axis
+
+Three separate structural answers to the vertical problem have now been measured and refuted:
+floor-escape modes 1/2/3 (section 28), minimum altitude (section 28), and the refill dash (29.2).
+Together with sections 23-24 (guard thresholds are flat) this closes the whole family of
+"tune one clamp or one flag" answers. The remaining axis is genuinely the **schedule**: which
+charge a climb is spent on, and whether the player enters a refill window with enough horizontal
+separation that the horizontal dodge alone can carry it, which is exactly the owner's rule that a
+lock taken from far enough out may be answered by running straight away.
+
+That is a different kind of change from the ones refuted above -- it is a decision over the whole
+fight rather than a local clamp -- and it is the next thing to build.
+
+### 29.4 Status
+
+- **Reverted:** the refill dash and `CHAITE_REFILL_DASH`. The refill guard is kept.
+- **Refuted:** refill dash as an improvement; the "refill fall is wasteful" premise.
+- **Kept measurement:** the refill cycle is minimal (98-tick fall to the floor, full 130 on landing);
+  dash is active on ~1% of all ticks.
+- Weak wing, policy off, guard 0: **4 hits at 3000-4000 ticks.**
+- **No native zero over a full fight on either loadout.**
