@@ -4977,3 +4977,59 @@ it, and it is **kept**.
   stronger test.
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 65. Round 104: the velocity-normal fix is duration-dependent -- it wins at 3000 and dies at 4598
+
+### 65.1 The longer run
+
+§64.4 flagged that 3000 ticks was the evidence length but that a longer run was the stronger test. Running
+the same kept build at `-maxticks 6000` (`game-probe-velnormal-6000b`, `-wallseconds` caps at 900, so the
+fight itself ended at 4598):
+
+```
+                     baseline (§60.2)   velnormal 3000   velnormal 6000
+ticks                      3000              3000             4598 (died)
+HITS                         4                 2                8
+boss damage                 66                 9               31
+death                     False             False             TRUE (FailedAfterDeath)
+shield rows                 38                33               48
+dash-active ticks           32                32               45
+npc contact                  6                 1                3
+```
+
+**All eight hits are Boss body contact** (`hurt-observations`: every row `kind: npc, type: 370,
+damage 140`; boss life 78000 -> 77969, i.e. 31 damage after defence). **No projectile hit at any length.**
+So the velocity-normal change fixes the charge-contact geometry in the window it was tuned against, and then
+the same geometry fails repeatedly later in the fight.
+
+### 65.2 What this means, stated plainly
+
+This is the **third** time this project has seen a short-window win that does not survive a longer fight
+(the 1200-tick zero of §60.6, and now 3000 -> 4598). The conclusion is methodological and it applies to both
+the remaining work and to acceptance:
+
+- **3000 ticks is not sufficient evidence for the weak-wing fight.** The same build goes from 2 hits to a
+  death between 3000 and 4598 ticks. Any verdict taken at 3000 -- *including the `ACCEPTED` verdict of
+  `run-native-acceptance.ps1`* -- must be treated as provisional.
+- Because §60.6 already requires "full-fight length" and 6000 is the harness maximum, the practical rule is:
+  **accept only a run that survives to the `-maxticks` cap without death, and re-run at the cap after every
+  change.**
+
+### 65.3 Decision on the fix
+
+The change is **kept**, because it is a genuine measured improvement on the charge-contact mechanism the
+whole investigation has been about (npc contact 6 -> 1 at 3000 ticks, 4 hits/66 damage -> 2 hits/9 damage),
+and because reverting it would restore a defect that is now understood rather than mysterious. It is
+recorded here as **partial and not an acceptance**: it does not reach zero at any tested length and it dies
+at 4598.
+
+### 65.4 Status
+
+- Change kept in `src/Chaite.Core/FishronWingScript.cs`; builds clean.
+- **Measured:** velnormal at 3000 ticks = 2 hits / 9 damage / no death; at 4598 ticks = 8 hits / 31 damage /
+  **death**. Baseline = 4 hits / 66 damage at 3000 ticks.
+- **All hits at both lengths are Boss body contact** (`type 370`); no projectile hits.
+- **Method constraint tightened:** a 3000-tick verdict, including `ACCEPTED`, is **provisional**; accept only
+  a death-free run at the `-maxticks` cap (6000).
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
