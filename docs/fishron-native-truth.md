@@ -4775,3 +4775,132 @@ rather than a capability wall.
   vertical, against a ~4.25 px/tick requirement -- capability is not the constraint.
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 62. Round 101: the commanded escape is already the full normal -- so the gap is in execution, not command
+
+### 62.1 The finding
+
+§61 concluded the constraint is the *commanded* escape rather than wing capability. Reading the committed
+`charge-horizontal` branch refutes the "command" half of that:
+
+```csharp
+// FishronWingScript.cs
+horizontal = _chargeNormalHorizontal;                       // :780  (locked normal)
+...
+vertical = _chargeNormalSequence >= 0
+    ? _chargeNormalVertical                                 // :817-818 (locked normal)
+    : (player.OnGround ? -1 : 0);
+phase = "fishron-wing-charge-horizontal";                    // :820
+```
+
+So during a locked charge the code **already commands the full latched normal on both axes** -- there is no
+uncommanded component left to switch on. Yet the observed velocity on the tick-950 charge is
+`(14.18, -2.06)`: the horizontal is at cruise (~14.2 of a ~14.5 maximum) but the vertical is only
+**-2.06 px/tick against the ~9.9 px/tick the airframe can command** (§61.1).
+
+So the deficit is between the **command** and the **executed motion**, not in the command itself. That
+reframes the problem and explains the three failures in §60.4: every attempt (prioritising the beat,
+removing the deadband, flipping the sign) changed *which* normal was commanded, and the normal was never the
+binding term.
+
+### 62.2 The candidate mechanism, and why it is not yet established
+
+The obvious candidate is wing application. `Player.WingMovement` is gated on
+`wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 && velocity.Y != 0`, so sustained vertical
+authority requires **`controlJump` to be held** -- the jump channel, not `controlUp`. A `vertical` input of
+`-1` in the plan's terms does not by itself hold the jump key.
+
+**This is a hypothesis, not a measurement.** The baseline run used for §61/§62 was harvested **without**
+`CHAITE_PROBE_DENSE_FRAMES`, so its observation stream is sparse (163 rows over 3000 ticks, one row every
+~46 ticks) and the `jump` field is a jump-duration counter, not a boolean. It is therefore not possible from
+this stream to say whether `controlJump` was held during the charge. Settling it needs a **dense** live run
+(one row per tick) with the wing fields recorded across a charge window -- which is exactly the instrument
+§54 validated.
+
+### 62.3 Recommended next step (do this before any state-machine edit)
+
+1. Run one **dense** live weak-wing fight (`CHAITE_PROBE_DENSE_FRAMES=1`, 3000 ticks).
+2. Over the charge windows, tabulate `controlJump`, `wingTime`, `velocity.Y` and the commanded
+   `plan` vertical/horizontal per tick.
+3. Only if `controlJump` is false while `vertical = -1` is commanded does the "hold the jump to apply the
+   wing" hypothesis become a measured fact -- at which point the fix is to hold the jump through the locked
+   charge, and it must be validated by a fresh live 3000-tick run against the committed baseline
+   (4 hits / 66 damage).
+
+Doing the edit before step 3 would be the same mistake as §55, §56.2/B and §57, each of which changed the
+commanded normal without first establishing that the normal was the binding term.
+
+### 62.4 Status
+
+- Tree clean apart from untracked `tmp/`; solution builds clean. No experiment left in the tree.
+- **Established by reading the committed code plus the measured velocity:** the locked-charge branch already
+  commands the full latched normal on both axes, and the executed velocity is ~14.2 px/tick horizontal
+  against ~14.5 available but only ~2.06 px/tick vertical against ~9.9 available.
+- **Reframed:** the deficit is command-to-execution, not command selection -- consistent with the three
+  measured failures in §60.4.
+- **Not established:** whether `controlJump` is held during the charge. The baseline stream is sparse and
+  cannot answer it; a dense run is required (step 62.3).
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
+
+## 63. Round 102: dense charge window -- the vertical escape is ballistic, and the jump channel is DOWN
+
+### 63.1 The dense measurement (§62.3 steps 1-2, carried out)
+
+One dense live weak-wing run (`CHAITE_PROBE_DENSE_FRAMES=1`, 1200 ticks, **1 hit**, `npc contact 1`) gives one
+row per tick. Tabulating the tick-950 contact's locked charge:
+
+```
+guc | plan(h,up,drop,jump) | player ctl(J,U,D) | vy      wingTime
+ 929 | (-1,0,0,True)       | (True, False,False) | -2.86   10
+ 930 | (+1,0,1,False)      | (False,False,True ) | -2.46   10
+ 931 | (+1,0,1,False)      | (False,False,True ) | -2.06   10
+ 932 | (+1,0,1,False)      | (False,False,True ) | -1.66   10
+ 933 | (+1,0,1,False)      | (False,False,True ) | -1.26   10
+ 934 | (+1,0,1,False)      | (False,False,True ) | -0.86   10
+ 935 | (+1,0,1,False)      | (False,False,True ) | -0.46   10
+ 936 | (+1,0,1,False)      | (False,False,True ) | -0.06   10
+```
+
+Two facts, both new and both measured:
+
+1. **`controlJump` is FALSE and `controlDown` is TRUE through the entire locked charge.** `Player.WingMovement`
+   is gated on `wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 && velocity.Y != 0`, so the wing
+   is gated **off**: the vertical motion is pure ballistic decay.
+2. **The decay rate proves it**: `vy` goes `-2.46, -2.06, -1.66, -1.26, -0.86, -0.46, -0.06` -- exactly
+   `+0.40` per tick, i.e. `gravity(0.1333) x 3`, with **no thrust term at all**. `wingTime` stays pinned at
+   10 the whole time, confirming the wing never ran.
+
+That is the missing escape magnitude from §61/§62: the perpendicular rate is ~2.2 px/tick where the race
+needs ~4.25, because the vertical escape is falling under gravity rather than being flown.
+
+### 63.2 A correction to §62, and why no edit was made this round
+
+§62's hypothesis was that the jump channel needed holding. **That was wrong**, and it is corrected here:
+`output.Jump = vertical < 0` (`FishronWingScript.cs:526`) already raises the jump whenever the charge branch
+commands a negative vertical, so the jump is *not* uncommanded by construction. The draft edit that added an
+explicit `jump = true` failed to compile (`CS0103: name 'jump' does not exist in the current context` --
+`ChargeEscape`'s outputs are `horizontal, vertical, phase, dash`), and the 3000-tick run launched after that
+failed build **used the stale DLL**, so its numbers are void. The edit is reverted; the tree is clean.
+
+The unresolved question is therefore sharper and different: at `guc 930` the plan reads
+`(h=+1, up=0, drop=1, jump=False)` while the observed phase is `fishron-wing-charge-horizontal`, whose branch
+sets `vertical = _chargeNormalVertical` and `horizontal = _chargeNormalHorizontal`. If `_chargeNormalSequence
+>= 0` the branch would light `jump` via `:526`; it does not, so on these ticks the branch's
+`_chargeNormalSequence < 0` arm is what runs -- meaning **the normal was not latched for this charge even
+though the charge is locked**, and the `+1`/`-9.00` horizontal reversal at `guc 942` is the later
+`_chargeNormalHorizontal`. That is the next thing to measure, and it is a `_chargeNormalSequence` question,
+not a wing-application question.
+
+### 63.3 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; solution builds clean.
+- **Measured:** through the whole locked charge, `controlJump=False`, `controlDown=True`, `wingTime` pinned
+  at 10, and `vy` decaying at exactly `+0.40` per tick (ballistic, zero wing thrust).
+- **Corrected:** §62's "the jump needs holding" is withdrawn -- `:526` already derives the jump from a
+  negative vertical.
+- **Void:** the 3000-tick numbers from the run launched after the failed build (stale DLL).
+- **Next target:** why `_chargeNormalSequence < 0` (so `vertical`/`horizontal` do not take their latched
+  normal values) on charge ticks whose phase is `fishron-wing-charge-horizontal`.
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
