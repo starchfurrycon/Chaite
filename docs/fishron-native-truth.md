@@ -1394,3 +1394,100 @@ Unchanged and not to be overstated: weak wing 8684 ticks / **8 hits** / 37 damag
 strong wing 11000 ticks / **11 hits** / 76 damage / alive at the cap. A separate 3000-tick run
 again reported `HITS 0` while also reporting `boss damage 0` and the boss at full life, so it is
 not a zero-hit result. **No native zero on either loadout.**
+
+## 20. Round 59: the footage, measured by pixels (the vision API cannot see)
+
+The owner asked me to use the two tutorial videos with their full no-hit fight recordings instead
+of reasoning from the decompile alone. The videos are on disk
+(`tmp/video/v1.mp4`, `tmp/video/v2.mp4`, both 1920x1080 at 30 fps, 599 s and 523 s), and the
+subtitle OCR in `docs/fishron-video-subtitles.md` already gives the spoken formula. This round
+tried the vision route and then did the measurement directly, because the vision route does not
+work.
+
+### 20.1 The vision API returns confident hallucinations
+
+`tools/vision-read-sheet.py` posts a contact sheet to the configured vision endpoint with a
+base64 data URL. It returns HTTP 200 and plausible-looking markdown, but the content is
+fabricated. Two outputs, both clearly impossible:
+
+- A 48-frame sheet of the phase-1 fight came back with **every tile identical** on boss
+  position ("above (1)"), on player horizontal action ("still"), and with a metronomic
+  "rising, rising, falling, falling, rising, rising" pattern repeating every five tiles. Its
+  answers then asserted the player is ~90 percent vertical, ~2-3 tiles of travel, and never runs
+  horizontally.
+- A 12-frame sheet at 12 fps, meant to isolate a single charge, came back with the player's
+  x-position advancing by exactly **0.02 per tile in a perfect linear ramp**, **zero vertical
+  travel**, and **zero vertical reversals**. A sprite in a Terraria fight cannot move at a
+  constant linear velocity for twelve consecutive frames while the boss charges.
+
+Subagents cannot substitute for this either: `read_image` is unavailable to the child route
+whatever model is named, so all four vision subagents returned "cannot read images".
+
+**Conclusion: the video's pixel content must be measured, not described.** The wording below is
+therefore restricted to what `tools/track-video-sprites.py` computes.
+
+### 20.2 The measurement, phase-1 fight (165 s, 80 s at 10 fps, 800 frames)
+
+The player is located as the tightest cluster of the player's cyan tint (mask: blue and green
+above 190, red below 170, both differences above 50). The mask finds a candidate in **every
+frame**, 262 to 650 pixels.
+
+```
+total |dx| = 11946.0 px   total |dy| = 6646.0 px
+vertical share of travel = 35.7%
+vertical direction reversals: 318
+x range 108.5..826.0   y range 57.0..326.0
+```
+
+Read against the current circuit, this is informative:
+
+- **The player really does move vertically, a lot.** 35.7 percent of all travel is vertical and
+  the sprite changes vertical direction **318 times in 80 seconds** -- roughly four reversals per
+  second. A circuit that spends 58 percent of the fight in free fall with `wingTime == 0` is not
+  reproducing this.
+- **The player also moves horizontally**, over a wide span (108 to 826 px of a 960 px crop). So
+  the vision model's "horizontal action: still" was wrong in the opposite direction, and the
+  owner's rule is about the *dodge axis on a locked charge*, not about never running.
+- The y range of 269 px against an x range of 718 px is consistent with the arena in the video
+  being much shallower vertically than the probe's, which is worth noting because the probe
+  builds 216 tiles of vertical space with rows 60 tiles apart.
+
+### 20.3 Surface-contact cadence, and why the number is not yet trustworthy
+
+A first attempt to extract the landing cadence, counting frames where vertical motion stops and
+reverses upward, gives 130 contacts in 80 s with a median gap of 4 frames (24 native ticks) and
+a maximum of 56 frames (336 ticks). The distribution is **bimodal** -- a dense cluster of 2-5
+frame gaps plus isolated gaps of 42 and 56 frames -- which means the rule is detecting
+mid-flight bounces as well as true landings, and the median is therefore not yet a landing
+cadence.
+
+What it does establish is the shape of the answer: the video player touches a surface far more
+often than the circuit's 350 ticks per landing, with occasional long airborne stretches of the
+same order as the circuit's. Making this number trustworthy needs a rule that distinguishes a
+real touchdown (sustained contact, vertical velocity zero for more than one frame) from a
+one-frame bounce, and that is the next step for this tool.
+
+### 20.4 What the videos have already settled without pixels
+
+The subtitle extract in `docs/fishron-video-subtitles.md` is itself authoritative written
+evidence, and it contradicts the circuit in two specific places:
+
+1. **Phase 1, 190 s: "open up vertical distance" (拉开竖直距离), and 200 s: "we do not need to
+   take any action"** (我们不需要采取任何措施). The dodge is vertical and then *passive*. The
+   circuit instead keeps issuing horizontal flee input through the whole charge.
+2. **Phase 1, 185 s and 195 s: "it will charge at your CURRENT position"** (它会向你当前位置再次
+   冲撞). This is the same lock that section 17.1 found in `AI_069`, from the other direction,
+   and it is why acting before the lock is pointless.
+3. **Phase 2, 330-355 s: the formula is "jump, then run once, then three dashes"**
+   (起跳 / 一跑 / 三冲刺), with the goal of getting the sharknado and the bubbles released on the
+   same side at the platform edge.
+
+So the two structural changes the footage argues for are: stop fleeing horizontally during a
+committed charge, and give the phase-2 cycle an explicit jump-run-dash cadence.
+
+### 20.5 Status
+
+Nothing was changed in the circuit this round -- the measurement did not yet support a specific
+edit, and the previous two rounds showed that a plausible edit here can be bit-identical. The
+pinned result is unchanged: weak wing 8684 ticks / **8 hits** / 37 damage / death; strong wing
+11000 ticks / **11 hits** / 76 damage / alive. **No native zero on either loadout.**
