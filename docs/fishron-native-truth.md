@@ -5918,3 +5918,98 @@ quantified target.
 - **Worsened:** hit count 8 -> 9.
 - **Not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and incomplete**,
   and no native zero is claimed.
+
+## 77. Round 116: the contact test is a RECTANGLE, two hits were projectiles, and the true rate improves
+
+### 77.1 Correcting §75
+
+§75 compared hits against misses using the **centre distance**. That is the wrong metric, and it produced a
+false result: the offset run appeared to have a body hit at 260 px and a miss at 29 px, which "refuted" the
+threshold. Both were artefacts of the same two mistakes:
+
+1. **The native contact test is a rectangle, not a circle**: contact needs `|dx| < (150+20)/2 = 85` **and**
+   `|dy| < (100+42)/2 = 71`. A centre distance of 239 px can still be a contact if `|dy|` is what is small.
+2. **Two of the offset run's nine hits are PROJECTILES, not body contact.** `hurt-observations.jsonl` gives
+   the source for every event, and it reports `kind: projectile, type: 384` at ticks 4137 and 4197
+   (Sharknado sharks, base damage 25, actual return 58 and 51). They are **not** bubble projectiles and are
+   **not** ignorable -- they cost 109 HP in that run, more than any single body hit. The previous "all hits
+   are body contact" belief came from the baseline run, which genuinely had 8/8 body hits; the offset run
+   does not.
+
+Re-measured with the exact rectangle test, **every** body hit in **both** runs is inside the contact
+rectangle, with no exceptions:
+
+```
+BASELINE       tick  dmg   |dx| (<85)      |dy| (<71)
+                904   69   61.9 INSIDE     65.1 INSIDE
+               2432   89   22.1 INSIDE     42.4 INSIDE
+               3263   73   79.7 INSIDE     53.2 INSIDE
+               3791   83   74.8 INSIDE     69.5 INSIDE
+               3917   99    2.7 INSIDE     68.4 INSIDE
+               4095   92   32.5 INSIDE     64.1 INSIDE
+               4150   86   13.0 INSIDE      8.0 INSIDE
+               4208   41   82.3 INSIDE     45.2 INSIDE
+
+CHARGE TICKS (ai[0]==1): 1334   inside the contact rectangle: 48 (3.6%)
+  closest charge tick: maxNorm 0.093 (|dx| 0.0, |dy| 6.6)
+  5th-percentile charge tick: maxNorm 1.166
+
+OFFSET         tick  dmg   |dx| (<85)      |dy| (<71)
+                950   98   84.4 INSIDE     15.2 INSIDE
+               2146   77   17.2 INSIDE     13.2 INSIDE
+               2278   77   76.6 INSIDE     64.9 INSIDE
+               2668   99   39.3 INSIDE     63.7 INSIDE
+               4961   77   65.6 INSIDE     69.1 INSIDE
+               5393   80   76.7 INSIDE      4.7 INSIDE
+               5572   85   14.4 INSIDE      2.2 INSIDE
+        (plus 2 projectile hits, not body contact)
+
+CHARGE TICKS: 1808   inside the contact rectangle: 97 (5.4%)
+  5th-percentile charge tick: maxNorm 0.968
+```
+
+Two useful consequences:
+
+- The dodges are mostly **wide**: a hit needs the player to be inside a 170x142 rectangle around the Boss
+  centre, and only **3.6% (baseline) / 5.4% (offset)** of charge ticks are. The failures are a small tail, not
+  a systemic collapse -- so the fight is much closer to solvable than the "8 hits" headline suggests.
+- §75.1's "clean 91/112 gap" was an artefact of the circle metric on a single run. The **correct** statement
+  is that a hit occurs exactly when the rectangle test passes, which requires near-perfect precision on
+  **both** axes simultaneously (baseline hit at tick 3917 had `|dx|` of just 2.7 px).
+
+### 77.2 The offset normal does improve the hit RATE (dense confirmation)
+
+The earlier offset run was launched **without `CHAITE_PROBE_DENSE_FRAMES=1`** and therefore recorded only 317
+rows, too sparse to measure anything; the hurt ticks were not even present in the stream. It was re-run dense
+(`game-probe-offsetdense-6000`) and reproduced the sparse run **exactly** -- `ticks 5937 / HITS 9 / boss
+damage 126` -- which independently confirms the engine is deterministic run-to-run.
+
+```
+                              velocity normal (§64)   offset normal (§76/§77)
+ticks                               4598                   5937
+HITS                                   8                      9
+body hits                              8                      7
+projectile hits                        0                      2
+NPC contacts                          12                     12
+engagement (charge ticks)           1334                   1808
+charge ticks inside contact rect    48 (3.6%)              97 (5.4%)
+HITS PER 1000 TICKS                 1.74                   1.52
+```
+
+**Per tick of engagement the offset normal is safer (1.52 vs 1.74 hits per 1000), and it survives 29% longer,
+but it accumulates one more hit in absolute terms and exposes the player to Sharknado projectiles that the
+baseline never met.** It remains the best available weak-wing configuration and stays kept, but it is still
+**not** an acceptance.
+
+### 77.3 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean.
+- **Corrected:** §75.1's centre-distance threshold was an artefact (circle metric, single run). The native
+  contact test is the rectangle `|dx| < 85 && |dy| < 71`, and **every** body hit in both runs satisfies it.
+- **Discovered:** two of the offset run's nine hits are **projectile type 384 (Sharknado sharks)**, costing
+  109 HP -- not bubble projectiles and not ignorable.
+- **Measured:** only **3.6% / 5.4%** of charge ticks are inside the contact rectangle, so the failures are a
+  small tail; the offset normal reduces hits **per tick of engagement** (1.52 vs 1.74 per 1000).
+- **Confirmed deterministic:** the dense offset re-run reproduced the sparse run exactly (`5937 / 9 / 126`).
+- **Not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and incomplete**,
+  and no native zero is claimed.
