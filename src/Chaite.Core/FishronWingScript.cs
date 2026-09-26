@@ -230,6 +230,45 @@ namespace Chaite.Core
         private const string CoLocationRoutesVariable = "CHAITE_COLOCATION_ROUTES";
         private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
         private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
+        private const string DashDelayVariable = "CHAITE_DASH_DELAY";
+
+        /// <summary>Ticks to wait after the charge lock before spending the
+        /// charge's single dash.
+        ///
+        /// MEASURED AND REFUTED -- THE DEFAULT IS 0 AND SHOULD STAY 0. The hits
+        /// really are timed as this was built to fix: on four hits across BOTH
+        /// loadouts the charge dash is spent 2-5 ticks after the lock, so its 15
+        /// i-frames expire about 5 ticks before contact (`lock 1406 -> dash 1408
+        /// -> i-frames die 1420 -> contact 1424`, and likewise 1584/1586/1600/1604,
+        /// 1758/1760/~1774/~1778 and 4250/4250/4265/4271). Delaying the dash DOES
+        /// cover the contacts -- `npc contact` falls from 3-4 to 0 at delays
+        /// 12/16/24, so the collisions land inside the i-frames exactly as
+        /// predicted. It nevertheless makes the FIGHT worse at every nonzero
+        /// value, because holding the dash perturbs the whole cruise cycle and
+        /// the dash is a once-per-charge budget:
+        ///
+        ///   delay  0 -> 2 hits / 3-4 contacts   (best)
+        ///          2 -> 4        4 -> 4        6 -> 8        8 -> 10
+        ///         12 -> 5 (0 contacts)        16 -> 9 (0)   20 -> 8        24 -> 8 (0)
+        ///
+        /// The covers-the-contact benefit is real but smaller than the cost of
+        /// losing the dash elsewhere, so this knob exists only to demonstrate that
+        /// the timing is measurable. It is not a fix.</summary>
+        private static int DashDelay
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(DashDelayVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 ||
+                    value > 120)
+                    return 0;
+                return value;
+            }
+        }
+
 
         /// <summary>Vertical gap (px) below which a ready charge dash is
         /// suppressed, so those frames go to the vertical escape instead of a
@@ -256,6 +295,29 @@ namespace Chaite.Core
         /// ChargeEscape is an instance method and sees no FormulaScriptInput, so
         /// the loadout-dependent gate above reads it from here.</summary>
         private FormulaRoute _dashSuppressRoute = FormulaRoute.FishronStrongWingsDash;
+
+        /// <summary>The current tick's NativeSequence, latched in Tick before
+        /// ChargeEscape runs. `_previousSequence` is one tick behind at that
+        /// point, so it cannot be used for a ticks-since-lock countdown.</summary>
+        private int _currentTimer;
+
+        /// <summary>Ticks since the charge lock, or -1 when no lock has been
+        /// taken.
+        ///
+        /// NativeTimer, NOT NativeSequence: MEASURED on game-probe-fin-strong-dflt,
+        /// the Boss's ai[2] -- which is what NativeSequence carries -- counts up
+        /// through the WIND-UP and RESETS TO ZERO exactly at the lock
+        /// (`ai2: 29 -> 0` as `ai0` goes 0 -> 1). Differencing it across the lock
+        /// therefore yields garbage, and using it made every nonzero delay hold
+        /// the dash for the whole charge (measured: 7 hits and a death at tick
+        /// 2406 for delays 10, 14, 18, 22 and 28 alike). NativeTimer restarts
+        /// from zero at the state entry, which is the lock, so its value IS the
+        /// ticks-since-lock count.</summary>
+        private int ChargeTicksSinceLock
+        {
+            get { return _chargeNormalSequence >= 0 ? _currentTimer : -1; }
+        }
+
 
         /// <summary>Whether the drained-bar refill also drops the jump command at
         /// the apex, so the native `velocity.Y == 0 && releaseJump` clause
@@ -551,6 +613,7 @@ namespace Chaite.Core
             output.Accepted = true;
             output.Fire = true;
             _dashSuppressRoute = input.Route;
+            _currentTimer = input.NativeTimer;
             int horizontal, vertical;
             string phase;
             var dashInput = false;
@@ -988,17 +1051,36 @@ namespace Chaite.Core
                 // policy-only hook and returns immediately when no policy is
                 // configured, so it never ran. This copy is in ChargeEscape,
                 // which is the method that actually produces the proposal.
-                // The threshold is LOADOUT-DEPENDENT, as §79/§83 found for the
-                // co-location lift. CONTROLLED sweep, rule in this method:
+                // Dash TIMING: the shield's i-frames must still be running when
+                // the Boss actually arrives, and the charge takes ~29 ticks to
+                // cross while dashType 2 grants 15.
                 //
-                //   strong:  0 -> 2   40 -> 6   60 -> 8   90 -> 2   120 -> 8+death  150 -> 7
-                //   weak:    0 -> 4   30 -> 8+death   50 -> 3   75 -> 7+death
+                // MEASURED (game-probe-fin-weak-dflt, all three weak-wing hits,
+                // and game-probe-fin-strong-dflt t=4271 -- four hits on BOTH
+                // loadouts): the script burns the charge's dash 2-5 ticks after
+                // the lock, so the i-frames expire about 5 ticks BEFORE contact.
                 //
-                // Strong needs >= 90 and weak is killed by 90, so a single value
-                // cannot serve both. Each route takes its own measured optimum;
-                // the weak wing's 50 is its best result to date (3 hits AND 3
-                // contacts, against 4 hits and 5 contacts unsuppressed).
-                if (Math.Abs(player.Center.Y - boss.Center.Y) >= DashSuppressGap(_dashSuppressRoute))
+                //   lock 1406 -> dash 1408 -> i-frames die 1420 -> contact 1424
+                //   lock 1584 -> dash 1586 -> i-frames die 1600 -> contact 1604
+                //   lock 1758 -> dash 1760 -> i-frames die ~1774 -> contact ~1778
+                //   lock 4250 -> dash 4250 -> i-frames die 4265 -> contact 4271
+                //
+                // This is the same error on both loadouts, which is why the two
+                // arms fail at the same kind of tick. Holding the dash until
+                // DashDelay ticks after the lock puts the i-frames over the
+                // arrival instead. 0 = the fixed circuit.
+                if (_chargeNormalSequence >= 0 &&
+                    ChargeTicksSinceLock < DashDelay)
+                {
+                    // still too early: hold the proposal, spend nothing
+                }
+                else if (Math.Abs(player.Center.Y - boss.Center.Y) <
+                    DashSuppressGap(_dashSuppressRoute))
+                {
+                    // escape is mostly vertical; a horizontal dash cannot win
+                    // along the charge axis (see the controlled sweep in §97)
+                }
+                else
                     dash = true;
             }
         }

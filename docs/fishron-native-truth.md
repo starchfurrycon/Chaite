@@ -7175,6 +7175,75 @@ fewer hit AND two fewer body contacts -- which is the first change in this fight
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
+## 98. Round 137: the dash is 5 ticks early -- the timing is real, and fixing it is a NET LOSS
+
+### 98.1 The timing defect is real, and it is the same on BOTH loadouts
+
+Traced every remaining hit on the current default circuit. Four of the five hits across the two loadouts share
+one anatomy: **the charge's dash is spent 2-5 ticks after the lock, so its 15 i-frames expire about 5 ticks
+BEFORE the Boss arrives.**
+
+```
+weak   t=1425  lock 1406 -> dash 1408 -> i-frames die 1420 -> CONTACT 1424
+weak   t=1605  lock 1584 -> dash 1586 -> i-frames die 1600 -> CONTACT 1604
+weak   t=1782  lock 1758 -> dash 1760 -> i-frames die ~1774 -> CONTACT ~1778
+strong t=4271  lock 4250 -> dash 4250 -> i-frames die 4265 -> CONTACT 4271
+```
+
+This is the first defect found that is **shared by both loadouts**, which is why the two arms fail at
+structurally the same kind of tick. The Boss needs ~29 ticks to cross; the shield grants 15. Firing on the first
+ready tick puts the window in the wrong half of the approach.
+
+### 98.2 A stamina hypothesis, tested and REFUTED
+
+At two hits (`strong t=3259`, `weak t=1782`) `wingTime == 0`, and the player's `vy` is pinned at `+3.34` -- the
+bar is empty so the escape has no vertical authority at all. That suggested the hits were a flight-budget
+problem. It is not: `wingTime==0` occupies 35.2% (strong) and 26.5% (weak) of all ticks, and three of the five
+hits -- `weak t=1425` (130), `weak t=1605` (114), and `strong t=4271` (146) -- happen with the bar **nearly
+full**. Stamina depletion is present at some hits but is not the cause.
+
+### 98.3 Delaying the dash DOES cover the contacts -- and still loses
+
+`CHAITE_DASH_DELAY` holds the charge's dash proposal for N ticks after the lock. It works exactly as designed:
+`npc contact` **falls from 3-4 to 0** at delays 12/16/24, so the collisions land inside the i-frames. And it
+makes the fight worse at **every** nonzero value:
+
+```
+delay   0 -> 2 hits / 3-4 contacts   <- BEST, and the committed default
+        2 -> 4          4 -> 4          6 -> 8          8 -> 10
+       12 -> 5 (0 contacts)   16 -> 9 (0)   20 -> 8     24 -> 8 (0)
+```
+
+The reason is that the dash is a **once-per-charge budget**. Spending it late fixes that charge's arrival but
+removes it from the rest of the cycle, and the cycle damage exceeds the single-contact saving. `strong delay=24`
+shows the trade directly: **0 npc contacts and yet 8 hits** -- the contact counter is clean while the fight is
+much worse, which also proves `npc contact` is not a sufficient proxy for `hits`.
+
+**The default is 0 and must stay 0.** This closes the timing line: the defect is real, it is measurable, and it
+is not the binding constraint.
+
+### 98.4 A counter trap, recorded so it is not repeated
+
+The first implementation of the delay used `NativeSequence`, i.e. the Boss's `ai[2]`. **MEASURED: `ai[2]`
+counts up through the wind-up and RESETS TO ZERO exactly at the lock** (`ai2: 29 -> 0` as `ai0` goes `0 -> 1`),
+so differencing it across the lock yields garbage. The symptom was five different delays (10/14/18/22/28)
+producing **one identical result** (7 hits, death at tick 2406, boss damage 0) because the dash was held for the
+entire charge. `NativeTimer` restarts at the state entry, so its value is the true ticks-since-lock. Any future
+countdown from a lock must use the timer, not the sequence.
+
+### 98.5 Status
+
+- **Established:** the dash is systematically ~5 ticks early and this is shared by both loadouts; a locked
+  charge dash gives 15 i-frames against a ~29-tick approach.
+- **Measured:** the delay sweep for the strong wing; `npc contact` reaches 0 at delays 12/16/24.
+- **Refuted:** (a) the stamina-depletion explanation -- 3 of 5 hits occur with a nearly full bar; (b) dash timing
+  as the fix -- every nonzero delay is worse, and 24 gives 0 contacts with 8 hits.
+- **Unchanged defaults:** `CHAITE_DASH_DELAY` defaults to 0; the committed behavioural state is unchanged.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE / 4 contacts`; weak wing
+  `6000 / 3 hits / death FALSE / 3 contacts`. Both re-verified after the revert.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
