@@ -4035,3 +4035,105 @@ same validator that was previously zeroing everything.
   death replayed). Weak wing, policy off, guard 0 still measures **4 hits at 3000 ticks**.
 - **Next:** re-harvest from a fresh dense live run with the fixed writer and diff replay vs live per tick.
 - **No native zero over a full fight on either loadout.**
+
+## 52. Round 91: the replay diverges at the takeoff frame -- the feather-fall validator neutralizes EVERY control
+
+### 52.1 The differential measurement
+
+A fresh dense live run with the weak wing (`game-probe-densefix`, 1200 ticks) records **1 hit / 9 boss
+damage / 10 dash-active ticks**. Harvesting that same run with the **fixed** writer and replaying its own
+route:
+
+```
+harvest : rows 1200, tick range 2..1200, 0 neutral fillers
+          controls: left=271 right=636 jump=432 dash=11
+replay  : ticks 1200, HITS 6, boss damage 54, death True
+          shield rows 17, dash started 13, dash-active ticks 13, npc contact 4
+```
+
+So `§51`'s dash fix was necessary but not sufficient: the body now moves, but the replay still does not
+reproduce its own source run. Reading both observation streams by `gameUpdateCount`, the **first
+divergence is at `guc=241`**, the takeoff frame:
+
+```
+guc=241   live:  y=7951.52  vy=-6.476667  ctlJump=True   ctlLeft=True   jump=15
+          replay: y=7958     vy=0          ctlJump=False  ctlLeft=False  jump=0
+46 of the 50 common sampled ticks differ.
+```
+
+### 52.2 The mechanism, read directly
+
+Instrumenting the plugin's own side (no IL change, `CHAITE_DIAG_FILE`) at the end of `ApplyPlan`'s control
+writes and after `ValidatePendingMobility`, in the replay:
+
+```
+H_AFTER_WRITES t=241 J=True  L=True  Dash=False planJump=True  planUp=True
+F_OUT          t=241 J=False L=False Dash=False
+G_REJECT mobility validation rejected at pre-frame=1, post-frame=1:
+         feather-fall=up-input-changed; resolution=all-controls-neutral
+H_AFTER_WRITES t=242 J=False L=True  Dash=False planJump=False planUp=False
+F_OUT          t=242 J=False L=True  Dash=False
+```
+
+and in the live run at the same ticks:
+
+```
+F_OUT t=241 J=True  L=True  Dash=False     <-- no rejection at all
+F_OUT t=242 J=False L=True  Dash=False
+... no rejection on any sampled tick
+```
+
+This is decisive and it corrects §51's working theory about *why* the neutralization happened:
+
+1. At `t=241` the plan legitimately asks for **both** the jump and feather-fall
+   (`planJump=True`, `planUp=True`), and `ApplyPlan` does write `J=True L=True`.
+2. `_validatePendingFeatherFall` is armed (`TerrariaFacade.cs:3699-3703`, armed whenever
+   `mobility.FeatherFall` is true), with `_pendingFeatherFallRequiresPotionUp = true` (`:3714`).
+3. The validator then computes `upConflict = _pendingFeatherFallRequiresPotionUp && ... &&
+   !_controlReaders["controlUp"](player)` (`TerrariaFacade.cs:3852-3856`). `controlUp` is false on this
+   frame, so the frame is rejected as `feather-fall=up-input-changed`.
+4. `ResolveRejectedPendingMobility` (`:3939-3945`) computes
+   `usedFallback = optionalEdgeRejected && !featherPhysicsRejected && ApplyLateMobilityFallback(player)`.
+   Here `featherPhysicsRejected` is **true**, so `usedFallback` is false and
+   **`NeutralizePendingInput(player)` runs, zeroing every control AND every captured control**
+   (`:3947-3954`).
+
+**A feather-fall validation failure therefore discards the jump, the horizontal direction and the dash
+together.** That single coarse clear is what makes the takeoff frame differ and the whole trajectory
+diverge from `t=241` onward. The instrumented replay reproduced exactly the §51 numbers (HITS 6), so the
+observation is not perturbing the run.
+
+### 52.3 What this means and what the fix must be
+
+`all-controls-neutral` is wrong as a response to a **feather-fall** rejection. The failed certificate
+concerns one optional edge (the potion-up slow-fall input). The correct response is to neutralize **only
+the feather-fall control** (`controlUp` / the `FeatherFallUp` intent) and keep the plan's jump, horizontal
+and dash, which were never in question. That is also why live is unaffected while replay is not: the
+recorded live run never hit this rejection on the sampled ticks, so its `ApplyPlan` output reached
+`JumpMovement` intact and it jumped.
+
+Two candidate fixes, in order of preference:
+
+1. **Make the rejection granular.** In `ResolveRejectedPendingMobility`, when the rejection is
+   feather-physics-only, clear just the feather-fall control instead of calling
+   `NeutralizePendingInput`. (`NeutralizePendingInput` remains correct for a gravity/dash edge rejection,
+   where the whole manoeuvre is unsafe.)
+2. **Make `_pendingFeatherFallRequiresPotionUp` non-sticky.** It is armed from the previous frame's plan
+   and then demanded against the current frame's `controlUp`, so a frame whose plan does **not** request
+   the potion-up (`planUp=False`, as at `t=242`) can still be rejected for not holding it. Deriving the
+   requirement from the frame's own `plan.FeatherFallUp` removes that contradiction.
+
+### 52.4 Status
+
+- **Tree clean**; all plugin diagnostics reverted; solution builds clean. Retained from this round:
+  `tools/harvest-native-route.py:205` (sixth format placeholder, now confirmed present).
+- **Established:** the replay's first divergence from its own live source is `guc=241`; live writes
+  `ctlJump=True` and jumps (`vy=-6.48`), replay writes `ctlJump=True` and then the feather-fall validator
+  rejects and `NeutralizePendingInput` zeroes **every** control, so replay reaches `JumpMovement` with
+  `ctlJump=False` and never leaves the ground.
+- **Corrected:** §51 attributed the neutralization to the missing dash channel. The dash channel was a
+  real and separate bug (now fixed) that caused a per-tick neutralization; the residual `t=241` divergence
+  is a **feather-fall** rejection with the same coarse "all controls neutral" response.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**. Live weak-wing formula route, 1200 ticks:
+  **1 hit**.
+- **No native zero over a full fight on either loadout.**
