@@ -749,3 +749,103 @@ The objective needs the strong-wing loadout measured natively at all, which has 
 done, and needs the state machine to be delivered through `CHAITE_ROUTE_FILE` rather than
 only through the formula route. Both are concrete and unblocked, and both are prerequisites
 for the acceptance the objective asks for regardless of how the weak-wing hits are reduced.
+
+## 13. Round 52: the strong-wing loadout measured, and the real contact signature
+
+Two results this round: the strong-wing loadout's first native measurement, and a
+correction to how every previous hit was being read.
+
+### 13.1 Strong wing (Fishron Wings) measured natively for the first time
+
+`-FormulaRoute fishron-strong-wing` runs the same fight with `armor[4] = 2609`
+(Fishron Wings) instead of 761 (Fairy Wings), asserted in the run header.
+
+| property | weak (Fairy) | strong (Fishron) |
+|---|---|---|
+| `wingTimeMax` | 130 | **180** |
+| `wingsLogic` | 6 | **26** |
+| fastest measured climb | `minVy` -9.9 | **-16.5** |
+| median \|vx\| | 6.70 | **7.90** |
+| p90 \|vx\| | 12.67 | 12.97 |
+| max \|vx\| | 14.50 | 14.50 |
+| ticks at `wingTime == 0` | 56% | **63%** |
+| held runs / short (<=10) | 93 / 39 | 116 / 41 |
+| longest held run | 368 | **1109** |
+| **hits** | **8** (death, 8684 ticks) | **11** (alive at the 11000 cap) |
+| boss damage taken | 37 | 76 |
+| npc contact | 0 | 3 |
+
+The strong wing has strictly better mobility on every axis -- 38% more flight budget, more
+than double the wings logic tier, 67% faster climb, and a higher median horizontal speed --
+and it takes **more** hits, not fewer. Hit phases differ too: the weak loadout's hits are
+concentrated in `personal-space` (3) and `charge-descend` (3), while the strong loadout's
+spread across `charge-descend` (3), `charge-horizontal` (2), `charge-ascend` (2) and
+`bubble-line` (2).
+
+That is a direct measurement that **vertical mobility is not the binding constraint**, and
+it contradicts the "strong and weak wings need two different state machines because their
+vertical mobility differs" premise in an important way: the difference does not show up as
+a vertical-mobility advantage, because the failure is not vertical.
+
+### 13.2 Correction: 4.50 / -3.50 is knockback, not the player's motion
+
+Every hit in both loadouts records `|vx| = 4.50` and `vy = -3.50` at the hit tick. I had
+been reading that as the player's own speed and concluding "the player is always slower than
+the charge". Comparing the tick before each hit to the hit tick disproves it:
+
+```
+ hitTick  vx(before) vy(before) | vx(hit) vy(hit)
+    3019     0.00     -6.21   |    4.50   -3.50
+    3807    -0.24     -7.21   |    4.50   -3.50
+    8282    12.97      7.20   |   -4.50   -3.50
+    8322    12.39      2.23   |   -4.50   -3.50
+```
+
+The pre-hit value ranges from -12.4 to +13.0 and bears no relation to the post-hit value,
+which is a fixed magnitude in the direction away from the boss. So `4.50 / -3.50` is the
+**knockback the hit applies**, not the player's state. The earlier claim that the player is
+"consistently three to four times too slow at contact" was an artifact of reading a
+post-collision value, and is withdrawn.
+
+### 13.3 The real pre-hit picture
+
+Measured on the tick before each hit, across both loadouts (19 hits):
+
+| metric | value |
+|---|---|
+| pre-hit \|vx\| median | **0.87** |
+| pre-hit \|vx\| < 1.0 | **10 / 19** |
+| pre-hit \|vx\| >= 6.0 | 5 / 19 |
+| pre-hit `wingTime == 0` | **14 / 19** |
+
+```
+ tag      tick  |vx|   vy   wing
+ WEAK     3019  0.00  -6.21   130
+ WEAK     7204  0.00   1.55     0
+ WEAK     7884  0.00   3.34     0
+ STRONG   4569  0.00   3.34     0
+ STRONG   2144  0.10   3.34     0
+ STRONG   9470  0.16   2.13     0
+ WEAK     3807  0.24  -7.21   120
+ ...
+```
+
+**Ten of nineteen hits are taken from a near standstill, and fourteen of nineteen are taken
+with an empty wing budget, falling at `maxFallSpeed` (+3.34).** So the two failure modes are
+the same one: the player is caught with no horizontal speed and no flight left, in the air
+and descending. The five hits taken at speed (6.9 to 12.97) show the circuit *can* be
+travelling fast; it just is not, at the moments that decide the outcome.
+
+### 13.4 What this changes
+
+The earlier framing -- "the player arrives too slow, so pick a better direction" -- is
+retired, and with it the reason the two facade overrides in section 12 failed: they changed
+the direction of an input that was already absent or nearly absent. The measurement now
+points at **arriving at the contact with the horizontal axis already moving and the flight
+budget not empty**, which is a scheduling property of the circuit rather than a steering
+property.
+
+Note also that `wingTime == 0` on 56-63% of the fight is not by itself the bug: section 8.2
+established that the budget refills on landing. What matters is that it is empty
+*at the contact*, which means the circuit is spending the budget earlier in the cycle than
+the contact needs it.
