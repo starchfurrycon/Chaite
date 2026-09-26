@@ -2106,3 +2106,83 @@ inferred.
 - **Kept:** the refill guard and `CHAITE_REFILL_GUARD` from sections 23-24.
 - Weak wing, policy off, guard 0: **4 hits, alive at 3000-4000 ticks**, 66-84 boss damage.
 - **No native zero over a full fight on either loadout.**
+
+## 27. Round 66: section 26's "wrong sign" is withdrawn -- the latch arithmetic is correct
+
+Section 26 concluded that `LatchChargeNormal` computes a wrong normal vertical at the lock and
+that one wrong sign was worth 4 hits. This round instrumented the latch directly to check that,
+and **the conclusion does not hold**. The correction is recorded here in full, because a
+plausible mechanism that survives into the document unchallenged is worse than no mechanism.
+
+### 27.1 What the latch actually receives and computes
+
+A temporary diagnostic (since reverted) logged every latch event with its own inputs and outputs.
+The first rows of the current build, weak wing, policy off, guard 0:
+
+```
+tick  seq  px       py       bx       by      dx       dy      aimX     aimY     nX       nY      hor vert
+ 105    0  650.0   7835.7  1093.7   7625.8  -443.7  +209.9  -0.9039  +0.4276  +0.4276  +0.9039   1    1
+ 163    2  650.0   7936.7   632.6   7813.3   +17.4  +123.3  +0.1394  +0.9902  -0.9902  +0.1394  -1    0
+ 221    4  650.0   7698.0   761.0   8335.4  -111.0  -637.3  -0.1716  -0.9852  -0.9852  +0.1716  -1    0
+ 279    6  650.0   7616.4   793.0   7594.0  -143.0   +22.4  -0.9880  +0.1547  -0.1547  -0.9880   0   -1
+ 337    8  998.6   7415.4   272.1   7544.1  +726.6  -128.6  +0.9847  -0.1743  +0.1743  +0.9847   0    1
+ 515    1 2263.5   7817.3  1730.0   7686.2  +533.4  +131.1  +0.9711  +0.2386  +0.2386  -0.9711   1   -1
+ 573    3 2732.3   7523.6  2368.7   7645.3  +363.6  -121.7  +0.9483  -0.3173  -0.3173  -0.9483  -1   -1
+ 631    5 2263.5   7179.8  2856.8   7297.7  -593.4  -117.9  -0.9808  -0.1949  -0.1949  +0.9808   0    1
+```
+
+Every row satisfies the two identities the code intends: **`nX = ±aimY`** and **`nY = ∓aimX`**,
+i.e. the normal is the unit perpendicular to the lock aim, quantised at 0.2. Checked against the
+recorded `dx`, `dy`:
+
+- row 105: `aim = (-443.7, +209.9)/491 = (-0.904, +0.428)`; `nX, nY = +0.428, +0.904` ✓
+- row 279: `aim = (-143.0, +22.4)/144.7 = (-0.988, +0.155)`; `nX, nY = -0.155, -0.988` ✓
+- row 631: `aim = (-593.4, -117.9)/605 = (-0.981, -0.195)`; `nX, nY = -0.195, +0.981` ✓
+
+`dx`/`dy` themselves reproduce `player.Center - boss.Center` from the separately recorded
+absolute centres, and `PlayerSnapshot.Center` and `TargetSnapshot.Center` are both
+`Position + size * 0.5` (`Models.cs:188` and `Models.cs:487`), so there is no hidden centre
+convention.
+
+**The latch is arithmetically correct.** With the player above the boss (`aimY > 0`) it produces
+`nY > 0`, which is descend: the player should move further away downward, and running from a boss
+that is above means descending. That is the intended behaviour, not a bug.
+
+### 27.2 How section 26 went wrong
+
+Section 26 hand-computed a normal for "the lock at tick 2120" from `artifacts/game-probe-trace-script`
+and compared it with a latch value read from a **different** run's diagnostic. The two numbers
+came from different fights: the observation rows were the trace-script run (4 hits, boss damage
+84) while the latched `(1, 1)` was read when interpreting that same file, but the coordinates used
+for the hand calculation were re-read from a *third* listing whose `dy` sign was `+108` at the
+boss centre offset while the latch's own log for that lock records `dy -110.9`. The sign of `dy`
+alone flips the answer, and the two sources disagreed.
+
+The lesson is the section-24 one applied to my own analysis: **a quantity derived from one run and
+a quantity derived from another cannot be compared**, and a hand computation is a third source
+that must be tied to the same run as the value it checks. The correct method -- used in 27.1 -- is
+to have the instrument log its inputs *and* its outputs on the same line, so the identity can be
+verified self-containedly.
+
+### 27.3 What survives from section 26
+
+Unchanged and still measured:
+
+- The four hits are **boss body contact**, three of them on charge ticks (`state 1`, `ai1 0`) with
+  no hostile projectile within 200 px. That is from one dense run and stands.
+- At the failing lock the player was **above** the boss and the boss's locked velocity pointed
+  **toward** the player, and the player then held `controlDown` for the whole episode with
+  `wingTime` healthy (57). Both the direction of the latched normal and the branch's obedience to
+  it are consistent with a **descend**, which is the *correct* response to a boss below.
+- So the mechanism is **not** a wrong sign. It is that descending, by itself, fails to clear the
+  charge -- which puts the failure back on the vertical cadence question of sections 19 and 22
+  rather than on a single inverted branch.
+
+### 27.4 Status
+
+- **Withdrawn:** section 26's "the latch produced a normal the geometry does not support" and the
+  "one wrong sign is worth 4 hits" conclusion.
+- **Verified:** `LatchChargeNormal` computes the unit perpendicular to the lock aim correctly;
+  the diagnostic is reverted.
+- Weak wing, policy off, guard 0: **4-5 hits, alive at 2400-4000 ticks.**
+- **No native zero over a full fight on either loadout.**
