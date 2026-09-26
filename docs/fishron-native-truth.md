@@ -4441,3 +4441,65 @@ inspect the failing frames.
   all 1199 common ticks.
 - **Not achieved:** zero hits on either loadout over a full fight.
 - **No native zero over a full fight on either loadout.**
+
+## 57. Round 96: the charge-normal tie-break is a measured NO-OP -- the direction is not the constraint
+
+### 57.1 The experiment
+
+§56 proved algebraically that `LatchChargeNormal`'s perpendicular choice compares two dot products that are
+**identically zero**, so the sign is set by floating-point noise on an exact tie. The obvious next question
+was whether that arbitrary sign is what the remaining contacts depend on. The tie-break was flipped from
+`dotA >= dotB` to `dotA > dotB` (`FishronWingScript.cs:1173-1176`), which reverses the arbitrary choice
+wherever the tie is exact.
+
+### 57.2 The result: bit-identical outcome
+
+```
+baseline (committed), live weak wing, 3000 ticks:
+    HITS 4   boss damage 66   death False   shield rows 38   dash-active 32   npc contact 6
+    hits at ticks [950, 2146, 2278, 2668]
+
+flipped tie-break, live weak wing, 3000 ticks:
+    HITS 4   boss damage 66   death False   shield rows 38   dash-active 32   npc contact 6
+    hits at ticks [950, 2146, 2278, 2668]
+```
+
+**Every observable is identical, down to the tick of each of the four contacts.** So the arbitrary
+tie-break is a **no-op on this run**: whatever the sign does, it does not change which charges connect.
+
+### 57.3 What that rules out, and where the constraint actually is
+
+This is a valuable negative result. It rules out "the escape points the wrong way" as the binding
+constraint, and with it §56.3's proposed relative-velocity sign rule as a fix for these four contacts --
+selecting a better perpendicular cannot help if the current one is already irrelevant.
+
+The measurement points instead at **clearance versus closing speed**. Across all four contacts the player
+is a consistent ~10 px short of the 85 px needed:
+
+```
+contact  perp offset at the lock   required   player lateral speed   boss charge speed
+ 950           75 px                  85 px        13.87 px/tick        15.1 / 17.5 px/tick
+```
+
+The player's wing cruise is about **13.87 px/tick** while the locked charge travels **15.1-17.5 px/tick**,
+so the player cannot out-run the charge along its own line, and the perpendicular offset available at the
+lock is not large enough to survive the closing geometry. That is a **budget/geometry** problem, not a
+direction problem: it needs the player to hold a larger perpendicular offset **at the lock tick** (i.e. be
+further off the Boss's approach line when the charge freezes) or to preserve flight budget for the dodge
+rather than spending it on the pre-charge jump -- and §52's trace showed the pre-charge jump spends the
+weak wing's entire 30-tick budget before the lock, leaving `wingTime 10` when the dodge begins.
+
+### 57.4 Status
+
+- **Reverted:** the flipped tie-break. Tree clean apart from untracked `tmp/`; builds clean.
+- **Established by measurement:** the charge-normal tie-break direction is a **no-op** -- flipping it
+  reproduces the baseline exactly (4 hits, 66 damage, identical hit ticks 950/2146/2278/2668).
+- **Ruled out:** the escape-direction sign as the cause of the four remaining weak-wing contacts, and with
+  it §56.3's sign rule as their remedy.
+- **Now indicated:** the constraint is perpendicular clearance at the lock versus the charge's closing
+  speed (player cruise 13.87 px/tick against a 15.1-17.5 px/tick charge), coupled with the weak wing's
+  flight budget being spent by the pre-charge jump before the dodge begins.
+- **Baselines:** committed state machine, live weak wing, 3000 ticks: **4 hits / 66 damage / no death /
+  6 npc contacts**. Live weak-wing route replay is tick-identical to its source over 1199 common ticks.
+- **Not achieved:** zero hits on either loadout over a full fight.
+- **No native zero over a full fight on either loadout.**
