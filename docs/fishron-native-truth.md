@@ -6521,3 +6521,75 @@ dead rather than to that search.
   `6000 / 8 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 86. Round 125: KEPT -- widening the turnaround margin takes the strong wing to 2 hits and the weak wing to survival
+
+### 86.1 Why the clearance-based form could never work
+
+`ReadArena` computes `ClearanceLeft = ScanHorizontal(...) * 16f` with `maxHorizontal = 150`
+(`TerrariaFacade.cs:2657-2665`), and `ScanHorizontal` (`:2780-2791`) returns a tile count **capped at 150**, so
+`ClearanceLeft` **saturates at 2400.0** everywhere in the arena interior. §85's `<= 220` test could therefore
+only ever fire within 220 px of a tile the scan recognizes as *full solid*.
+
+That is not the obstruction. `min x` over the fight is exactly **640.0** while the world's own left edge is
+tile 1 (`x = 16`), so the scan reports that position as open air. Whatever stops the player at 640 is
+invisible to the tile scan, which is why §85's branch was bit-exactly dead.
+
+### 86.2 The fix: move the turnaround, do not detect the wall
+
+`ApplyArena`'s band guard is kept, but the turnaround is now placed `PinnedWallMargin = 640f` **inside** the
+band edge:
+
+```csharp
+var atLeftWall  = x <= _bandLeft + PinnedWallMargin;    // 276 + 640 = 916
+var atRightWall = x >= _bandRight - PinnedWallMargin;
+```
+
+This moves the turn to `x = 916`, clear of the 640 trap, and leaves a **4920 px** corridor. No clearance
+measurement is involved, so the saturation problem cannot recur.
+
+### 86.3 Result: both loadouts now survive the cap
+
+```
+                          §83 baseline        margin 640          margin 900
+strong  ticks/hits/death/contacts   6000/8/FALSE/5    6000/2/FALSE/3     6000/8/FALSE/9
+weak    ticks/hits/death/contacts   4598/8/TRUE/3     6000/4/FALSE/5      (not run)
+```
+
+**This is the largest single improvement of the session.** The strong wing goes from 8 hits to **2**, and the
+weak wing -- which previously **died at tick 4598 and never reached the cap** -- now **survives all 6000 ticks**
+with 4 hits. All four projectile hits in the strong wing are gone as well.
+
+`margin 900` is a clear **regression** (2 → 8 hits, contacts 3 → 9): a larger margin moves the turnaround
+further and thereby shifts the whole W cycle against the Boss's attack clock, exactly the timing §78 records as
+expensive. The optimum is therefore local and near 640, and larger values must not be assumed better.
+
+### 86.4 The two remaining strong-wing hits
+
+Both are at the floor level (y ≈ 7822 and 7939) and are **co-location failures with the escape starting too
+late**:
+
+```
+  hit at 2487   dy -11.2 -> -14.6 -> -21.9 -> -29.6 -> -35.7 -> -40.2 (hit)
+  hit at 2562   dy +39.6 -> +23.9 -> + 8.1 ->  -7.7 -> -28.9 -> -51.7 (hit)
+```
+
+At 2487 the player is moving at `vx -13.57` (dashing) with `dy` only -11.2 when the charge locks, and it takes
+the entire charge for `dy` to reach only 40.2 against the 71 threshold. At 2562 the player is on the floor
+(y = 7958) with `vy = 0.00` and moves at only `vx -2.7 .. -0.8` while `dy` sweeps from +39.6 through -7.7. In
+both cases the escape is **directionally right and rate-limited**, not mis-aimed.
+
+### 86.5 Status
+
+- **KEPT** in `src/Chaite.Core/FishronWingScript.cs` (`PinnedWallMargin = 640f`); source valid UTF-8; builds
+  clean; verified fresh DLL.
+- **Measured (strong, cap 6000):** `6000 / 2 hits / death FALSE / 3 contacts`, from `6000 / 8 / FALSE / 5`.
+- **Measured (weak, cap 6000):** `6000 / 4 hits / death FALSE / 5 contacts`, from `4598 / 8 / TRUE / 3` --
+  **the weak wing now survives the cap for the first time**, which §65 requires of any acceptance.
+- **Measured:** margin 900 regresses the strong wing to `6000 / 8 / FALSE / 9`.
+- **Established:** `ClearanceLeft` saturates at 2400.0 (`maxHorizontal = 150`), which is why §85's branch was
+  dead; the `x = 640` obstruction is invisible to the tile scan.
+- **Twelve interventions attempted; two (§83, this) improve the fight.** The best achieved is the strong wing
+  at `6000 / 2 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.

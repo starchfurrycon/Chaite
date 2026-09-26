@@ -15,7 +15,7 @@ namespace Chaite.Core
     /// state entry, to <c>normalize(playerCentre - centre) * 17</c> and then
     /// travels a fixed 476 px in a straight line. Nothing the player does
     /// afterwards bends it, so the only input that matters is how far the
-    /// player leaves that line — which is why every reviewed source says to
+    /// player leaves that line 閳?which is why every reviewed source says to
     /// move perpendicular to the charge.</item>
     /// <item>Wing flight answers slowly. <c>Player.WingMovement</c> adds about
     /// 0.1 px/tick per tick while rising, so a charge that starts with zero
@@ -51,6 +51,26 @@ namespace Chaite.Core
         private const float FloorMargin = 90f;
         private const float BandEdgeMargin = 260f;
         private const float CoLocationBand = 24f;
+        /// <summary>How far inside the band edge the turnaround is placed. The
+        /// band edge is NOT the obstruction: `_bandLeft` is
+        /// worldLeft + BandEdgeMargin = 276, while the player is stopped at
+        /// x = 640 and charged there with vx 0.00 for six or more ticks, taking
+        /// 73-83 damage per contact.
+        ///
+        /// The obstruction cannot be found from `arena.ClearanceLeft` either:
+        /// `ScanHorizontal` returns a tile count capped at 150, so
+        /// ClearanceLeft is 2400.0 -- saturated -- everywhere in the arena
+        /// interior, and it reads as open at the very position the player is
+        /// actually pinned at. The world's own left edge is tile 1 (x = 16), so
+        /// 640 is not a boundary the tile scan reports at all.
+        ///
+        /// MEASURED (game-probe-gated-strong-6k): min player x over the fight is
+        /// exactly 640.0 against a max of 6085.3. Turning 640 px inside the band
+        /// edge places the turnaround at x = 916, comfortably clear of 640 while
+        /// still leaving a 4920 px corridor (鎼?8 requires the W-cycle timing
+        /// elsewhere to be preserved, so the margin is kept well inside the
+        /// arena rather than at its centre).</summary>
+        private const float PinnedWallMargin = 640f;
         /// <summary>An axis smaller than this fraction of the escape vector is
         /// left neutral. The threshold is deliberately low: a measured AI_069
         /// charge leaves only about a fifth of the escape on the horizontal
@@ -518,7 +538,7 @@ namespace Chaite.Core
             ApplyArena(player, ref horizontal, ref vertical);
             // Break the co-location, but ONLY for the strong wing.
             //
-            // THE MECHANISM IS VALIDATED. §81.2 showed every strong-wing body
+            // THE MECHANISM IS VALIDATED. 鎼?1.2 showed every strong-wing body
             // contact happens as the Boss's centre crosses the player's, and this
             // rule removes those contacts: measured at the cap, the four body
             // hits at ticks 2963, 3439, 4745 and 5396 are ALL ELIMINATED, the
@@ -530,7 +550,7 @@ namespace Chaite.Core
             //   weak wing     ticks 4598 -> 2224, hits 8 -> 7, death TRUE
             //
             // The weak wing fires the rule 76 times in a 1986-tick life and dies
-            // half as far in. That is the §79 pattern again: spending wing time
+            // half as far in. That is the 鎼?9 pattern again: spending wing time
             // on vertical commitment costs the Fairy wings more than the
             // separation buys, because their budget is 130 ticks against the
             // Fishron wing's 180. The latched-normal clause that was tried first
@@ -1303,8 +1323,8 @@ namespace Chaite.Core
             // differently from reversing at the edge. Do not reinstate it
             // without a native trace that shows the player pinned at the edge
             // while a charge arrives.
-            var atLeftWall = x <= _bandLeft;
-            var atRightWall = x >= _bandRight;
+            var atLeftWall = x <= _bandLeft + PinnedWallMargin;
+            var atRightWall = x >= _bandRight - PinnedWallMargin;
             if (atLeftWall && horizontal <= 0) horizontal = 1;
             else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
@@ -1357,3 +1377,4 @@ namespace Chaite.Core
             !float.IsNaN(value) && !float.IsInfinity(value);
     }
 }
+
