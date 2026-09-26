@@ -1298,3 +1298,99 @@ blame and no missing platform.
 - The pinned figures are unchanged: weak wing 8684 ticks / 8 hits / 37 damage / death; strong
   wing 11000 ticks / 11 hits / 76 damage / alive at the cap. **No native zero on either
   loadout.**
+
+## 19. Round 58: the budget cycle, measured end to end
+
+Section 18 left one thing unclear: whether the player ever lands once the boss is engaged, or
+whether the 23 refills all belong to the opening. This round settled it, and the answer
+reframes the problem.
+
+### 19.1 Landings do happen during the fight
+
+All 17 landings, with the boss's own state and life at that tick:
+
+```
+ tick   bossState  bossLife  phase
+  240       -1       78000   standoff
+  758        1       78000   charge-horizontal
+  983        0       78000   precharge-jump
+ 1117        3       78000   sharknado-exit
+ 1486        2       78000   bubble-line
+ 1930        3       78000   tornado-clear
+ 3014        1       78000   charge-horizontal
+ 3781        1       78000   charge-descend
+ 4216        0       77999   charge-horizontal
+ 4568        1       77999   charge-descend
+ 5012        0       77999   tornado-clear
+ 5619        2       77999   bubble-line
+ 5896        0       77981   tornado-clear
+ 6318        0       77981   precharge-jump
+ 6680        1       77981   charge-horizontal
+ 7365        0       77981   standoff
+ 7926        0       77963   precharge-jump
+```
+
+Only tick 240 is pre-engagement (`bossState -1`). All 16 others happen with the boss alive and
+fighting, and every one refilled `wingTime` to 130. Landing works throughout the fight.
+
+### 19.2 The landings are 940 px apart, and the budget is 121 percent of that
+
+The touchdown heights are exactly the arena's three surfaces, 960 px apart:
+`Y 7952` (ground), `6992` (platform row 60), `6032` (platform row 120). Consecutive landings
+are about **350 ticks** apart, and the pattern is fully regular:
+
+- all 17 landings touch down at the same three heights,
+- `wingTime` is 130 on every landing and reaches 0 about **130 ticks** later,
+- the remaining ~220 ticks of each cycle are spent descending from one surface to the next,
+- every airborne run starts at `wingTime 130` and ends at `wingTime 0`.
+
+So the cycle is: **land, refill to 130, spend all 130 in the air, fall, land.** Measured
+per-tick drain while both `controlJump` and `controlDown` are held is **0.48**, and those two
+are held together on **5886 of 8351 airborne ticks (70.5 percent)** -- the wings stay deployed
+while the player descends, which is what halves the drain rate.
+
+The decisive number is the ratio: descents average **350 ticks** and one full budget is **130
+ticks**, so the budget covers only **121 percent** of the usable cycle. It is exhausted just
+before every landing rather than just after, which is why `wingTime == 0` on 58 percent of the
+fight. The circuit is not wasting the budget and it is not failing to land; **the arena's
+vertical spacing is marginally larger than one wing charge, and the descent is flown rather
+than fallen.**
+
+### 19.3 Two candidate fixes were tested and both were null
+
+Both were reverted, because neither changed any measured value by even one bit:
+
+1. **Free-fall descent.** All five "jump on takeoff, descend once airborne" sites
+   (`vertical = player.OnGround ? -1 : 1`) were changed so the airborne half is a true descent
+   (`0`). Instrumented with `CHAITE_FALL_TRACE`, the sharknado-exit branch was reached 66 times
+   in 3000 ticks, 61 of them airborne -- but every one of those had `wingTime` 90 or 120, so
+   that branch is not where the budget is spent. The full run was byte-identical: 8684 ticks,
+   8 hits, 37 damage, death.
+2. **Proactive refill descent** (section 18.3) had already been null.
+
+The reason the descent is not the lever is now visible in the numbers: `controlDown` is held on
+7061 of 8351 airborne ticks, so the player is already descending; the descent is simply
+**slow**, and the budget is spent on keeping the wings open during it.
+
+### 19.4 What this means for the next round
+
+The binding quantity is not "land more often" -- the player already lands every 350 ticks and
+refills fully. It is either
+
+- **descend faster than the wings make it**, so the ~220-tick descent shrinks toward the 130
+  that remain after the budget runs out, or
+- **spend less than 130 in the air**, so a reserve survives to the next landing and the cycle
+  stops oscillating between full and empty.
+
+Both are one-parameter changes to the vertical policy during descent, and both need the actual
+`controlJump` state during a measured descent to be pinned first, because the two null results
+above show that changing `output.Vertical` in this circuit does not necessarily change what the
+player receives. **That discrepancy -- `output.Vertical` versus applied `controlJump` -- is the
+next thing to measure**, exactly as section 16 did for the horizontal axis.
+
+### 19.5 Standing result
+
+Unchanged and not to be overstated: weak wing 8684 ticks / **8 hits** / 37 damage / death;
+strong wing 11000 ticks / **11 hits** / 76 damage / alive at the cap. A separate 3000-tick run
+again reported `HITS 0` while also reporting `boss damage 0` and the boss at full life, so it is
+not a zero-hit result. **No native zero on either loadout.**
