@@ -5759,3 +5759,82 @@ function of the attack sequence rather than something to be discovered online.
   consistent with all six local during-charge interventions failing.
 - **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 75. Round 114: a hard, measured separation threshold separates every hit from every miss
+
+### 75.1 The measurement
+
+All 48 charge episodes of the dense baseline run were extracted (contiguous runs of `ai[0] == 1`), and for
+each one the Boss-player centre distance was tracked for 45 ticks from the lock, recording the **minimum**
+reached. The perpendicular offset from the charge line was also tracked.
+
+```
+perpendicular offset from the charge line, minimum over each episode:
+   misses: min 0  median 0  max 0   (n=40)
+   hits  : min 0  median 0  max 0   (n=8)
+```
+
+**Every single episode has a minimum perpendicular offset of exactly 0.** The locked charge line passes
+through the player's centre in all 48 cases, confirming §74.1 -- there is no such thing as being "off the
+line" when a charge locks. **The only variable is how far the player gets, along the line's normal, before the
+Boss body arrives.**
+
+Minimum centre distance per episode:
+
+```
+MISSES (40)                       HITS (8)
+  lock 345   minDist 112            lock 871   minDist  74
+  lock 929   minDist 151            lock 3781  minDist  86
+  lock 403   minDist 179            lock 4191  minDist   7
+  lock 3665  minDist 224            lock 4075  minDist  20
+  lock 2237  minDist 237            lock 4133  minDist   7
+  lock 1643  minDist 257            lock 3897  minDist  56
+  lock 461   minDist 286            lock 3245  minDist  91
+  lock 3009  minDist 292            lock 2415  minDist  38
+  lock 1759  minDist 297
+  lock 3419  minDist 332
+  lock 755   minDist 349
+  ... (all remaining misses >= 112)
+
+            worst miss   = 112        worst hit = 91
+```
+
+**There is a clean gap: every hit has `minDist <= 91`, and every miss has `minDist >= 112`.** No charge above
+~100 px of minimum centre separation ever connects, and none below ~91 px ever misses. That is a
+**hard, measured evasion threshold** -- the sharpest result of this investigation, and it is consistent with
+the native hitboxes (Boss half-width 85 plus player half-width 10 gives 95).
+
+### 75.2 Why this reframes the remaining work
+
+The objective reduces to a single quantified requirement:
+
+> **Drive the minimum Boss-player centre distance above ~100 px on every one of the ~48 charges of a full
+> fight.**
+
+Nothing else matters -- not hit count, not boss damage (the boss is not killed and need not be, §73.1), not
+which phase. And because the threshold is a property of the **trajectory**, not of any input, it also explains
+why six local input-rule changes all failed and why two of them traded fewer hits for far more damage (§72.3):
+each changed *which* charges fell below 100 px rather than lifting all of them above it.
+
+The pre-charge positioning conclusion of §74.2 now has a concrete target: at the lock the separation is
+**0**, so the player must generate >= 100 px of normal-direction travel inside a ~28-tick charge (episode
+lengths measured at 28 ticks). At the wing's ~9.9 px/tick vertical and ~14.5 px/tick horizontal authority
+(§61.1) that is **reachable but requires the escape to run at near-maximum rate from the first tick of the
+charge** -- which is exactly when the wing is gated off (§72.1). The two measurements together identify the
+mechanism of failure with no remaining ambiguity:
+
+- separation must be built from 0 to >= 100 px in ~28 ticks (~3.6 px/tick sustained), and
+- the wing is unavailable on 58% of charge ticks (§71.2), so the sustained rate is not delivered.
+
+### 75.3 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean; the
+  §64 velocity-normal fix (`a46bca3`) is intact.
+- **Measured:** all 48 charge episodes have minimum perpendicular offset exactly 0 -- the locked line always
+  passes through the player's centre. **Every hit has minimum centre distance <= 91 px and every miss
+  >= 112 px**: a clean separation with no overlap.
+- **Reduced the objective to one quantified requirement:** hold minimum Boss-player centre distance above
+  ~100 px on every charge of a full fight.
+- **Explains:** all six failed local interventions, and why two of them traded hit count for damage.
+- **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
+  incomplete**, and no native zero is claimed.
