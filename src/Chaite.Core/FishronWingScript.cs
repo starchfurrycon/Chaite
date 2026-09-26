@@ -1169,11 +1169,34 @@ namespace Chaite.Core
             var normalAY = aimX;
             var normalBX = aimY;
             var normalBY = -aimX;
-            // Prefer the one that takes the player further off the locked line.
-            var dotA = normalAX * dx + normalAY * dy;
-            var dotB = normalBX * dx + normalBY * dy;
-            var normalX = dotA >= dotB ? normalAX : normalBX;
-            var normalY = dotA >= dotB ? normalAY : normalBY;
+            // Prefer the perpendicular the player is ALREADY travelling along.
+            //
+            // This used to compare `dotA` and `dotB` of the offset onto the two
+            // normals, but the offset is parallel to the aim by construction, so
+            // both dot products are identically zero (measured: dx=339 dy=-179
+            // gives dotA=-0.0, dotB=0.0) and the sign was decided by
+            // floating-point noise on an exact tie. It therefore always picked
+            // normal A. Flipping the tie-break was measured to be a total no-op
+            // (identical hit ticks), which is the signature of an arbitrary
+            // choice rather than a decision.
+            //
+            // MEASURED (dense live weak-wing run, the tick-950 contact): with
+            // normal A latched the script commanded vertical=+1 (plan.Drop=true,
+            // controlDown=true, controlJump=false) for the whole charge, so the
+            // wing was gated off and vy decayed ballistically at exactly
+            // gravity*3 = +0.40 per tick (-2.46 ... +0.34). The player needed to
+            // leave the line UPWARD; the arbitrary normal sent it DOWN.
+            //
+            // Projecting the player's velocity onto the two normals is the
+            // deliberate version of the question the old code was trying to ask:
+            // the escape should be the direction that takes the player off the
+            // locked line fastest, which is the one it is already moving along.
+            // This is idempotent -- it reads state, it does not compare two
+            // constants -- so it cannot be flipped by noise.
+            var rateA = normalAX * player.Velocity.X + normalAY * player.Velocity.Y;
+            var rateB = normalBX * player.Velocity.X + normalBY * player.Velocity.Y;
+            var normalX = rateA >= rateB ? normalAX : normalBX;
+            var normalY = rateA >= rateB ? normalAY : normalBY;
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);
             _chargeNormalVertical = Math.Abs(normalY) < 0.2f ? 0 : (normalY > 0f ? 1 : -1);
         }

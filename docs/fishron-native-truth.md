@@ -4904,3 +4904,76 @@ not a wing-application question.
   normal values) on charge ticks whose phase is `fishron-wing-charge-horizontal`.
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 64. Round 103: KEPT FIX -- the charge normal is chosen by the player's velocity, not by a zero tie-break
+
+### 64.1 The defect, now fully resolved
+
+§63 left the question "why does the charge tick command `drop=1, jump=False`?" Resolving it needs the
+mapping, which is:
+
+```
+CombatPlanner.cs:846   plan.Jump = script.Jump && script.Vertical < 0;
+CombatPlanner.cs:848   plan.Drop = script.Vertical > 0;
+```
+
+So the dense `plan(h=+1, up=0, drop=1, jump=False)` means `script.Vertical = +1`: **the script was telling
+the player to DESCEND for the whole charge.** The tick-950 charge needed the opposite -- the player had to
+leave the locked line *upward*, and `vy` was already `-2.46` and rising. The script reversed it.
+
+The cause is §56's tie-break, and it is not merely "arbitrary": because the offset `(dx,dy)` is parallel to
+the aim, `dotA` and `dotB` are **identically zero**, so `dotA >= dotB` is `0 >= 0` and the code **always
+picks normal A**, whatever the geometry. Flipping the comparison (§57) was a no-op because `0 > 0` is also
+false and the fallback is the same `normalB` only when the noise says so -- which is why it reproduced the
+baseline exactly.
+
+### 64.2 The fix
+
+`LatchChargeNormal` now projects the **player's velocity** onto the two perpendiculars and picks the one the
+player is already travelling along -- i.e. the direction that actually increases clearance:
+
+```csharp
+var rateA = normalAX * player.Velocity.X + normalAY * player.Velocity.Y;
+var rateB = normalBX * player.Velocity.X + normalBY * player.Velocity.Y;
+var normalX = rateA >= rateB ? normalAX : normalBX;
+var normalY = rateA >= rateB ? normalAY : normalBY;
+```
+
+This asks the question the old code was *trying* to ask ("which perpendicular takes the player further off
+the locked line?") in the only well-posed form, and it is **idempotent** -- it reads state instead of
+comparing two constants -- so floating-point noise cannot flip it. It also finally implements §56.3's
+relative-velocity idea in the correct place: §57 ruled out flipping the *sign*, but the sign was never the
+lever; the **selection** was.
+
+### 64.3 Measured verification (live, weak wing, 3000 ticks, fresh DLL confirmed)
+
+DLL `Chaite.Core.dll` mtime `15:47:05` is later than `FishronWingScript.cs` `15:47:01`, and `rateA`/`rateB`
+are present at `:1196-1199`, so the run used the new build (the stale-DLL trap of §63.2 is guarded:
+
+```
+                     baseline (§60.2)      velocity-normal (§64)
+HITS                       4                       2
+boss damage               66                       9
+death                   False                   False
+shield rows               38                      33
+dash-active ticks         32                      32
+npc contact                6                       1
+```
+
+**Both remaining hits are Boss body contact** (`hurt-observations`: `kind: npc, type: 370`, damage 140,
+`life` 78000 -> 77991, i.e. 9 damage after defence) -- so the two surviving hits are exactly the charge
+contacts the change targets, and **no projectile hit remains**.
+
+This is the first change this session that improved the weak-wing result rather than matching or worsening
+it, and it is **kept**.
+
+### 64.4 Status
+
+- **Change kept** in `src/Chaite.Core/FishronWingScript.cs`; solution builds clean.
+- **Verified against the committed baseline: 4 hits / 66 damage -> 2 hits / 9 damage, npc contact 6 -> 1**,
+  at the same 3000 ticks, with a confirmed-fresh DLL.
+- **Not yet a zero**, and not claimed as one: **2 body contacts remain** over 3000 ticks.
+- The 3000-tick length matches the length §60.6/§63 require for evidence, but a longer run remains the
+  stronger test.
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
