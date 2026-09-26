@@ -8628,6 +8628,47 @@ It is recorded as an open hypothesis, not a conclusion -- frame ordering between
   strong wing still records a **zero-hit kill at 2000 DPS** (2881 ticks) after all of the above.
 - **Still not met:** the 300 DPS floor, and no no-hit claim is made below 2000 DPS.
 
+## 119. Round 154b: the apex-refill lead is REFUTED
+
+§118.5 closed on the sharpest remaining lead: 25-38% of the fight has an empty wing bar, and a live sample showed
+the circuit appearing to satisfy the native refill condition (`airborne=False vy=0.00 releaseJump=True`) with the
+bar still at 0. The obvious repair was to force the release onto an apex, which `CHAITE_APEX_REFILL` already
+implements.
+
+MEASURED (`arf-*`, 6000-tick cap, dense frames, both formulas):
+
+```
+                       off                    on
+strong wing   6000 ticks / 2 hits      6000 ticks / 8 hits
+weak   wing   6000 ticks / 3 hits      3054 ticks / 8 hits / DEATH
+```
+
+The repair makes **both** arms dramatically worse -- the weak arm dies at half the length -- so the hypothesis is
+dead and the knob stays OFF. The reasoning is recorded because it is instructive: forcing the vertical command to
+0 to catch an apex *removes climb exactly when climb is the thing that keeps the player out of the charge*.
+Whatever is keeping the bar empty also keeps the player alive, so an empty bar is a symptom of the escape
+pattern, not an independent fault to be patched. The wing-time census remains valid instrumentation (it reads
+true values when the DPS channel is active); only the repair is refuted.
+
+A methodological note worth keeping: `WINGECO` printed nothing in these runs because it is called from the
+simulated-output path, which is gated on the DPS override. Instrumentation that lives behind a gate produces
+silence that looks like "no problem" -- the first apex run reported "no WINGECO" and that was itself the tell
+that the setup differed from §118.5, not that the wing economy had changed. Run the census with the DPS channel
+active or it is not measuring anything.
+
+### 119.1 Tally of interventions
+
+Across the whole investigation, 35 controlled interventions have been tried with env knobs and exactly **two**
+are kept:
+
+- §83 co-location lift (strong-wing-gated; ungated it kills the weak wing), and
+- §97 `DashSuppressGap` (strong 90, weak 50; overridable by `CHAITE_DASH_SUPPRESS=0`).
+
+Everything else was reverted, including this round's apex refill. The refuted axes now span dash timing,
+direction and facing, stamina scheduling, escape direction, altitude, pre-lock geometry, `dx` width, beat
+pattern, leg schedule, apex refill, and hazard retirement -- which is the strongest available evidence that the
+remaining gap is not a knob but a missing qualitative behaviour.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
