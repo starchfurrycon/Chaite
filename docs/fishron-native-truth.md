@@ -8306,11 +8306,102 @@ Both start at the left (tile 21). The strong wing turns around often enough to s
 
 It is a **consequence**, not a cause that can be edited directly: the same script drives both, and the divergence comes from the weak wing's smaller `wingTimeMax` (130 against 180), which changes how often the refill and turnaround branches win. A rule cannot simply "turn around more" -- §111.2 measured that pinning `horizontal` in the pre-charge window is fatal on both arms, and §78 measured that desynchronising the turnaround costs more than the separation buys. Recorded as a characterisation, not a lever.
 
-### 115.3 Status
+### 115.3 The weak wing's vulnerable window opens when it finishes its opening crossing
+
+Sampling player X every 200 ticks locates the window in space and time:
+
+```
+  tick   playerX
+   200     650.0      <- start, left edge
+   600    2427.6
+   1000   4555.3
+   1200   5378.7      <- has crossed to the right
+   1400   5592.1
+   1600   5422.8      <- hit window open
+   1800   5537.1      <- t=1782 hit, the last one
+   2000   4711.5      <- already leaving
+   2400   3491.5
+   3200   5593.6      <- back to the right, and NOT hit
+   5400   5495.2      <- still there, and NOT hit
+   5800   5595.3
+```
+
+The weak wing covers 650 -> 5379 in the first 1200 ticks and all three hits fall in the following 600, while it dwells in the band X 5280-5600. So the window is not merely "early": it opens **when the opening crossing completes**, and closes 1782 ticks in even though the player returns to the same band at 3200 and stays near it for the rest of the fight without being hit again.
+
+That rules out the side bias as the operative variable -- the player is in that same band for thousands of later ticks with zero hits -- and it is consistent with §113.2's mechanism instead: the window is where the charge geometry, the 10-tick deferral and the weak wing's 3.16/tick deficit line up, not simply where the player happens to stand.
+
+### 115.4 Status
 
 - **Established:** no hit on either loadout is an arena-edge trap -- the furthest-right hit has ~850 px of room to its right -- and all five hits occur at `dx` between 8.2 and 79.9, i.e. they are the same close-pass body contact.
 - **Established:** the weak wing spends 61% of the fight in its right third against the strong wing's 25%, with both starting from the left. This is a **consequence** of the smaller `wingTimeMax` (130 vs 180), not an independently editable lever.
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3, re-verified through `tools/verify-fishron-routes.ps1`. The objective remains **active and incomplete**, and no native zero is claimed.
+
+## 116. Round 152: the loadout is correct -- the weapon was never firing, and the DPS requirement was never measurable
+
+### 116.1 The gear was verified from the ENGINE, not from the item list
+
+The owner asked whether the two loadouts are complete sets and whether the missing pieces explain the hits. Both
+questions are now answered by measurement. The static equipment report was **lying by construction**: it is written
+before the loadout is applied, so it showed `statDefense 0`, `wingsLogic 0`, `wingTimeMax 0`, `lifeMax 100` -- base
+values -- while the fight itself runs at 403 life and 63 defense. Reading the live per-frame log instead:
+
+```
+FRAME ... life=403 ... defense=63 ... armor=3990
+      ... weapon=1929 useTime=4 useAnimation=4 autoReuse=True ammo=9999 selected=0
+      ... wingTime=180 wingMax=180 wings=26 wingsLogic=26
+```
+
+Interpreting the ids (`ItemID`): `1547` Shroomite Mask, `1549` Shroomite Breastplate, `1550` Shroomite Leggings,
+`3990` Amphibian Boots, `2609` Fishron Wings, **`0`**, `860` Ranger Emblem, `491` Charm of Myths, `3097` Shield of
+Cthulhu, `0`. So the player is wearing a **complete Shroomite armour set** plus Amphibian Boots, the Shield of
+Cthulhu, featherfall (buff 8, confirmed in `buffTypes`) and the Chain Gun with 9999 Ichor Bullets.
+
+**Therefore the two loadouts already differ only by the wing**, exactly as the owner specified -- `2609`
+(Fishron Wings) versus `761` (Fairy Wings) in slot 4, identical everywhere else -- and the measured vertical
+asymmetry (`wingTimeMax` 180 vs 130, `wingsLogic` 26 vs 6) is a genuine property of those two wings, not a missing
+accessory. The earlier "you only added the wing" concern is the **opposite** of what is wrong here: the wing
+difference is correct and intended, and nothing is missing.
+
+### 116.2 The real defect: the player never shoots
+
+The owner's note that the earlier work "只模拟了走位没有模拟武器开火" is confirmed at the code level. In
+`TerrariaFacade.ApplyPlan` the fire decision is derived **entirely** from `plan.Fire`:
+
+```
+fire = WeaponActionGate.ShouldFire(...) / ShouldFireExact(...)
+SetControl(player, "controlUseItem", readyToEmit && ... )
+```
+
+A replayed route carries no fire column, so `plan.Fire` is never true and `controlUseItem` is never raised. An
+opt-in `CHAITE_AUTO_FIRE=1` was added to raise that same native use-item edge while a target is visible. With it
+on, projectiles DO appear (`shots=3`, `weapon=1929` Chain Gun) -- but the boss still takes no new damage:
+`18` at 3000 ticks against `11` without, i.e. the residual is the Inferno potion's OnFire, about 0.4 DPS.
+
+### 116.3 Why this matters more than a missing feature
+
+**The owner's acceptance requirement -- stable survival and a kill at DPS 300-2000 -- has never been measurable in
+this fixture**, because no acceptance run ever fired the weapon. Every DPS-adjacent number in this document was
+produced with the gun silent. Reaching the owner's criterion needs two things, in this order:
+
+1. an emit path that is actually admitted by the native use-item gate (the pulse is reaching
+   `controlUseItem`, since `shots` rises, so the remaining gap is in the projectile/hit path), and
+2. a tick budget large enough for a kill: Duke Fishron has **78000** life in expert mode, so even 1000 DPS needs
+   78 seconds of contact, i.e. **about 4680 ticks of perfect uptime**, and 6000 ticks is a thin margin once
+   movement is included. The 6000-tick cap is fine for survival but is a poor cap for a timed kill.
+
+### 116.4 Status
+
+- **Established:** the two loadouts are already complete sets differing only in the wing, verified from live
+  engine values (`defense=63`, `life=403`, `wingsLogic` 26 vs 6, `wingTimeMax` 180 vs 130), with Amphibian Boots,
+  Shield of Cthulhu, featherfall, Ranger Emblem and Charm of Myths present on both.
+- **Established, and a defect in this fixture rather than in the circuit:** the player never fired a weapon in any
+  acceptance run. `CHAITE_AUTO_FIRE=1` now produces projectiles, but they add no boss damage, so the DPS
+  requirement (300-2000) remains **unmeasurable**, not merely unmet.
+- **Established:** the static equipment report is captured before the loadout is applied and reports base stats;
+  only the per-frame log shows what is worn. Any future gear audit must read the log, not the report.
+- **Unchanged:** movement-only acceptance -- strong `6000 / 2 hits / no death`, weak `6000 / 3 hits / no death`.
+- **Not achieved:** `hits == 0` at the 6000-tick cap, and no kill at any DPS. The objective remains **active and
+  incomplete**, and no native zero is claimed.
 
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 

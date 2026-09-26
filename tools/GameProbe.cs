@@ -3132,6 +3132,9 @@ public static class ChaiteGameProbe
         }
         var armor=new int[10];
         for(int i=0;i<armor.Length;i++) armor[i]=player.armor[i].type;
+        var buffTypes=new List<int>();
+        for(int i=0;i<player.buffType.Length;i++)
+            if(player.buffType[i]>0) buffTypes.Add(player.buffType[i]);
         equipmentReport=new Dictionary<string,object>
         {
             {"label",scenario.Equipment},{"tier",scenario.EquipmentTier},{"life",scenario.MaxLife},{"mana",200},{"armorAndAccessories",armor},
@@ -3152,6 +3155,19 @@ public static class ChaiteGameProbe
                 }},
             {"healingType",player.inventory[10].type},{"healingCount",player.inventory[10].stack},
             {"grappleType",player.miscEquips[4].type},{"consumablesReplenished",false},
+            // The effective defense the ENGINE computed, next to the raw slot
+            // list. An empty armor slot 0-2 still shows here as the base value,
+            // so the two fields together say what the player was really wearing.
+            {"statDefense",player.statDefense},
+            // The movement values the wing/boot/potion combination actually
+            // produced. These are read back from the engine rather than assumed
+            // from the item ids, because a slot that was never filled silently
+            // keeps its default and the id list alone cannot show that.
+            {"wingTimeMax",player.wingTimeMax},{"wingsLogic",player.wingsLogic},
+            {"accRunSpeed",player.accRunSpeed},{"maxRunSpeed",player.maxRunSpeed},
+            {"maxFallSpeed",player.maxFallSpeed},{"dashType",player.dashType},
+            {"lifeMax",player.statLifeMax2},
+            {"buffTypes",buffTypes},
             {"legacyBaseline",scenario.Legacy}
         };
     }

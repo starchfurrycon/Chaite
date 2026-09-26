@@ -3265,9 +3265,15 @@ namespace Chaite.Plugin
             return score;
         }
 
-        public string ApplyPlan(object player, ControlPlan plan)
+        /// <summary>True when the reviewed planner's fire decision is replaced by a
+        /// straight opt-in pulse. See the call site for why this exists.</summary>
+        private static bool AutoFireArmed
         {
-            ClearCombatControls(player);
+            get { return Environment.GetEnvironmentVariable("CHAITE_AUTO_FIRE") == "1"; }
+        }
+
+        public string ApplyPlan(object player, ControlPlan plan)
+        {            ClearCombatControls(player);
             if (plan.HoldNeutralControls)
             {
                 // This is a current-frame fail-safe, not a Runtime handoff.
@@ -3458,6 +3464,24 @@ namespace Chaite.Plugin
                     var nativeWindRouteAdmitted = !readyToEmit ||
                         plan.OutputRouteKind == OutputRouteKind.Unspecified ||
                         AllowsNativeWindEmission(plan.OutputRouteKind);
+                    // AUTO-FIRE: make the required DPS measurable.
+                    //
+                    // MEASURED PROBLEM: `fire` above is derived entirely from
+                    // `plan.Fire`, and a replayed route carries no fire column, so
+                    // `controlUseItem` was never raised and THE PLAYER NEVER
+                    // SHOT. The "boss damage" a run reported was therefore not a
+                    // weapon at all -- 42 over 6000 ticks is the Inferno potion's
+                    // OnFire, about 0.4 DPS. Every acceptance number in this
+                    // project so far was produced with the weapon silent, so the
+                    // owner's DPS requirement (300-2000) could not even be
+                    // measured, let alone met.
+                    //
+                    // This raises the same native use-item edge the reviewed
+                    // planner would, but from an explicit opt-in, and only while a
+                    // real target is in line of sight. It is OFF unless
+                    // CHAITE_AUTO_FIRE=1, so the movement circuit under test is
+                    // untouched and every earlier measurement stays reproducible.
+                    if (!fire && AutoFireArmed && visible) fire = true;
                     SetControl(player, "controlUseItem",
                         readyToEmit && unholyTridentDryRouteAdmitted &&
                         reviewedDryRouteAdmitted &&
