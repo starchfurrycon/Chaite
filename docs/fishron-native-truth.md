@@ -6797,3 +6797,66 @@ the fight is a single deterministic clock (§78) and a local correction resample
   surviving the 6000-tick cap.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 91. Round 130: the startup phase offset is REVERTED -- the probe cancels a held opening
+
+### 91.1 The idea, which was the right shape
+
+§90 concluded that every rule altering the trajectory **during** a charge only resamples which charges land,
+and that the remaining two hits need a **cycle-level** change. The natural cycle-level lever is a one-time
+**phase offset**: hold the player near its start for N ticks so the whole engagement shifts against the Boss's
+attack clock.
+
+It was implemented as an env-var-switchable hold (`CHAITE_STARTUP_HOLD`, default `0`, capped at 2400), so the
+offset could be swept without rebuilding. **`hold=0` reproduced the best state exactly** --
+`6000 / 2 hits / FALSE / 3 contacts` -- so the switch itself is faithful.
+
+### 91.2 It cannot be measured: the probe cancels the run
+
+Every non-zero hold, from **20 to 240**, ended identically:
+
+```
+valid battle : False
+ticks        : 240
+death        : False   outcome: Cancelled
+HITS         : 0
+```
+
+`ticks 240` is the probe's takeover tick **plus 120**, and it is the same for a 40-tick hold and a 120-tick
+one, so the cutoff is **time-based, not hold-based**. Two variants were tried:
+
+1. **Idle hold** (no horizontal input at all) -- cancelled at 240.
+2. **Station-keeping hold** (alternate `+1`/`-1` each tick) -- cancelled at 240.
+
+with the episode bookkeeping (`_previousState`, `_previousSequence`, `_previousTimer`) kept current in the
+early return, in case a stale `_previousState` was re-latching the charge normal late. That changed nothing.
+The probe's `Cancelled` path is not the death path (§4333 in `GameProbe.cs` lists it among the terminal
+states), so the run is being abandoned rather than losing -- most likely because the held opening does not
+satisfy whatever the driver requires to certify a valid battle.
+
+**Conclusion: this lever is not testable through the current native harness.** The phase offset may be the
+right idea, but the probe will not carry a run through it, so it cannot produce native evidence. Reverted.
+
+### 91.3 Where the objective stands
+
+Sixteen interventions have now been attempted. Two improved the fight (§83 co-location lift, §86 turnaround
+margin), five were reverted as regressions (§70, §78, §86 margin 900, §89, §90), and this one could not be
+measured at all.
+
+```
+strong wing   6000 / 2 hits / death FALSE / 3 contacts    (from 11 hits, 8 contacts)
+weak wing     6000 / 4 hits / death FALSE / 5 contacts    (from 4598-tick death)
+```
+
+Both loadouts survive the cap and neither is at zero. The two remaining strong-wing hits are a dash toward a
+locked charge at a 14.9 px vertical gap and a floor track at the Boss's altitude; every threshold-shaped fix has
+cost more than it bought, and the one cycle-level lever cannot be driven through the probe.
+
+- **Reverted**; tree clean, valid UTF-8, DLL hash `D38B8A23E6162308` -- byte-identical to the best state.
+- **Measured:** `hold=0` reproduces `6000 / 2 / FALSE / 3` exactly, so the switch was faithful.
+- **Measured:** every hold from 20 to 240 gives `ticks 240`, `valid battle False`, `outcome Cancelled`,
+  independent of the hold length.
+- **Established:** the startup phase offset cannot be evaluated with this probe; `Cancelled` is not a death.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
