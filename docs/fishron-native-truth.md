@@ -354,3 +354,58 @@ ticks=10253  boss damage=87  death=True  hits=12
    这一机制**未被使用**，而它是三阶段的关键。
 
 ---
+
+## 8. Two corrections from rounds 47-48 (owner-verified)
+
+### 8.1 The boss starts on the player's side, not across the arena
+
+`tools/GameProbe.cs:3255` spawns the direct boss at
+
+    spawnX = player.Center.X + 640
+    spawnY = player.Center.Y - 260
+
+and the player starts at `PlayerStartTileX = ArenaGroundLeft + RunwayStartInsetTiles` =
+tile 21. So the boss begins 640 px to the side and 260 px above the player: **the same
+side of the arena.** A charge travels a fixed 476 px, and the arena is 399 tiles wide
+(6384 px), so a charge cannot cross the arena at all -- the boss must close the gap first.
+
+Recorded player position range over a full fight: **640 .. 6723** (span 6083 px). The
+player roams the arena; it is not trapped at an edge.
+
+Consequence: the round-47 claim "away from the boss points into the wall because the boss
+is on the far side" was **wrong**, and the `WallApproachMargin` reversal built on it was
+**reverted**. Reversal engages exactly at the band edge again.
+
+### 8.2 `wingTime == 0` is the landing frame, not an exhausted budget
+
+`Player.cs:26996` refills the flight budget under
+
+    if (((velocity.Y == 0f || sliding) && releaseJump) || (autoJump && justJumped))
+        wingTime = wingTimeMax;
+
+`autoJump` is **true on all 8685 measured rows**, and `Player.cs:20864` sets `justJumped`
+on landing whenever `autoJump` is set. The second clause therefore applies, so the budget
+refills normally and `releaseJump` is not required.
+
+Supporting measurement: of the 4896 rows with `wingTime == 0`, only **19** have
+`velocity.Y` exactly 0 -- which is what landing looks like. `wingTime == 0` is the last
+flight tick before the refill lands, not a budget that stays empty.
+
+Consequence: the round-47 "empty budget for 56% of the fight" reading was **wrong**, and
+the apex tap built on it (`ApexVelocityTolerance` / `_apexTapped`) was **reverted**.
+
+### 8.3 What actually survives
+
+| fact | value |
+|---|---|
+| player speed at body contact | ~**4.5** px/tick |
+| boss speed at body contact | **6.4 .. 22.9** px/tick |
+| `maxRunSpeed` (foot speed) | **4.71** |
+| wing cruise (measured) | **13.87** p95, max 14.50 |
+| contacts with a FULL wing budget | **2 of 8** (wingTime 130 @3019, 119 @3807) |
+
+At contact the player is moving at roughly foot speed (`maxRunSpeed 4.71`) while the boss
+closes three to four times faster, and two contacts happen with a full budget in hand.
+So **neither direction choice nor wing exhaustion is the binding constraint** -- the open
+question is why the player is on foot (4.5 px/tick) rather than flying (13.87) at the
+moment of contact.

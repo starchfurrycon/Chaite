@@ -96,16 +96,6 @@ namespace Chaite.Core
         /// has to spend the beat rebuilding speed instead of varying the
         /// pattern.</summary>
         private const float EscapeSpeedFloor = 6f;
-        /// <summary>How far before an arena edge the inbound reversal engages.
-        /// Turning exactly at the edge leaves the player with zero speed there,
-        /// and a charge that arrives while the player is stationary cannot be
-        /// escaped: the measured first body hit had the player pinned at the
-        /// band edge with vx 0.00 for the whole approach. Reversing this early
-        /// means the player is already travelling inward before the charge
-        /// arrives, which is what restores the horizontal axis as an escape.
-        /// The margin is sized so the player has covered enough ground to be
-        /// moving at a useful speed by the time the charge lands.</summary>
-        private const float WallApproachMargin = 120f;
 
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
@@ -458,52 +448,8 @@ namespace Chaite.Core
             _previousState = state;
             _previousSequence = input.NativeSequence;
             _previousTimer = input.NativeTimer;
-
-            // Refill the wing budget at the apex by TAPPING rather than holding.
-            //
-            // Player.WingMovement only restores the flight budget under
-            // `(velocity.Y == 0f || sliding) && releaseJump` (vanilla 1.4.5.8
-            // Player.cs:26996), so the budget comes back only at zero vertical
-            // speed WITH the jump key released. The circuit asked for a held
-            // jump -- output.Jump is `vertical < 0`, and the facade keeps the
-            // key down for the whole window -- so releaseJump was never true and
-            // the budget was never refilled in the air.
-            //
-            // MEASURED (dense native trace, 8685 ticks): wingTime is 0 on 4896
-            // rows, 56% of the fight, and six of the eight body contacts happen
-            // with wingTime 0 while the player moves at about 4.5 px/tick against
-            // a boss closing at 6.4 to 22.9. An empty budget is why: wings are the
-            // only mobility that outruns a charge, at a measured 13.87 cruise
-            // against a 4.71 foot speed, and `maxRunSpeed 4.71` is exactly the
-            // speed the player dies at.
-            //
-            // At the apex the player's vertical speed passes through zero, so
-            // releasing the key for exactly that tick satisfies the native
-            // condition and hands back the full 130-tick budget. Outside a
-            // charge there is nothing to lose by doing so: the circuit is
-            // ground-anchored and re-jumps whenever it wants lift.
-            if (output.Jump && !player.OnGround &&
-                Math.Abs(player.Velocity.Y) <= ApexVelocityTolerance &&
-                !_apexTapped)
-            {
-                output.Jump = false;
-                _apexTapped = true;
-            }
-            else if (!output.Jump || player.OnGround)
-            {
-                _apexTapped = false;
-            }
             return output;
         }
-
-        /// <summary>Vertical speed at which the player counts as being at the
-        /// apex of a jump, where the native wing refill can be claimed.</summary>
-        private const float ApexVelocityTolerance = 0.5f;
-
-        /// <summary>Set for the tick the apex tap was spent, so the budget is
-        /// claimed once per apex rather than on every tick the player happens to
-        /// be near zero vertical speed.</summary>
-        private bool _apexTapped;
 
         /// <summary>
         /// Applies the trained residual to the scripted decision computed just
@@ -1089,30 +1035,24 @@ namespace Chaite.Core
             // cancels the horizontal escape, climb or dive along the wall rather
             // than standing on it, so the boss's line is left vertically even
             // though it cannot be left horizontally.
-            // The corner case is what a wall must never do: if the escape is
-            // pressed against an edge AND the boss is charging down the other
-            // axis, then simply reversing the horizontal input is not enough,
-            // because the reversed value is recomputed away on the next tick and
-            // the player oscillates on the wall. A grounded player there has no
-            // mobility at all, so the wall decides the fight.
+            // Reversal engages exactly at the edge.
             //
-            // MEASURED (dense native trace, first body hit at tick 3019): the
-            // player held plX 640 with plvx 0.0 for the entire precharge window
-            // (ticks 2972-3015, roughly 44 ticks) and then through the charge,
-            // while the boss descended from y 5380 to y 5932 at bovy 15.8 and
-            // the player climbed at plvy 10.0 into it. plX 640 is exactly
-            // _bandLeft, so the horizontal axis was dead for the whole approach
-            // and the escape had only the vertical axis, which loses: a ground
-            // jump buys about 90 px of climb while the charge closes 15.8
-            // px/tick.
-            //
-            // The reversal therefore engages *before* the edge, by the margin
-            // the player needs to still be moving when the charge arrives. This
-            // is the difference between bouncing off a wall and never touching
-            // it: the player must already be travelling inward while the boss is
-            // still on its way down.
-            var atLeftWall = x <= _bandLeft + WallApproachMargin;
-            var atRightWall = x >= _bandRight - WallApproachMargin;
+            // An earlier revision reversed 120 px early (WallApproachMargin),
+            // on the theory that reaching the edge at zero speed is what loses
+            // the fight, and that the player needs to already be travelling
+            // inward when a charge arrives. That theory was wrong: it assumed
+            // the boss attacked from the far side of the arena, but the probe
+            // spawns the boss at player.Center.X + 640, i.e. the SAME side as
+            // the player (tools/GameProbe.cs:3255), and a charge travels a fixed
+            // 476 px, so it cannot reach across a 399-tile arena at all. The
+            // measured player position range over a fight is 640..6723, so the
+            // player is not trapped at the edge either. Reversing early was
+            // therefore covering a case that does not arise, and it measured no
+            // differently from reversing at the edge. Do not reinstate it
+            // without a native trace that shows the player pinned at the edge
+            // while a charge arrives.
+            var atLeftWall = x <= _bandLeft;
+            var atRightWall = x >= _bandRight;
             if (atLeftWall && horizontal <= 0) horizontal = 1;
             else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
