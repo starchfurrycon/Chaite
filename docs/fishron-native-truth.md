@@ -2555,7 +2555,7 @@ makes the fight worse, and it is not where the hits come from. One plausible rea
 frozen frames are being spent near the arena floor where staying put happens to be safe for the
 charges that occur there, and the forced jump moves the body into worse positions.
 
-### 32.5 Correction: measured against the Boss's actual path
+### 32.4 Correction: measured against the Boss's actual path
 
 The 32.1 figures used a nominal 476 px charge range and the aim vector sampled at the lock, and two
 of the five hits came out marginally outside that nominal capsule. Re-running the test with **no
