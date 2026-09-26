@@ -3176,3 +3176,72 @@ structural claim about native control flow must be measured, not inferred from a
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 41. Round 80: the write lands one frame late in replay, and the body never moves
+
+### 41.1 The one-frame measurement
+
+The plan write was bracketed: the controls are read back from the player's own fields immediately after
+`ApplyPlan` returns (`WRITE`), and again at the tick entry (`ENTRY`), with a per-tick counter so
+"cleared after the write" is distinguishable from "never written". Same route, same tick window, two
+runs.
+
+```
+LIVE
+ENTRY t=240 L=False J=False D=False Dash=False vx=0.00 vy=0.00  py=7958 writesLastTick=0
+WRITE t=240 writes=1 L=True J=True D=False Dash=False py=7958 vy=0.00
+ENTRY t=241 L=True  J=True  D=False Dash=False vx=0.00 vy=-6.48 py=7952 writesLastTick=1
+WRITE t=241 writes=1 L=True J=False D=False Dash=False py=7952 vy=-6.48
+ENTRY t=242 L=True  J=False D=False Dash=False vx=0.00 vy=-6.34 py=7945 writesLastTick=1
+
+REPLAY
+ENTRY t=240 L=False J=False D=False Dash=False vx=0.00 vy=0.00  py=7958 writesLastTick=0
+WRITE t=240 writes=1 L=True J=True D=False Dash=False py=7958 vy=0.00
+ENTRY t=241 L=False J=False D=False Dash=False vx=0.00 vy=0.00  py=7958 writesLastTick=1   <-- stale
+WRITE t=241 writes=1 L=True J=False D=False Dash=False py=7958 vy=0.00
+ENTRY t=242 L=True  J=False D=False Dash=False vx=0.00 vy=0.00  py=7958 writesLastTick=1   <-- one frame late
+```
+
+### 41.2 What the two runs prove
+
+**Exactly one write per tick in both modes** (`writes=1` on every `WRITE` line), so the route is not
+being double-advanced, and `ApplyPlan` is reached once per tick in the replay just as in the live run.
+
+In the **live** run the write is visible at the very next entry and the body acts on it: `t=241`
+shows `L=True J=True` with `vy=-6.48` and `py` already 7952 (it rose from 7958).
+
+In the **replay** the same write at `t=240` is **not** visible at the `t=241` entry -- which still
+reads the pre-write `L=False J=False` -- and only appears at the `t=242` entry, with
+`vy=0.00` and `py` still exactly 7958. So the replay's controls reach the player's fields **one frame
+later than the live run's**, and by then the frame that would have acted on them has already run.
+
+**Combined with the invariant that `py` never moves in the replay, this is the sharpest statement of
+the defect so far:** the write is correct and unique, and the player simply does not move in response
+to it, on any of `L`, `J`, or `D`. Since §40 established the write lands after `ResetControls`, this is
+not the reset discarding it either -- the field visibly *holds* `L=True` at the `t=242` entry while
+`vx` stays exactly `0.00`.
+
+### 41.3 What is now excluded
+
+- Not a missing write, and not a double write (`writes=1` every tick, both modes).
+- Not `ResetControls` discarding the write (§40, and the field holds `L=True` at the next entry).
+- Not the route failing to reach the plan (§34.4: `replayFrame=0`, `plan.jump=True` at t=240).
+- Not a state lock (§36: every refusal flag identical, including `CCed`, `frozen`, `mapFullscreen`).
+
+What remains is that in replay mode **the native `Player.Update` does not act on the controls it can
+see**. The two candidate mechanisms left are that the replay path drives the world through a different
+update entry than `Main.DoUpdateInWorld`, or that `Player.Update` is invoked with a
+`whoAmI`/`myPlayer` relationship that makes it skip the local-input branch, in which case the controls
+would be read but the movement code would run on a body that the engine does not consider locally
+controlled. Distinguishing those needs the `Player.Update` argument and `Main.myPlayer` logged inside
+one replay frame, which is the next measurement.
+
+### 41.4 Status
+
+- **Diagnostics reverted**, tree builds clean, `git status` shows only the untracked `tmp/`.
+- **Established:** one write per tick in both modes; in replay the written controls appear at the
+  player's fields **one frame later** than in the live run, and the body never moves (`vx`/`vy` exactly
+  `0.00`, `py` frozen at 7958) while holding `L=True`.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
