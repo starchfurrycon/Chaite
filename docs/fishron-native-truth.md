@@ -7196,6 +7196,11 @@ ready tick puts the window in the wrong half of the approach.
 
 ### 98.2 A stamina hypothesis, tested and REFUTED
 
+> **CORRECTED BY §103.2.** The refutation below is **too broad**. Stamina is not the cause of *every* hit, but it
+> **is** the cause of `strong t=3259`: the bar is empty on that frame and the climb has no authority. What
+> follows correctly refutes the claim that stamina explains *all* five hits; it does not refute stamina as the
+> cause of that one. The two hits also have different causes, so no single explanation covers them.
+
 At two hits (`strong t=3259`, `weak t=1782`) `wingTime == 0`, and the player's `vy` is pinned at `+3.34` -- the
 bar is empty so the escape has no vertical authority at all. That suggested the hits were a flight-budget
 problem. It is not: `wingTime==0` occupies 35.2% (strong) and 26.5% (weak) of all ticks, and three of the five
@@ -7522,6 +7527,73 @@ both deterministic and reproducible on demand, both running the full `-maxticks 
 - **Best achieved (verified):** as quoted in §102.4.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**. Any claim of
   无伤 for this circuit would be false under this document's own standard.
+
+## 103. Round 142: the damage and the hits do not scale with time -- both are localised
+
+### 103.1 The strong wing passes native acceptance outright at 3000 ticks
+
+Running the same committed circuit at five different `-maxticks` ceilings, everything else identical:
+
+```
+STRONG wing   t=2000  0 hits  no death  bossDamage 18   ACCEPTED
+              t=3000  0 hits  no death  bossDamage 18   ACCEPTED
+              t=4000  1 hit   no death  bossDamage 18   hits [3259]
+              t=5000  2 hits  no death  bossDamage 27
+              t=6000  2 hits  no death  bossDamage 42   hits [3259, 4271]
+
+WEAK wing     t=2000  3 hits  no death  bossDamage 48
+              t=3000  3 hits  no death  bossDamage 48
+              t=4000  3 hits  no death  bossDamage 48
+```
+
+Two things follow, and neither was known before. **The strong wing records a native `hits == 0` at 3000 ticks** --
+the runner prints `ACCEPTED: zero hits in the native engine`. And **boss damage does not scale with time**: 18
+flat out to t=4000, then 27 at 5000 and 42 at 6000. The circuit's damage is **back-loaded**, not spread across the
+fight.
+
+Against the objective's own terms this is a *provisional* pass, not acceptance: the objective says acceptance
+must run to the `-maxticks 6000` cap and that a 3000-tick `ACCEPTED` is only tentative. At 6000 the strong wing
+records 2 hits, so **the objective is still unmet** and nothing here is claimed as 无伤.
+
+### 103.2 Both hits sit in one window, and they have DIFFERENT causes
+
+```
+strong wing hits  [3259, 4271]
+  t=3259   wingTime == 0    vy pinned at +3.34    <- STAMINA: the bar is empty, no vertical authority
+  t=4271   wingTime 146     dash-body-hit t=4263  <- REAR-END (see §102.1)
+```
+
+`t=4271` is the rear-end already characterised. **`t=3259` is a stamina hit after all, and §98.2's refutation was
+too broad.** That check counted hits at which the bar was *nearly full* and concluded stamina was not the cause;
+it is not the cause of *all* the hits, but it is the cause of *this* one. The strong wing is airborne with
+`wingTime == 0` for 35.2% of the fight and its first hit lands exactly in such a frame, where the measured `vy`
+is a constant +3.34 -- pure gravity and no wing authority.
+
+### 103.3 The existing refill guard cannot address it
+
+The budget guard is
+
+```csharp
+if (player.WingTime <= _refillGuardBudget && !player.OnGround && vertical < 0)
+```
+
+and `ReadRefillGuard()` returns **0f** unless `CHAITE_REFILL_GUARD` is set. So the guard can only fire on the
+exact zero frame, in which case the player is already out of authority -- it is a last-resort trigger, not
+scheduling. Combined with §94's finding that the bar does refill (12x strong / 20x weak per 6000 ticks) but
+35.2% of frames are still at zero, the picture is that the circuit spends the bar faster than it reliably
+recharges, and the t=3259 hit is where that lands. Not changed here: raising the guard threshold is exactly the
+kind of single-axis knob §98-§102 measured to be a net loss (five of the last six produced a death).
+
+### 103.4 Status
+
+- **Established:** the strong wing records `hits == 0` at `-maxticks` 2000 and 3000 with `validBattle == True`
+  and no death; boss damage is back-loaded (18 flat to t=4000, then 27, then 42) rather than proportional to
+  time; the two hits are localised to t=3259 and t=4271 and have **different** causes.
+- **Corrected:** §98.2's dismissal of stamina was too broad. Stamina is not the cause of every hit, but it is the
+  cause of `t=3259` (bar empty, `vy` a constant +3.34).
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2, weak records 3. The
+  3000-tick `ACCEPTED` is provisional only, per the objective's own terms. The objective remains **active and
+  incomplete**, and no native zero is claimed.
 
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
