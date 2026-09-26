@@ -3400,3 +3400,90 @@ channel rather than at `Player.Update` at all.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 44. Round 83: the route does carry the jump, so the gate or the frame boundary drops it
+
+### 44.1 The route is not the problem
+
+Section 43 concluded that no frame ever begins with `controlJump` set, and proposed the jump channel of
+the plan/route plumbing as the suspect. Reading the route directly removes half of that: the harvested
+route **does** carry the jump, at exactly the tick the fight needs it.
+
+```
+236,0,0,0,0
+237,0,0,0,0
+238,0,0,0,0
+239,0,0,0,0
+240,0,0,0,0
+241,-1,1,0,0      <-- direction -1, jump 1
+242,-1,0,0,0
+243,-1,0,0,0
+```
+
+Columns are direction, jump, up, down, dash. So `Runtime`'s replay block (`Runtime.cs:421-462`) reads
+`replayDirection=-1, replayJump=true` at tick 241 and does set `plan.Jump = true` and
+`plan.JumpAction = JumpAction.Hold` (`:426`, `:460-462`). The route read, the plan assignment and the
+`Hold` action are all correct; the jump is lost **between the plan and the player's field**.
+
+### 44.2 The only thing between them is the resolver
+
+`TerrariaFacade.ApplyPlan` writes the channel through a gate rather than directly
+(`TerrariaFacade.cs:3281-3284`):
+
+```
+var jumpState = _combatSnapshot.Player.Jump;
+jumpState.ReleaseReady = _releaseJump(player);
+SetControl(player, "controlJump", MovementActionGate.ResolveJump(plan.Jump, plan.JumpAction, in jumpState,
+    _combatSnapshot.Player.OnGround, _combatSnapshot.Mobility.Grappling));
+```
+
+and that gate is a real conjunction (`MovementActionGate.cs:8-20`):
+
+```
+ShouldHoldJump(requested, grounded, releaseReady, grappling)
+    => requested && (!grounded || releaseReady || grappling);
+ResolveJump(requested, action, in state, grounded, grappling)
+    => JumpMotion.ResolveControl(requested, action, in state, grounded, grappling);
+```
+
+So with `requested=true` the write still produces `false` whenever the resolver's snapshot says
+otherwise. §35 recorded an ablation that bypassed this gate and found it "bit-identical", but that was
+measured on the *live* path where the jump is supplied every tick anyway; the replay is the case where
+the gate's inputs actually differ, so that ablation does not clear the resolver here.
+
+### 44.3 The frame-boundary constraint, stated for the design
+
+Independent of the gate, the measurement pins down a hard requirement that any fix must satisfy.
+`controlJump` is never `true` at a frame entry in the replay (`FRAME_IN` at t=241, 242, 243 after the
+route's jump at t=241), while the live run acts on `J=True` at the frame that carries it and returns
+airborne. Since `WingMovement` requires `controlJump` and `velocity.Y != 0`, and `JumpMovement`
+requires `controlJump`, the write **must be present before the movement code reads it in the frame that
+is supposed to jump**. Reading the route at tick N and writing a value that a later point in the same
+tick consumes does not achieve that; the value has to be in place at the frame boundary.
+
+### 44.4 The next measurement, exactly
+
+The plugin has no logger of its own, so the instrumentation goes in the probe's observer of the control
+writes. Log, for ticks 239-246 and in both live and replay: `plan.Jump`, `plan.JumpAction`,
+`jumpState.ReleaseReady`, `jumpState`'s own fields, `_combatSnapshot.Player.OnGround`,
+`_combatSnapshot.Mobility.Grappling`, and the **return value** of `ResolveJump` -- the resolver's
+verdict, not just its effect. If the verdict is `true` while the entry observer still sees `False`, the
+remaining loss is the `_pendingInput` snapshot taken in `Runtime.Tick`'s `finally` (which stages the
+frame for `ApplyPendingInput` to re-apply), and that snapshot is the next thing to log; if the verdict
+is already `false`, the resolver's inputs are wrong and the fix is in what the replay feeds the
+snapshot, not in the staging.
+
+### 44.5 Status
+
+- **Tree clean** apart from the untracked `tmp/`; no diagnostic code is currently in the tree.
+- **Established:** the harvested route carries `jump=1` at tick 241 and `Runtime` sets `plan.Jump=true`
+  with `JumpAction.Hold`; the jump is lost between the plan and the player's field, i.e. at the
+  `ResolveJump` gate or in the `_pendingInput` staging.
+- **Established:** no replay frame ever begins with `controlJump` set, so the body can never leave the
+  ground, and the horizontal channel fails as a consequence (acceleration only builds across frames of
+  held input).
+- **Next:** log the resolver's verdict and inputs, then the `_pendingInput` snapshot, for ticks 239-246
+  in both modes.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
