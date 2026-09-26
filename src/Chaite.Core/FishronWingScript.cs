@@ -96,6 +96,16 @@ namespace Chaite.Core
         /// has to spend the beat rebuilding speed instead of varying the
         /// pattern.</summary>
         private const float EscapeSpeedFloor = 6f;
+        /// <summary>How far before an arena edge the inbound reversal engages.
+        /// Turning exactly at the edge leaves the player with zero speed there,
+        /// and a charge that arrives while the player is stationary cannot be
+        /// escaped: the measured first body hit had the player pinned at the
+        /// band edge with vx 0.00 for the whole approach. Reversing this early
+        /// means the player is already travelling inward before the charge
+        /// arrives, which is what restores the horizontal axis as an escape.
+        /// The margin is sized so the player has covered enough ground to be
+        /// moving at a useful speed by the time the charge lands.</summary>
+        private const float WallApproachMargin = 120f;
 
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
@@ -1035,8 +1045,30 @@ namespace Chaite.Core
             // cancels the horizontal escape, climb or dive along the wall rather
             // than standing on it, so the boss's line is left vertically even
             // though it cannot be left horizontally.
-            var atLeftWall = x <= _bandLeft;
-            var atRightWall = x >= _bandRight;
+            // The corner case is what a wall must never do: if the escape is
+            // pressed against an edge AND the boss is charging down the other
+            // axis, then simply reversing the horizontal input is not enough,
+            // because the reversed value is recomputed away on the next tick and
+            // the player oscillates on the wall. A grounded player there has no
+            // mobility at all, so the wall decides the fight.
+            //
+            // MEASURED (dense native trace, first body hit at tick 3019): the
+            // player held plX 640 with plvx 0.0 for the entire precharge window
+            // (ticks 2972-3015, roughly 44 ticks) and then through the charge,
+            // while the boss descended from y 5380 to y 5932 at bovy 15.8 and
+            // the player climbed at plvy 10.0 into it. plX 640 is exactly
+            // _bandLeft, so the horizontal axis was dead for the whole approach
+            // and the escape had only the vertical axis, which loses: a ground
+            // jump buys about 90 px of climb while the charge closes 15.8
+            // px/tick.
+            //
+            // The reversal therefore engages *before* the edge, by the margin
+            // the player needs to still be moving when the charge arrives. This
+            // is the difference between bouncing off a wall and never touching
+            // it: the player must already be travelling inward while the boss is
+            // still on its way down.
+            var atLeftWall = x <= _bandLeft + WallApproachMargin;
+            var atRightWall = x >= _bandRight - WallApproachMargin;
             if (atLeftWall && horizontal <= 0) horizontal = 1;
             else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
