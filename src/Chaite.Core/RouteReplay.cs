@@ -160,9 +160,37 @@ namespace Chaite.Core
                 }
                 var parts = line.Split(',');
                 int value;
+                if (parts.Length >= 6)
+                {
+                    // tick,direction,jump,up,down,dash -- the current harvest
+                    // format (harvest-native-route.py). This block previously
+                    // accepted 5+ columns and read them as
+                    // tick,direction,up,down,dash, so a six-column file was
+                    // decoded with every channel from `up` onward shifted one
+                    // position: jump became up, up became down, and down became
+                    // dash. MEASURED: the route's tick 254 row
+                    // `254,-1,0,0,1,0` (jump=0 up=0 down=1 dash=0) was replayed
+                    // with dash=true, which drove the player into a shield dash
+                    // 92 ticks before the recorded run's first dash at guc=346,
+                    // and produced the first divergence at guc=254.
+                    int tick;
+                    if (!int.TryParse(parts[0].Trim(), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out tick)) continue;
+                    if (!int.TryParse(parts[1].Trim(), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out value)) continue;
+                    tickKeyed = true;
+                    ticks.Add(tick);
+                    direction.Add(Math.Max(-1, Math.Min(1, value)));
+                    jump.Add(parts[2].Trim() == "1");
+                    up.Add(parts[3].Trim() == "1");
+                    down.Add(parts[4].Trim() == "1");
+                    dash.Add(parts[5].Trim() == "1");
+                    continue;
+                }
                 if (parts.Length >= 5)
                 {
-                    // tick,direction,up,down,dash
+                    // Legacy tick,direction,up,down,dash, where the up bit drove
+                    // the jump channel because the file carried no jump column.
                     int tick;
                     if (!int.TryParse(parts[0].Trim(), NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out tick)) continue;
@@ -175,8 +203,8 @@ namespace Chaite.Core
                     up.Add(upBit);
                     down.Add(parts[3].Trim() == "1");
                     dash.Add(parts[4].Trim() == "1");
-                    // The up bit is the ascend input, and the file carries no
-                    // separate jump column any more: drive the jump channel
+                    // The up bit is the ascend input, and this legacy file
+                    // carries no separate jump column: drive the jump channel
                     // from it so wings and mounts keep their lift.
                     jump.Add(upBit);
                     continue;

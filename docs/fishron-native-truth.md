@@ -4214,3 +4214,79 @@ frames.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**. Live weak-wing formula route, 1200 ticks:
   **1 hit**.
 - **No native zero over a full fight on either loadout.**
+
+## 54. Round 93: the route reader mis-mapped every channel from `up` onward -- replay is now tick-perfect
+
+### 54.1 The bug
+
+`RouteReplay.Load` accepted any row with **five or more** columns and decoded it as
+`tick,direction,up,down,dash` (`RouteReplay.cs:163-182`), reading
+`jump.Add(parts[2])`-by-proxy via `upBit = parts[2]`, `down.Add(parts[3])`,
+`dash.Add(parts[4])`. The harvest writer emits **six** columns,
+`tick,direction,jump,up,down,dash` (`harvest-native-route.py:215`). So every six-column route was
+decoded with **every channel from `up` onward shifted one position**:
+
+```
+route row (written)      254 , -1 , 0 , 0 , 1 , 0
+meaning                 tick  dir  jump up down dash
+reader took             tick  dir  up  down dash  --
+so it replayed          up=0  down=0  dash=1   <-- a shield dash that never happened
+```
+
+This is exactly the §53 mystery: `R_READ frames=13 tick=254 ... dash=True preDash=False` while the file
+plainly said `dash=0`. The route's dash ticks are `346, 404, 462, 520, 578, 756, 814, 872, 930, 988,
+1176` and the recorded run's applied `controlDash` ticks are `346, 404, 462, 520, 578, 756, 814, 872, 930,
+988, 1176` -- **they agree exactly**, so the file was right and the reader was wrong. The mis-mapped
+`down` bit became `dash`, which drove the player into a dash **92 ticks before the recorded run's first
+dash**, and that was the first divergence at `guc=254`.
+
+### 54.2 The fix
+
+`RouteReplay.Load` now dispatches on the column count: **six or more** columns are decoded as
+`tick,direction,jump,up,down,dash` (the current format), and the previous five-column
+`tick,direction,up,down,dash` reading is kept verbatim as the legacy branch, where the up bit still drives
+the jump channel. Historical five-column files therefore keep their old meaning.
+
+### 54.3 Measured: the replay is now tick-perfect
+
+Replaying the weak-wing live route (`tmp/route-hybrid.txt`, 1200 ticks) against its own source run:
+
+```
+live  source : ticks 1200  HITS 1  boss damage 9  death False  shield rows 11  dash-active 10  npc contact 1
+replay       : ticks 1200  HITS 1  boss damage 9  death False  shield rows 11  dash-active 10  npc contact 1
+
+per-tick diff over 1199 common gameUpdateCounts, comparing rounded x/y/vx/vy:
+   differing ticks: 0 / 1199
+   IDENTICAL on every common tick
+```
+
+**`CHAITE_ROUTE_FILE` is now a faithful replayer** -- the objective's required acceptance channel. The
+progression of this defect, and the total effect of the round's fixes on the same route:
+
+```
+start of round : HITS 6  boss damage 54  death True
+after §53 fix  : HITS 2  boss damage 18  death False
+after §54 fix  : HITS 1  boss damage  9  death False   <-- identical to the live source run
+```
+
+### 54.4 What now remains for the objective
+
+The acceptance channel is trustworthy; the **fight itself is not yet won**. The live weak-wing formula
+route still records **1 hit in 1200 ticks and does not kill the Boss** (`boss life left 77991` of 78000,
+i.e. 9 damage). So exactly one contact remains to be eliminated on the weak wing, and neither loadout has
+a native zero-hit **full** fight. The next work is therefore on the route/state machine rather than on the
+harness: find the single remaining weak-wing contact by replaying the route and reading the recorded
+`npc contact` tick, then adjust the formula route at that tick and re-verify. Because the replay is now
+tick-perfect, any such change can be validated by a single replay without re-running the live fight.
+
+### 54.5 Status
+
+- **Kept and verified:** `RouteReplay.cs` six-column branch (`:163-186`) plus the legacy five-column
+  branch (`:187-207`); the §53 granular feather-fall rejection and per-channel harvest source; the §51
+  sixth-placeholder writer fix. Tree has no diagnostics; solution builds clean.
+- **Established and measured:** the replay of the weak-wing live route is **tick-identical to its source
+  run over all 1199 common ticks**, with identical hits (1), damage (9), death flag, shield rows, dash
+  ticks and npc contacts.
+- **Not achieved:** zero hits -- weak wing still takes exactly 1 contact in 1200 ticks, the Boss is not
+  killed, and the strong wing has no equivalent verified full fight.
+- **No native zero over a full fight on either loadout.**
