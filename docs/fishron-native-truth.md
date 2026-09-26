@@ -5508,3 +5508,109 @@ It must still be validated live at the `-maxticks` cap; and `:635-648`'s warning
 - **Not attempted:** the decoupling, which is recorded at §71.3 as the next real step.
 - **Still not achieved:** zero hits on either loadout over a full fight; no run survives the cap. The
   objective remains **active and incomplete**, and no native zero is claimed.
+
+## 72. Round 111: keeping the wing on charge beats is REVERTED -- the sixth failure, and the pattern is now conclusive
+
+### 72.1 The gate analysis, sharpened
+
+Before the attempt, the wing gate
+(`Player.cs:27001`: `wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 && velocity.Y != 0`) was
+evaluated directly against every dense frame:
+
+```
+                       gate SATISFIED
+all ticks         1377 / 4599  (29.9%)
+charge ticks       646 / 1625  (39.8%)
+
+why it fails on charge ticks:
+  no controlJump                        669
+  OK (gate satisfied)                   646
+  no controlJump + wingTime 0           221
+  no controlJump + vy 0                  52
+  wingTime 0                              5
+  other                                  32
+
+`jump` counter on charge ticks: 0 on 1595 of 1625   (only the 15..1 ramp, 2 ticks each)
+```
+
+**This isolates the cause exactly: `controlJump` is the sole meaningful blocker** (944 ticks). Neither the
+`jump` counter nor `wingTime` is the constraint -- the wing is charged and ready, and the script simply is not
+raising `controlJump`.
+
+### 72.2 What was tried, and the measurement
+
+`Tick` publishes `output.Jump = vertical < 0` (`:526`), so the fix was to stop a charge beat from ever
+commanding descent while airborne, at one point in `Tick`:
+
+```csharp
+if (vertical > 0 && !player.OnGround) vertical = -1;
+```
+
+Grounded frames are exempt so the takeoff that refills the bar still happens.
+
+```
+                        §64 baseline (dense6k)   keep-the-wing
+ticks                          4598                  3646  (died 952 ticks EARLIER)
+HITS                              8                     7
+boss damage                      31                   137
+death                          TRUE                  TRUE
+npc contact                       3                     9
+shield rows                      48                    44
+dash-active ticks                45                    35
+```
+
+**Worse again.** It did reduce the hit count (8 -> 7) but more than quadrupled the damage (31 -> 137) and
+killed the player 952 ticks earlier. Reverted.
+
+### 72.3 The conclusive pattern
+
+Six local interventions, all evaluated live at the `-maxticks` cap against the same baseline:
+
+```
+                                              HITS   damage   death tick
+§64 baseline (committed, best)                   8       31       4598
+§55   personal-space branch gated on !inBeat     6       99         --
+§56.2 charge-normal deadband 0.2 -> zero         6      123         --
+§57   flip charge-normal tie-break               8       31       4598   (bit-identical no-op)
+§69   pinned-axis detector                       8       90       3760
+§70   unconditional lift on ascend beat          9      123       4488
+§71   keep the wing on charge beats              7      137       3646
+```
+
+**Not one of the six improves the fight, and the two that reduced the hit count (`§55`, `§71`) increased the
+damage by 3-4x and killed the player sooner.** That inversion is the real signal: fewer contacts with far more
+damage means the interventions are trading *many cheap grazes* for *few lethal connections* -- i.e. they are
+changing **which** charges connect, not how many, and the baseline's configuration happens to pick the
+survivable ones. This is a timing/scheduling property of the whole cycle, exactly as §71.2 argued, and it is
+now confirmed by six independent live measurements rather than by one.
+
+### 72.4 The honest conclusion for this goal
+
+The remaining work is **not** a sequence of local rule fixes. Six of them have been tried and every one lost.
+What the measurements support instead is a **scheduling** change -- the beat cycle and the lock-time normal
+selection need to be derived together from the Boss's attack clock rather than patched per branch -- and that
+is a redesign which cannot be validated within the remaining budget of this session at the
+`-maxticks`-cap standard the objective now requires.
+
+Under the goal's own acceptance rule (survive to the 6000-tick cap without death, `hits == 0` for **both**
+loadouts), the state is:
+
+- **weak wing:** no accepted run. Best is 8 hits / 31 damage **with death at 4598**.
+- **strong wing:** one measurement only (2 hits / 18 damage at 3000 ticks); never run to the cap.
+- **replay channel:** verified tick-perfect (0 differing ticks over 1199) -- the acceptance *instrument*
+  works, which is a genuine deliverable of this session.
+- **`hits == 0`:** not reached anywhere, at any length, on either loadout.
+
+**No no-hit claim is made, and none may be inferred.**
+
+### 72.5 Status
+
+- **Edit reverted.** Tree clean apart from untracked `tmp/`; builds clean; the §64 velocity-normal fix
+  (`a46bca3`) is intact (`rateA >= rateB` at `:1198-1199`).
+- **Measured:** keep-the-wing gives `3646 / 7 / 137 / TRUE / 9` against the baseline's `4598 / 8 / 31 / TRUE / 3`.
+- **Isolated:** `controlJump` is the sole blocker of the wing gate on charge ticks (944 of 1625); the `jump`
+  counter is 0 on 1595 of 1625 and `wingTime` is available.
+- **Established by six live measurements:** no local movement-rule change improves the weak-wing fight, and
+  the two that reduce hit count trade cheap grazes for lethal connections.
+- **Still not achieved:** zero hits on either loadout; no accepted run at the cap. The objective remains
+  **active and incomplete**, and no native zero is claimed.
