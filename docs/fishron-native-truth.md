@@ -8087,6 +8087,71 @@ whole window cannot be afforded no matter what it buys locally. **The width axis
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Thirty-two controlled interventions, one
   improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 112. Round 148: a route-replay acceptance trap -- dense frames changes the fight
+
+### 112.1 The one-command check, and the bug it immediately exposed
+
+`tools/verify-fishron-routes.ps1` was added so the objective's named criterion can be exercised in a single
+command: it replays `routes/strong-fishron-wings.csv` and `routes/fairy-wings.csv`, each paired with its
+`-FormulaRoute` loadout, and compares `result.json` against the recorded expectation. The first version did **not**
+set `CHAITE_PROBE_DENSE_FRAMES`, and it failed immediately:
+
+```
+ROUTE-REPLAY VERIFICATION
+loadout  formula                ticks  hits  death  valid  dmg   vs expected
+strong   fishron-strong-wing    6000   8     False  True   57    DRIFT
+weak     fishron-fairy-wing     5764   10    True   True   90    DRIFT
+```
+
+The same two route files had replayed to `6000/2/no death` and `6000/3/no death` minutes earlier. Setting the
+variable made them match again. The comparison is controlled -- identical route files, identical loadouts,
+identical tick cap, **only the probe's instrumentation level differs**:
+
+```
+same route, CHAITE_PROBE_DENSE_FRAMES unset : strong 6000/8 hits/57 dmg    weak 5764/10 hits/DEATH/90 dmg   shield rows 1024
+same route, CHAITE_PROBE_DENSE_FRAMES = 1   : strong 6000/2 hits/42 dmg    weak 6000/3  hits/no death/48  shield rows 73
+```
+
+### 112.2 Why this matters more than a missing flag
+
+The replay's shield cadence depends on how often the probe samples: the unset run records **1024 shield rows**
+against **73**, and `dash started` 26 against 69. So a route-replay acceptance run that omits the variable is not
+"a less detailed measurement of the same fight" -- it drives a **different** fight and reports a different result,
+with no error. Under the objective's own standard (`CHAITE_ROUTE_FILE` as the sole acceptance channel) that is
+exactly the kind of silent divergence the standard exists to prevent: **a route-replay number is meaningless
+without its instrumentation level recorded alongside it.**
+
+The variable is now set inside the verification script, and every `CHAITE_*` knob is cleared there too, so a
+leftover experiment cannot change the circuit under test.
+
+### 112.3 The verification result
+
+With both fixes in place:
+
+```
+loadout  formula                ticks  hits  death  valid  dmg   vs expected
+strong   fishron-strong-wing    6000   2     False  True   42    MATCH
+weak     fishron-fairy-wing     6000   3     False  True   48    MATCH
+
+REPRODUCED: both routes replay to their recorded native result.
+ZERO-HIT NOT ACHIEVED: hits are 2 / 3. The objective requires hits == 0 at the
+6000-tick cap and that remains UNMET.
+```
+
+The script reports `ZERO-HIT` only if a run genuinely records `hits == 0`, so the unmet requirement is stated by
+the tool itself rather than left to prose.
+
+### 112.4 Status
+
+- **Established:** route replay through `CHAITE_ROUTE_FILE` **requires** `CHAITE_PROBE_DENSE_FRAMES=1`; with it
+  unset the same route file yields `6000/8 hits/57 dmg` and `5764/10 hits/DEATH/90 dmg` instead of
+  `6000/2/42` and `6000/3/48`, with 1024 shield rows instead of 73. A route-replay result is therefore
+  uninterpretable without its instrumentation level.
+- **Established:** `tools/verify-fishron-routes.ps1` exercises the named channel end to end and confirms both
+  loadouts reproduce their recorded native result, while reporting the `hits == 0` requirement as **UNMET**.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3
+  through **both** channels. The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
