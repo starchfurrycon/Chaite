@@ -2341,3 +2341,75 @@ fight rather than a local clamp -- and it is the next thing to build.
   dash is active on ~1% of all ticks.
 - Weak wing, policy off, guard 0: **4 hits at 3000-4000 ticks.**
 - **No native zero over a full fight on either loadout.**
+
+## 30. Round 69: the pre-hit window is the missing instrument, and it shows the player pinned
+
+### 30.1 The pre-hit window exists and is the best diagnostic built so far
+
+`artifacts/game-probe-<run>/prehit-observations.jsonl` (`schema chaite-prehit-observation/v2`)
+records, for **every damage event**, the 47 ticks leading up to it, with the full player and Boss
+state on each: position, velocity, `wingTime`, `immuneTime`, `dashType`, all eight raw control
+booleans, the plan phase, and the Boss's `x/y/vx/vy/ai0..ai3/state/timer/sequence`, plus
+`nearestThreat`, `threatsWithin400`, `nearestProjectile`, `projectilesWithin400`. There is also
+`hurt-observations.jsonl` (`chaite-hurt-observation/v1`), whose `source.kind` is `npc` with
+`type 370` on every event.
+
+That settles the damage question from section 25 for good: **every hit is Boss (NPC type 370)
+contact.** No projectile channel is involved in any of the recorded damage, and the
+`projectilesWithin400` field is available to prove it per hit.
+
+### 30.2 The player is pinned at x = 650.0 with the horizontal commanded
+
+Across the latch-trace run the player's centre x is pinned at exactly `650.0` in two contiguous
+episodes, **163 ticks (2.7 s) and 110 ticks (1.8 s), 13% of all rows**. Both sit inside hit
+windows. In the 47-tick window of one hit (`hurtSequence 2`), the picture is:
+
+```
+ off   px      bx      gap     vx     phase
+ -47   650.0   738.8    +88.8  +0.00  precharge-jump
+ -35   650.0   763.9   +113.9  +0.00  precharge-jump
+ -20   650.0   720.2    +70.2  +0.00  charge-descend
+  -5   650.0   677.5    +27.5  +0.00  personal-space
+   0   650.0   678.1    +28.1  +0.00  personal-space   <- hit
+```
+
+The Boss stays **90-114 px to the player's right for the whole window**, so `gap > 0`
+throughout, so `AwayFromBossAxis(gap)` returns `-1` throughout. The plan confirms it: in a
+controlled run the recorded `plan.horizontal` is `-1` while `controlLeft` is 1 and
+`controlRight` is 0 -- and `vx` is still exactly `0.00` with `px` frozen at `650.0`.
+
+**So the player is not failing to choose a direction. It chooses left, holds left, and does not
+move.** The horizontal is commanded and the position does not change. That is the defect, and it
+is a different one from every mechanism proposed in sections 26-29: not a wrong sign, not a clamp,
+not the budget. A dodge whose horizontal never executes cannot open vertical or horizontal
+separation, and the charge simply arrives.
+
+The player demonstrably *can* move horizontally in the same run -- later the same stream shows
+`px 2200.0, vx +6.70` in `charge-ascend` -- so this is not a global movement failure and not an
+input-plumbing failure. It is specific to the early `standoff`/`precharge`/`charge-descend`
+episodes near the left of the arena, and it is unexplained.
+
+### 30.3 What was tried and reverted
+
+Two edits were made on the hypothesis that `AwayFromBossAxis` was returning 0 on the Boss axis and
+so starving the horizontal. **That premise is false**: `AwayFromBossAxis(float gap)` is literally
+`gap >= 0f ? -1 : 1` (`FishronWingScript.cs:1030`) and can never return 0, and the recorded `gap`
+is +88.8 to +113.9 in the failing window anyway. Both edits measured **bit-identically** to the
+baseline (4 hits, 66 Boss damage, 32 dash ticks), which is what an inert change looks like. Both
+were reverted with `git checkout --`.
+
+The lesson is the section-27 one again, and it cost two builds here: the mechanism has to be
+checked against the recorded value **before** the edit is believed, not after.
+
+### 30.4 Status
+
+- **Reverted:** both horizontal-starving edits and their `PrechargeMinSpeed` constant.
+- **New instrument:** `prehit-observations.jsonl` / `hurt-observations.jsonl` per-hit windows.
+- **Settled:** all recorded hits are Boss NPC contact; `source.kind = npc`, `type 370`.
+- **New defect, unexplained:** the horizontal is commanded (`plan.horizontal = -1`,
+  `controlLeft = 1`) while `vx = 0.00` and `px` is frozen at `650.0` for up to 163 ticks; both
+  pinned episodes contain a hit.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
+- **No native zero over a full fight on either loadout.** Note also that a 600- and a 900-tick run
+  both reported `HITS 0` with the Boss at full life; those are run-length artefacts (the first
+  charge lands later than that) and are **not** evidence of a no-hit solution.
