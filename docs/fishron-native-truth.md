@@ -849,3 +849,88 @@ Note also that `wingTime == 0` on 56-63% of the fight is not by itself the bug: 
 established that the budget refills on landing. What matters is that it is empty
 *at the contact*, which means the circuit is spending the budget earlier in the cycle than
 the contact needs it.
+
+## 14. Round 53: the script asks to move and the applied control is cleared
+
+This round finally caught both sides of the same tick in one run, with the script's own
+output and the per-tick applied controls recorded together. The result is unambiguous.
+
+### 14.1 The script never returns a neutral horizontal
+
+Over 3360 planner calls:
+
+```
+ hor distribution : {-1: 1627, 1: 1733}      <- zero occurrences of 0
+```
+
+On the rows where the player is stationary (`|vx| < 0.5`, 163 rows), the script is still
+commanding a direction, and overwhelmingly the same one:
+
+```
+ rows with |vx| < 0.5 : 163
+   their hor distribution : {-1: 153, 1: 10}
+   their state distribution: {0: 51, -1: 74, 1: 33, 3: 5}
+   their phase counts      : standoff 85, precharge-jump 37,
+                             charge-horizontal 33, sharknado-exit 5,
+                             personal-space 3
+```
+
+### 14.2 The applied control disagrees with the script, per tick
+
+Aligning the script trace against the per-tick observation stream (which records the
+controls the player actually received):
+
+```
+  idx  bossTick  L R   player vx | scriptHor
+ 1213     1214  1 0      -6.65   |    -1
+ 1214     1215  0 0      -6.55   |    -1
+ 1215     1216  0 0      -6.45   |    -1
+ 1216     1217  0 0      -6.35   |    -1
+ ...
+ 1227     1228  0 0      -5.25   |    -1
+ 1228     1229  1 0      -5.30   |    -1
+ 1229     1230  0 0      -5.20   |    -1
+ 1230     1231  1 0      -5.25   |    -1
+```
+
+Across the whole run, **1439 of 3600 ticks have no horizontal control applied at all**,
+while the script is asking for `-1` on essentially every one of them.
+
+### 14.3 This is exactly the owner's acceleration effect, and it explains every earlier failure
+
+The player's velocity keeps drifting left (`-6.65` down to `-5.20`) while `L` is 0, because
+Terraria decelerates a moving player gradually (`runSlowdown` 0.2) rather than stopping it.
+When the input returns it only briefly (`L` 1 for one tick, then 0 again), the speed never
+rebuilds. Held against `runAcceleration` 0.1256 and `maxRunSpeed` 4.71, this is precisely
+the owner's description: **intermittent input leaves the player nearly stationary, and speed
+has to be held continuously to accumulate.**
+
+It also explains, after the fact, why both facade overrides in section 12 failed. They
+changed the *direction* requested, but the defect is that the request is being **discarded**
+on a large fraction of ticks. Overriding the direction of a value that is then thrown away
+cannot help; and the one override that also forced `controlLeft`/`controlRight` after the
+clear (override A) did improve continuity as measured, yet still lost -- which means the
+clear is not the only thing wrong, only the first thing wrong.
+
+### 14.4 Also ruled out this round
+
+- **Direction reversals are not the cause.** Of the 19 known hits across both loadouts only
+  two have a preceding direction flip, and 5 of the 19 are taken while moving fast
+  (`|vx|` 5.10 to 12.97), which shows the circuit can travel quickly when the input sticks.
+- **Stale controls are not the cause.** `controlsFresh` is `True` on all 528 prehit rows.
+- **The 4.50 / -3.50 post-hit value is knockback**, already established in section 13.2.
+
+### 14.5 The precise defect, for the next round
+
+The applied control is cleared on ~40% of ticks while the planner has asked for a direction.
+`TerrariaFacade.ApplyPlan` opens with `ClearCombatControls(player)` and then writes
+`controlLeft`/`controlRight` from `plan.Horizontal`; the per-tick stream shows both false on
+ticks where the script asks for `-1`. So either `ApplyPlan` is not reached on those ticks,
+or it is reached with a plan whose horizontal is 0. The probe's `ApplyPlan`-entry hook
+reported `hor == 0` on 1000 of 3160 rows, which points at the second possibility, but the
+same run's `PlanFormula` return trace reported `hor == 0` on **0** rows. Those two cannot
+both be true, and reconciling them is the single highest-value next step: instrument
+`ApplyPlan` to write the plan's `PhaseId` **and** the value of `plan.Horizontal` **and** a
+per-tick counter to one file, so the applied plan can be matched to the script invocation
+that produced it. Whatever the answer, the fix belongs where the input is written, and it
+must make the horizontal persistent rather than per-tick.
