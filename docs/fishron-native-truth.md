@@ -1596,3 +1596,132 @@ it. A fix has to change the **vertical cadence**, not the direction of any singl
 - Pinned result unchanged and not to be overstated: weak 8684 ticks / **8 hits** / 37 damage /
   death; strong 11000 ticks / **11 hits** / 76 damage / alive. **No native zero on either
   loadout.**
+
+## 22. Round 61: the learned policy has been masking the hand-written circuit
+
+This round set out to fix the vertical cadence and instead found that every "native" result in
+this session has been produced with a learned policy active, and that the policy is doing most of
+the work. Two measurements are recorded here: the drain is caused by holding `controlJump` while
+descending, and with the policy removed the hand-written circuit loses in a quarter of the time.
+
+### 22.1 Session environment: `CHAITE_POLICY_FILE` was set
+
+`Get-ChildItem env:` in this session shows:
+
+```
+CHAITE_POLICY_FILE    ...\policies\fishron-strong-wing.policy.bin
+CHAITE_POLICY_FORMAT  exported
+```
+
+`LearnedPolicy.EnsureConfigured()` reads exactly these, and `ForRoute` then hands the script an
+active policy. `FishronWingScript.DecideMovement` calls `learned.Adjust(...)` and, when it
+returns true, **replaces** `output.Horizontal`, `output.Vertical`, `output.Jump` and
+`output.Dash` wholesale (section 22.4 of this document; `FishronWingScript.cs` lines 509-529).
+
+So the pinned figures (weak 8684 ticks / 8 hits; strong 11000 / 11) are **policy-assisted**, not
+the hand-written state machine's own result.
+
+### 22.2 The drain is `controlJump` held while descending
+
+Per-tick dense native rows (3761 contiguous ticks, boss present, `wingTime > 0`), grouped by the
+applied controls, with the measured `wingTime` drop per tick:
+
+| controlJump | controlDown | ticks | drain/tick | total drain |
+|---|---|---|---|---|
+| 0 | 0 | 25 | 0.080 | 2 |
+| 0 | 1 | 478 | **0.031** | 15 |
+| 1 | 0 | 1 | 0.000 | 0 |
+| **1** | **1** | **1467** | **0.920** | **1350** |
+
+This matches the decompile exactly. `Player.WingMovement()` (line 22430) does `wingTime -= 1f`,
+and it is only reached when `flag19` is true, which requires
+`wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 && velocity.Y != 0`
+(`Player.cs:27001`). Holding jump while descending therefore costs a full tick of budget per
+tick, and holding down without jump costs almost nothing (0.031).
+
+Attributed by phase, the 1406 draining ticks split as `precharge-jump` 404, `charge-horizontal`
+214, `tornado-clear` 201, **`standoff` 194**, `charge-ascend` 145, `charge-descend` 82,
+`bubble-line` 78, `sharknado-exit` 34. Reading the raw rows shows the pattern directly:
+
+```
+ tick plan.Jump p.controlJump p.vy    p.wingTime  next  phase
+  254   True       True      -6.21     130.0      +1.00  fishron-wing-standoff
+  259   True       True      -7.11     125.0      +1.00  fishron-wing-standoff
+  265   True       True      -7.71     119.0      +1.00  fishron-wing-standoff
+```
+
+### 22.3 On every draining tick, `plan.Jump` and `plan.Drop` are both true
+
+`PlanFormula` makes those mutually exclusive by construction:
+
+```csharp
+plan.Jump = script.Jump && script.Vertical < 0;
+plan.Drop = script.Vertical > 0;
+```
+
+so `(True, True)` cannot come from the script. On the measured draining ticks the plan flags are
+`(plan.jump, plan.drop)` = `{(True, True): 1406}` -- exactly the draining count. The only writer
+that can produce that pair is `LearnedPolicy.Adjust`, which emits `jump` as an independent output
+alongside `vertical` and is applied *after* the script, at `FishronWingScript.cs:525`.
+
+**The drain is a learned-policy behaviour, not a script behaviour.**
+
+### 22.4 With the policy off, the script never holds jump while descending
+
+Same dense measurement, `CHAITE_POLICY_FILE` unset:
+
+| `(controlJump, controlDown)` | ticks | drain |
+|---|---|---|
+| (0,0) | 423 | 0 |
+| (0,1) | 759 | 26 |
+| (1,0) | 632 | 558 |
+
+`(1,1)` is **zero ticks**. The hand-written circuit's `output.Jump = vertical < 0` is sufficient
+to keep jump off during descents, and its total budget spend is the legitimate 558 of the 632
+ascend ticks. `wingTime == 0` occurs on **18.3 percent** of rows against the policy's **47.5
+percent**.
+
+### 22.5 Which refutes the budget hypothesis as the cause
+
+The script-only run is **better** on the budget and **far worse** on the fight:
+
+```
+script only : 2466 ticks   6 hits   108 damage   death=True   npc contact 7
+with policy : 11000 ticks 11 hits    76 damage   death=False  npc contact 3
+```
+
+At the identical 4000-tick cap the policy run reached **hits 0** with 18 boss damage while the
+script-only run was already dead at 2466 with 6 hits. So the script spends less wing budget, has
+the budget available more of the time, and still loses roughly four times sooner. Sections 18, 19
+and 21 all concluded the binding constraint was the flight budget; **that conclusion does not
+survive this measurement.** The budget exhaustion is real but it is not what kills the script --
+the script dies with budget in hand, which means its failure is positional, not economic.
+
+### 22.6 A standoff edit that was tried and reverted
+
+Both the `standoff` and `tornado-bait` branches ended in `vertical = player.OnGround ? -1 : 1`,
+so airborne in standoff meant *climb*, spending 1.00 wingTime per tick on a branch that is by
+definition the case where the boss is already within 720 px. Changing the airborne half to
+`vertical = 1` (descend) built and ran, and produced **bit-identical budget telemetry** (1467
+jump&down ticks, 1350 drain) because the policy overwrites `output.Vertical` immediately
+afterwards. It was reverted with `git checkout --`. It is worth retrying **after** the policy is
+disabled, when the script's own output actually reaches the engine.
+
+### 22.7 Consequences for the objective
+
+1. Any native acceptance number quoted from this session before now was policy-assisted. The
+   hand-written state machines the objective asks for have been measured at **6 hits / death at
+   2466 ticks** (weak wing) and **7 npc contacts** — much worse than the pinned figure suggested.
+2. The 4000-tick `HITS 0` is a genuine native zero-hit window with the boss engaged (18 damage
+   dealt), but it is the **policy's** result and it is a window, not a fight: nothing was verified
+   to 9000 ticks, and the boss was at 77982 of 78000 life.
+3. The next round must decide the intended relationship between the learned policy and the
+   deliverable. If the deliverable is a hand-written formulaic state machine, the policy must be
+   off for every acceptance run, and the script has to be fixed against a much worse baseline.
+
+### 22.8 Status
+
+- No circuit change kept. The standoff edit was reverted as a measured null.
+- Weak wing, script only: **6 hits, death at 2466 ticks.** Weak wing, policy: 8684 ticks / 8 hits
+  / death. Strong wing, policy: 11000 / 11 / alive. **No native zero over a full fight on either
+  loadout.**
