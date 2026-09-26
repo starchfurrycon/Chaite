@@ -6626,7 +6626,7 @@ change must be justified by a mechanism, not by a sweep.
 ### 87.2 A source-encoding defect, found and repaired
 
 The sweeps were applied with PowerShell `Set-Content -Encoding UTF8`, which re-encoded the file and turned the
-three `§` characters in comments into mojibake (`鎼?`). The damage was **comments only** -- the DLL hash was
+three `§` characters in comments into mojibake. The damage was **comments only** -- the DLL hash was
 unchanged from the good build -- but it was committed, so the file is repaired against `HEAD~1`, which still
 held the correct text. All three lines are restored:
 
