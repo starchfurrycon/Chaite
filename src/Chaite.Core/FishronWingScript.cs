@@ -1187,14 +1187,28 @@ namespace Chaite.Core
             // gravity*3 = +0.40 per tick (-2.46 ... +0.34). The player needed to
             // leave the line UPWARD; the arbitrary normal sent it DOWN.
             //
-            // Projecting the player's velocity onto the two normals is the
-            // deliberate version of the question the old code was trying to ask:
-            // the escape should be the direction that takes the player off the
-            // locked line fastest, which is the one it is already moving along.
-            // This is idempotent -- it reads state, it does not compare two
-            // constants -- so it cannot be flipped by noise.
-            var rateA = normalAX * player.Velocity.X + normalAY * player.Velocity.Y;
-            var rateB = normalBX * player.Velocity.X + normalBY * player.Velocity.Y;
+            // Choose the perpendicular that carries the player FURTHER to the
+            // side it is already on: project the offset (dx,dy) onto each normal
+            // and keep the larger. The offset is the only quantity here that
+            // discriminates, because the escape is about widening the clearance
+            // between the player and the Boss, and the Boss is on the opposite
+            // side of the aim from the player by construction.
+            //
+            // MEASURED (dense live weak-wing run at the cap, the three near-miss
+            // charges of section 75): the velocity projection above was the wrong
+            // discriminator. At the charge locked at tick 3781 the plan commanded
+            // h=-1 for its whole length while the Boss closed from the LEFT, so
+            // the script ran the player straight down the approach axis -- |dx|
+            // fell 280 -> 36 and the centre distance bottomed at 86 px against
+            // the 112 px every miss in that run achieved. At tick 3245 the input
+            // produced vx = 0.00 for the entire charge.
+            //
+            // The velocity projection fails because velocity carries the history
+            // of the previous decision: a bad earlier choice becomes the reason
+            // to keep making it. The offset has no such feedback, and it is what
+            // decides whether the nearest approach clears the body.
+            var rateA = normalAX * dx + normalAY * dy;
+            var rateB = normalBX * dx + normalBY * dy;
             var normalX = rateA >= rateB ? normalAX : normalBX;
             var normalY = rateA >= rateB ? normalAY : normalBY;
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);

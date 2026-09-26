@@ -5838,3 +5838,83 @@ mechanism of failure with no remaining ambiguity:
 - **Explains:** all six failed local interventions, and why two of them traded hit count for damage.
 - **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 76. Round 115: KEPT (mixed) -- the escape normal is chosen by the player's OFFSET, not its velocity
+
+### 76.1 The defect this fixes
+
+§75's three near-miss charges were inspected frame by frame. At the charge locked at tick **3781** the plan
+commanded `h = -1` for the charge's whole length **while the Boss closed from the left**, so the script ran the
+player straight down the approach axis:
+
+```
+t=3781 dist=280 dx=+280 dy=  -4  P.v=(-3.01,-6.48) J=True w=130  plan(h=-1,dr=0,j=True)
+t=3786 dist=182 dx=+179 dy= -35  P.v=(-3.41,-6.74) J=True w=126  plan(h=-1,dr=0,j=True)
+t=3791 dist=102 dx= +75 dy= -69  P.v=(-4.04,-7.24) J=True w=121  plan(h=-1,dr=0,j=True)
+t=3794 dist= 87 dx= +36 dy= -80  P.v=( 3.85,-3.70) J=True w=118  plan(h=-1,dr=0,j=True)
+```
+
+`|dx|` fell 280 -> 36 and the centre distance bottomed at **86 px**, against the **112 px** that every miss
+in that run achieved (§75.1). At the charge locked at tick **3245** the input produced **`vx = 0.00` for the
+entire charge** -- no horizontal escape at all, and `minDist` 91.
+
+The cause was §64's own rule. Choosing the normal by projecting the **player's velocity** carries the history
+of the *previous* decision: a bad earlier choice becomes the reason to keep making it. The offset `(dx, dy)`
+has no such feedback, and it is what actually decides whether the nearest approach clears the body.
+
+### 76.2 The change
+
+`LatchChargeNormal` now projects the **offset** instead:
+
+```csharp
+var rateA = normalAX * dx + normalAY * dy;   // was: normalAX * player.Velocity.X + ...
+var rateB = normalBX * dx + normalBY * dy;
+var normalX = rateA >= rateB ? normalAX : normalBX;
+var normalY = rateA >= rateB ? normalAY : normalBY;
+```
+
+i.e. take the perpendicular that carries the player **further to the side it is already on**. **Kept.**
+
+### 76.3 Measured result: better survival, more hits
+
+```
+                     velocity normal (§64)   offset normal (§76)
+ticks                       4598                  5937      (+1339, +29%)
+HITS                           8                     9
+player damage taken          632                   694
+death                       TRUE                  TRUE
+npc contact                    3                    12
+shield rows                   48                    75
+dash-active ticks             45                    63      (+40%)
+```
+
+Per-hit detail:
+
+```
+velocity normal  hits at [905, 2433, 3264, 3792, 3918, 4096, 4151, 4209]   died at 4598
+offset normal    hits at [958, 2150, 2281, 2676, 4141, 4201, 4964, 5399, 5573]   died at 5937
+```
+
+The late lethal cluster moved from **4598** out to **4964 / 5399 / 5573**: the run now survives 29% longer and
+engages the dash 40% more often. But the hit count rose 8 -> 9, so **this is not an acceptance and it is not a
+clean improvement** -- it trades one hit for a third more fight.
+
+### 76.4 Honest status of this change
+
+It is **kept** because it is the longest-surviving weak-wing configuration measured so far (5937 vs 4598) and
+because it removes a defect that is now understood (an escape that ran down the approach axis), not because it
+approaches `hits == 0`. Under the objective's own rule -- `hits == 0` **and** alive at the cap -- it **fails**,
+as does every configuration tried. The weak-wing fight still needs the cycle-level rescheduling of §72.4, and
+the separation threshold of §75.1 (>= ~112 px minimum centre distance on **every** charge) remains the
+quantified target.
+
+### 76.5 Status
+
+- **Change kept** in `src/Chaite.Core/FishronWingScript.cs`; builds clean; verified fresh DLL
+  (16:17:54 vs source 16:17:46).
+- **Measured:** offset normal = `ticks 5937 / HITS 9 / 694 player damage / death TRUE / npc contact 12 /
+  dash-active 63`, against velocity normal's `4598 / 8 / 632 / TRUE / 3 / 45`.
+- **Improved:** survival +29%, dash engagement +40%, and the late lethal cluster pushed from 4598 to 5573.
+- **Worsened:** hit count 8 -> 9.
+- **Not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and incomplete**,
+  and no native zero is claimed.
