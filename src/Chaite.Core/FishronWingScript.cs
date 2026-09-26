@@ -89,6 +89,13 @@ namespace Chaite.Core
         /// tick, so a charge that finds the player falling cannot be escaped at
         /// all; the last few hover ticks are spent making sure it never does.</summary>
         private const int PreJumpTicks = 20;
+        /// <summary>Horizontal speed below which the charge branch stops
+        /// honouring a neutral pattern charge and simply runs away. A charge
+        /// closes at 14.7 px/tick and wing cruise is a measured 13.87, so a
+        /// player this far below cruise cannot leave the charge line in time and
+        /// has to spend the beat rebuilding speed instead of varying the
+        /// pattern.</summary>
+        private const float EscapeSpeedFloor = 6f;
 
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
@@ -615,30 +622,37 @@ namespace Chaite.Core
             {
                 horizontal = away;
             }
-            else if (player.OnGround)
+            else if (player.OnGround ||
+                Math.Abs(player.Velocity.X) < EscapeSpeedFloor)
             {
-                // A grounded player under a live charge always flees on the
-                // horizontal axis, whatever the pattern asks for.
+                // A player who is not already moving on the horizontal axis
+                // always flees on it, whatever the pattern asks for.
                 //
                 // MEASURED (dense native trace, current build, hit at tick
                 // 3019): the circuit was in this branch with a neutral pattern
-                // charge, so horizontal was 0 -- controls read L 0, R 0 -- for
-                // the entire approach while the boss descended from x 597 to
-                // x 508 at bovy 15.8 with the player pinned at plX 640. The
-                // player then jumped (plvy -6.2) straight up into the incoming
-                // body, and at contact the boxes overlapped 14 px horizontally
-                // and 29 px vertically.
+                // charge, so horizontal was 0 -- plan horizontal 0, controls
+                // L 0, R 0 -- for the entire approach while the boss descended
+                // from x 597 to x 508 at bovy 15.8 and the player sat at
+                // exactly plX 640 with vx 0.00.
+                //
+                // Keying this on being grounded alone was not enough, and the
+                // trace says why: at tick 3005 the player had wingTime 0 and
+                // was falling at vy 10.01 with slowFall set, so it was airborne
+                // rather than standing, and the grounded test did not fire. An
+                // airborne player with no horizontal speed is in the same trap
+                // as a grounded one -- the wings cannot build horizontal speed
+                // from nothing any faster than the ground can, and a charge
+                // closes at 14.7 -- so the condition is "has no horizontal
+                // escape speed", not "is touching the floor".
                 //
                 // A neutral charge is a legitimate way to vary the dodge, but
-                // only from the air, where wing cruise is a measured 13.87 and
-                // the player can leave the line on its own. From the ground it
-                // is a death sentence: ground acceleration is about
-                // 0.08 px/tick^2, so the horizontal beat cannot even start, and
-                // with no horizontal input the dash is aimed at the boss too
-                // (the dash writes velocity.X in the facing direction). Fleeing
-                // costs the pattern nothing it needs -- the pattern exists to
+                // only once the player is already leaving the line at cruise
+                // speed. From a standstill it also mis-aims the dash, which
+                // writes velocity.X in the facing direction, so a neutral
+                // horizontal points the dash at the boss as well. Fleeing costs
+                // the pattern nothing it needs: the pattern exists to
                 // desynchronise from AI_069's group clock, and that still
-                // happens while every grounded beat simply runs away.
+                // happens while a stalled beat simply runs away.
                 horizontal = away;
             }
             else if (_patternActive)

@@ -132,9 +132,32 @@ namespace Chaite.Core
                 case 1:
                 case 6:
                 case 11:
-                    output.Horizontal = !input.PlayerBelowBoss ?
-                        input.PlayerRightOfBoss ? 1 : -1 : 0;
-                    output.Vertical = input.PlayerBelowBoss ? 1 : -1;
+                    // A charge that arrives from above must be left on the
+                    // horizontal axis, not met head-on.
+                    //
+                    // This used to zero the horizontal input whenever the
+                    // player was below the boss and jump instead, which reads
+                    // as "dodge vertically" but is the one direction that
+                    // cannot work. AI_069 hovers above the player and charges
+                    // down at 14.7 to 17.0 px/tick, so a player below the boss
+                    // that climbs is moving into the body, and with horizontal
+                    // zeroed the dash is mis-aimed too, because the dash writes
+                    // velocity.X in the facing direction.
+                    //
+                    // MEASURED (dense native trace, tick 3005 of the live
+                    // formula path): plan horizontal 0, controls L 0, R 0, with
+                    // the player at plX 640 and vx 0.00 while the boss descended
+                    // from x 597 to x 508 at bovy 15.8. Contact at tick 3019
+                    // had the boxes overlapping 14 px horizontally and 29 px
+                    // vertically. The player never moved on the axis that
+                    // decided the outcome.
+                    //
+                    // The vertical escape still climbs, because a charge from
+                    // above also has to be out-climbed eventually, but it no
+                    // longer costs the horizontal axis. Native Y grows downward,
+                    // so below the boss means descending: vy positive.
+                    output.Horizontal = input.PlayerRightOfBoss ? -1 : 1;
+                    output.Vertical = 1;
                     output.Dash = input.Route ==
                             FormulaRoute.FishronFairyWingsDash ||
                         input.Route == FormulaRoute.FishronStrongWingsDash;
