@@ -7954,6 +7954,86 @@ acceptance run must pass both.
   through **both** channels. Thirty controlled interventions, one improvement (§97). The objective remains
   **active and incomplete**, and no native zero is claimed.
 
+## 110. Round 147: the charge is deterministic 16 px/tick -- and the lock ratio is the real variable
+
+### 110.1 The engine commits the charge from the lock geometry
+
+Decompiling `AI_069_DukeFishron` gives the mechanism behind every hit in this fight. At the lock
+(`NPC.cs:35341-35343`):
+
+```csharp
+Vector2 vector124 = Main.player[target].Center - base.Center;
+vector124.Normalize();
+velocity = vector124 * 16f;          // exactly 16 px/tick, no randomness
+```
+
+So the charge velocity is **exactly 16 px/tick along the vector from the Boss to the player at the lock**, and
+there is no RNG to exploit -- the owner's "固定 AI 且没有任何随机" is literally true here. `TargetClosest()` is
+re-run at that instant, so the direction is fixed by the geometry at the lock and never updated during the charge.
+This confirms the measured `bvx +15.33 / bvy +7.34` (`15.33² + 7.34² = 289 = 17²`, close to 16 plus the frame's
+own integration) and, more importantly, makes the escape a **two-axis race with known closing rates**.
+
+### 110.2 The load-bearing variable is dy/dx at the lock, and it is 0.479 against a 0.42 threshold
+
+With `velocity = 16 * unit(player - boss)`, the vertical component is `bvy = 16 * dy / hypot(dx, dy)`. The wing's
+climb ceiling is `pvy ≈ −6.2`, so the vertical race is winnable only while
+
+```
+bvy < 6.2   <=>   16 * sin(theta) < 6.2   <=>   sin(theta) < 0.388   <=>   dy/dx < 0.42
+```
+
+Measured at the lock:
+
+```
+t=4249   dx +410.2   dy +196.5   pvx +4.40  pvy +1.11   bvx +15.33  bvy +7.34
+         dy/dx = 0.479        (threshold 0.42)
+         allowed shrink before |dy| < 71  : 125.5
+         time to vertical boundary        : 125.5 / (7.34 + 6.20) = 9.3 ticks
+```
+
+**0.479 is just above 0.42**, so the Boss gets 7.34 of vertical closing against a 6.2 ceiling and wins by about
+1.1/tick. That single number is the whole loss: it is why the boxes meet at t=4268-4272 (§108.1) no matter what the
+horizontal decision is. Every earlier attempt in this session steered the escape **after** the lock, by which point
+`dy/dx` is already frozen. This is the first axis that acts **before** the commit.
+
+### 110.3 Acting before the commit: implemented, confirmed to fire, and worse
+
+`CHAITE_BAND_TARGET` kept the dive while a locked-charge stack was developing, so the lock lands at a smaller
+`dy/dx`. Unlike the previous round's gate, this one was **verified to fire** (31 times in the strong run, phase
+string present in the observation stream), so the negative result is about the rule, not about deployability:
+
+```
+off: strong 6000 / 2 hits / no death     weak 6000 / 3 hits / no death
+on:  strong 6000 / 3 hits                weak 3543 / 10 hits / DEATH
+```
+
+Both arms worse, and the weak wing dies. So the ratio is controllable in principle but steering it costs more than
+the vertical race it buys -- the same pattern as §100 and §83-ungated. Reverted and deleted.
+
+### 110.4 A scoping trap that cost a round, recorded so it is not repeated
+
+The first version of this rule was placed in `ChargeEscape` and **never fired once in 6000 ticks** (the phase string
+appeared 0 times), even though every clause of its condition was satisfied at t=4230. The cause: `Tick` calls
+`ChargeEscape` **only when `dash` is true**, i.e. only for Boss states 1/6/11. At t=4230 the Boss is still in its
+pre-charge state, so `Cruise` is the branch that runs and `ChargeEscape` is never entered. The refill guard sits in
+`Tick` for exactly this reason. **Any rule that must act during the pre-charge window has to live in `Tick`** (or
+`Cruise`), not in `ChargeEscape`. The dead copy was removed and the working one placed in `Tick` after
+`ApplyArena`.
+
+### 110.5 Status
+
+- **Established:** `AI_069` commits the charge at the lock as `Normalize(player - boss) * 16f` -- exactly
+  16 px/tick, no randomness; therefore `bvy = 16*sin(theta)` and the vertical race is winnable only while
+  `dy/dx < 0.42`; the measured lock is `dy/dx = 0.479`, which is why the Boss wins by ~1.1 px/tick and the boxes
+  meet at t=4268-4272.
+- **Refuted:** steering `dy/dx` before the lock (`CHAITE_BAND_TARGET`) -- confirmed to fire 31 times and worse on
+  both arms, with the weak wing dying at 3543. Reverted and deleted.
+- **Recorded:** a rule that must act before the lock cannot live in `ChargeEscape`, which runs only for states
+  1/6/11; it must live in `Tick` or `Cruise`.
+- **Unchanged:** committed behaviour re-verified (strong 6000/2/no death/4 contacts, weak 6000/3/no death/3).
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Thirty-one controlled interventions, one
+  improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

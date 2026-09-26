@@ -718,6 +718,68 @@ namespace Chaite.Core
                     vertical = 0;
             }
             ApplyArena(player, ref horizontal, ref vertical);
+            // Steer the VERTICAL GAP AT THE LOCK, not the escape.
+            //
+            // AI_069 commits the charge at the lock (NPC.cs:35341-35343):
+            //
+            //   Vector2 vector124 = Main.player[target].Center - base.Center;
+            //   vector124.Normalize();
+            //   velocity = vector124 * 16f;
+            //
+            // so the charge is exactly 16 px/tick along the lock geometry and
+            // there is no randomness to exploit. That turns the escape from the
+            // lock into a two-axis race with known closing rates.
+            //
+            // MEASURED (game-probe-vf-strong, t=4249):
+            //
+            //   dx +410.2  dy +196.5  pvx +4.40  pvy +1.11  bvx +15.33  bvy +7.34
+            //   the locked vector is 16 px/tick, so bvy/bvx = dy/dx = 0.479
+            //   vertical escape needs |bvy| < the wing ceiling ~6.2
+            //     -> 7.34 > 6.2, and the gap closes ~1.1/tick until contact
+            //   the wing is simply slower than the charge on the vertical axis.
+            //
+            // The load-bearing relation is dy/dx at the lock. bvy = 16*sin(theta),
+            // and |bvy| < 6.2 requires sin(theta) < 0.388, i.e.
+            //
+            //   dy/dx < 0.42
+            //
+            // The actual lock is dy/dx = 0.479 -- just ABOVE the threshold, so the
+            // Boss gets 7.34 of vertical against a 6.2 ceiling and wins the race
+            // by ~1.1/tick. Every earlier attempt steered the escape AFTER the
+            // lock; by then dy/dx is fixed and the race is already lost. This is
+            // the first thing in the session to act BEFORE the commit, when the
+            // ratio is still controllable.
+            //
+            // THIS MUST RUN IN Tick, NOT ChargeEscape. ChargeEscape is called only
+            // when the Boss is already in a charge state (1/6/11); at t=4230 the
+            // Boss is still in its pre-charge state, so `dash` is false and Cruise
+            // runs instead. A first version of this was placed in ChargeEscape and
+            // never fired once in 6000 ticks -- the phase string appeared 0 times.
+            // REFUTED: steering the vertical gap AT the lock (CHAITE_BAND_TARGET).
+            //
+            // AI_069 commits the charge at the lock (NPC.cs:35341-35343) with
+            // `velocity = Normalize(player.Center - Center) * 16f`, so the charge
+            // direction IS the lock geometry and bvy = 16*sin(theta). The measured
+            // lock is dx +410.2 / dy +196.5, i.e. dy/dx 0.479, giving bvy 7.34
+            // against a wing ceiling of about -6.2 -- the Boss wins the vertical
+            // race by ~1.1/tick and the boxes meet at t=4268-4272.
+            //
+            // The load-bearing relation is therefore dy/dx at the lock, since
+            // vertical escape needs 16*sin(theta) < 6.2, i.e. dy/dx < 0.42, and
+            // 0.479 is just above it. Keeping the dive so the lock lands at a
+            // smaller ratio is a genuinely different axis from every earlier
+            // attempt, all of which steered the escape AFTER the ratio was fixed.
+            //
+            // It was implemented, confirmed to FIRE (31 times in the strong run,
+            // phase string present), and it is WORSE on both loadouts:
+            //
+            //   off: strong 6000/2 hits/no death   weak 6000/3/no death
+            //   on:  strong 6000/3 hits            weak 3543/10 hits/DEATH
+            //
+            // Note it must live in Tick, not here: ChargeEscape runs only for
+            // states 1/6/11, but the rule has to act while the Boss is still in
+            // its pre-charge state, where Cruise is the branch that runs. Placed
+            // here it never fired once in 6000 ticks. Reverted.
             // Break the co-location, but ONLY for the strong wing.
             //
             // THE MECHANISM IS VALIDATED. §81.2 showed every strong-wing body
@@ -1104,6 +1166,13 @@ namespace Chaite.Core
                     phase = "fishron-wing-charge-descend";
                     break;
             }
+            // NOTE: the band-target rule that used to live here was UNREACHABLE.
+            // ChargeEscape is entered only when the Boss is already charging
+            // (`dash`, i.e. state 1/6/11), but the rule has to act BEFORE the
+            // lock, while the Boss is still in its pre-charge state and Cruise
+            // is the branch that runs. It now lives in Tick, after ApplyArena.
+            // Measured: in this position the phase string appeared 0 times in
+            // 6000 ticks.
             // A ready dash is *proposed* here, never issued. Issuing happens
             // after the trained residual has had its say (see Tick), because
             // latching here makes a hold indistinguishable from a burn: the
