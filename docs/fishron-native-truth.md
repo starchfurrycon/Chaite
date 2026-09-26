@@ -6463,3 +6463,61 @@ detect, so the rule has nothing to act on.
   `6000 / 8 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 85. Round 124: the wall-approach turnaround is REVERTED -- `ClearanceLeft` does not describe this wall
+
+### 85.1 The rule, and the proof that it is dead
+
+§84 established that the strong wing's three remaining wall traps catch the player at `x = 640.0` with
+`vx = 0.00` for six or more ticks, and that `ApplyArena`'s band guard is inert there because
+`_bandLeft = 276`. §84's own note says "Do not reinstate it without a native trace that shows the player
+pinned at the edge while a charge arrives"; **that trace now exists**, so the early turnaround was reinstated:
+
+```csharp
+var wallLeftX  = player.Center.X - arena.ClearanceLeft;
+var wallRightX = player.Center.X + arena.ClearanceRight;
+if (player.Center.X - wallLeftX <= WallApproachMargin && horizontal < 0) horizontal = 1;
+else if (wallRightX - player.Center.X <= WallApproachMargin && horizontal > 0) horizontal = -1;
+```
+
+with `WallApproachMargin = 220f`. **It never fired.** The proof is stronger than a counter this time: the
+plan trajectory is **bit-identical to §83 across all 5999 common ticks**, with zero differing positions or
+commands.
+
+```
+common ticks: 5999
+ticks where position/command differ: 0
+```
+
+So `arena.ClearanceLeft` is not the distance to the `x = 640` boundary. Whatever the probe populates those
+fields with for this fixture, it is not the obstruction the player actually collides with -- and because the
+branch was gated on it, the branch was unreachable. The observed left limit (min `x` over the fight is
+exactly `640.0`, against a maximum of `6085.3`) has to come from the arena's construction, not from the
+snapshot's clearance fields.
+
+### 85.2 Why the physical bound cannot simply be hardcoded here
+
+The obvious substitute -- reverse on `x < _arenaLeft + margin` using the measured `640` -- was **not**
+attempted, and the reason is §78. An earlier revision reversed 120 px early from the *band* and measured no
+difference; the note that removed it argues the player is not trapped at the edge. **That argument is now
+disproved** (§84 shows three traps at the wall), so an early turn is worth re-testing -- but it must be
+re-tested as a **cycle-level** change, because moving where the turnarounds happen moves the whole W cycle
+relative to the Boss's attack clock, which is exactly the timing §78 records as expensive. A single build is
+not enough evidence either way, and this round's budget went to establishing that the clearance-based form is
+dead rather than to that search.
+
+### 85.3 Status
+
+- **Reverted**; the rebuilt DLL is again hash `B4DA86A04A015A66`, identical to the §83 build, so §83's
+  verified numbers stand and the dead code is gone.
+- **Measured:** the wall-approach turnaround produced `6000 / 8 / FALSE / 5` (strong) and `4598 / 8 / TRUE / 3`
+  (weak), identical to §83 on both loadouts.
+- **Established (bit-exact):** the new branch changed **nothing** -- 0 of 5999 common ticks differ in position
+  or command -- so `arena.ClearanceLeft/Right` do not locate the `x = 640` obstruction for this fixture.
+- **Disproved:** the claim recorded in `ApplyArena` that the player "is not trapped at the edge either". The
+  player reaches exactly `x = 640.0` and is charged there three times in the §83 run. An early turnaround is
+  therefore still an open avenue, but only as a cycle-level change (§78).
+- **Eleven interventions attempted; one (§83) improves the fight.** The best achieved is the strong wing at
+  `6000 / 8 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
