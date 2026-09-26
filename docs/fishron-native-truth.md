@@ -6149,3 +6149,70 @@ loadout has reached `hits == 0`, and **no no-hit claim is made**.
 - **Achieved:** the strong wing now survives the 6000-tick cap without death.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 80. Round 119: a UTF-16 source corruption invalidated four runs, and the controlled experiment that settles §79
+
+### 80.1 The tooling trap
+
+While attempting a loadout-aware charge normal, the source file
+`src/Chaite.Core/FishronWingScript.cs` was overwritten in **UTF-16** (leading bytes `FF FE`) by a PowerShell
+`>` redirect. MSBuild compiled it without complaint, so **every run launched from that file was testing
+garbage** -- the file grew from 76124 to 152130 bytes and its content was no longer the reviewed source. Four
+runs were affected (`aware-weak-6k`, `aware-weak-6k-b`, `aware-strong-6k`, `forceoff-weak-6k`).
+
+The tell was that two runs of **the same build hash** gave wildly different results (`2666` versus the
+expected `5937`), which is impossible for a deterministic engine. **A hash mismatch between runs that should
+be identical is a build-integrity alarm, not a behavioural finding.** The file was restored with
+`git checkout` and verified as valid UTF-8 (`75 73 69 6E`, 76124 bytes) with a clean `git status` before any
+further measurement.
+
+### 80.2 The controlled experiment
+
+The §79 question -- does the charge-normal projection help or hurt each loadout -- was then settled with a
+**single build and a single variable**, rebuilding commit `e484e3b` (the offset projection) exactly and
+running both routes from it:
+
+```
+                    weak wing (Fairy)      strong wing (Fishron)
+e484e3b (OFFSET)    5937 / 9 hits / TRUE    5341 / 9 hits / TRUE
+9f6a984 (VELOCITY)  4598 / 8 hits / TRUE    6000 / 11 / FALSE  <- survives the cap
+```
+
+Both numbers for `e484e3b` reproduce the earlier §76 and §79 records exactly, so §79's conclusion stands and
+is now confirmed by a clean controlled run: **the offset projection helps the weak wing survive longer
+(4598 -> 5937) but kills the strong wing (survives -> dead at 5341).** The committed state `9f6a984`
+(velocity projection for both) is the only configuration under which the **strong wing survives the 6000-tick
+cap**, so it is kept.
+
+### 80.3 Why the projections differ at all
+
+The two projections are **not** equivalent, contrary to an assumption made while investigating. At a real
+lock (`game-probe-offsetdense-6000`):
+
+```
+ t=  345  dx= -443.7 dy= +209.9  vel=( 0.00,-3.68)  offset(0.00,0.00)->B   vel(+3.32,-3.32)->A   DIFFERENT
+ t=  403  dx=  +61.7 dy= -225.5  vel=(+3.01,-7.48)  offset(0.00,0.00)->A   vel(+0.93,-0.93)->A   SAME
+ t=  461  dx= +344.7 dy=   -5.8  vel=(+6.76,-9.91)  offset(0.00,0.00)->A   vel(-9.80,+9.80)->B   DIFFERENT
+ t=  519  dx= +243.4 dy= +181.0  vel=(+6.76, 0.00)  offset(0.00,0.00)->A   vel(-4.03,+4.03)->B   DIFFERENT
+```
+
+**Both offset dot products are identically zero at every lock** -- because the offset is parallel to the aim
+by construction, the very fact recorded in §64. So the offset projection does **not** discriminate at all: it
+always selects normal A, and the `>=` is deciding on floating-point noise. The **velocity** projection is the
+one that actually discriminates. This also means §64's original claim ("the offset is parallel to the aim, so
+the dot products are identically zero, therefore project the velocity") is exactly right, and §76's
+"offset projection" was a mischaracterisation: it reverted the choice to a constant.
+
+### 80.4 Status
+
+- **Source restored** to the committed `9f6a984` state: valid UTF-8, 76124 bytes, clean `git status`, rebuilt,
+  and re-verified (strong wing `6000 / 11 / death FALSE / test-time-limit`).
+- **Invalidated:** four runs launched from the UTF-16 file (`aware-weak-6k`, `aware-weak-6k-b`,
+  `aware-strong-6k`, `forceoff-weak-6k`) -- their results must not be cited.
+- **Established by controlled experiment (one build, one variable):** offset projection = weak `5937/9/TRUE`,
+  strong `5341/9/TRUE`; velocity projection = weak `4598/8/TRUE`, strong `6000/11/FALSE`.
+- **Established:** the offset projection is a **constant** (normal A), because both offset dot products are
+  identically zero at every lock; only the velocity projection discriminates.
+- **Achieved:** the strong wing survives the 6000-tick cap without death (committed state).
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
