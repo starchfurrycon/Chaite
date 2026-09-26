@@ -689,7 +689,7 @@ namespace Chaite.Core
                 // Sharkrons fired from a fixed tornado have limited range, so
                 // horizontal distance is the whole defence.
                 horizontal = _tornadoX >= player.Center.X ? -1 : 1;
-                vertical = player.OnGround ? 0 : 1;
+                vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-tornado-clear";
                 return;
             }
@@ -710,8 +710,26 @@ namespace Chaite.Core
                 {
                     _personalSpaceLatched = true;
                     _personalSpaceHorizontal = AwayFromBossAxis(gap);
+                    // Vertical escape increases the gap on the vertical axis.
+                    //
+                    // This asked for "climb" whenever the Boss was above, which
+                    // is the one direction that closes the gap: AI_069 hovers
+                    // above the player and begins its charge from there, so a
+                    // climb meets the incoming body. The comment three branches
+                    // below already warns about exactly that for the pre-charge
+                    // jump ("a climb from a few tens of pixels below the hover
+                    // point flies straight into it") but the personal-space
+                    // latch never got the same correction.
+                    //
+                    // MEASURED (dense native trace, hit at tick 3019): the Boss
+                    // charged straight down at bovy 15.8 from x 609 while the
+                    // player held x 640 and climbed with vy -6.2, so the body
+                    // was moving down onto a player moving up. Contact boxes
+                    // overlapped 14 px horizontally and 29 px vertically.
+                    // Native Y grows downward, so running away from a Boss above
+                    // means descending: vy positive.
                     _personalSpaceVertical =
-                        boss.Center.Y >= player.Center.Y ? -1 : 1;
+                        boss.Center.Y >= player.Center.Y ? 1 : -1;
                 }
                 horizontal = _personalSpaceHorizontal;
                 vertical = _personalSpaceVertical;
@@ -742,7 +760,7 @@ namespace Chaite.Core
                 // The Sharknado is a fixed column near the Boss. Clear it
                 // horizontally for the whole phase; the column cannot follow.
                 horizontal = AwayFromBossAxis(gap);
-                vertical = player.OnGround ? 0 : 1;
+                vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-sharknado-exit";
                 return;
             }
@@ -753,7 +771,18 @@ namespace Chaite.Core
                 // explode, so the useful input is to keep crossing their line
                 // rather than to try to outrun them.
                 AwayFromBoss(player, in boss, out horizontal, out vertical);
-                vertical = player.OnGround ? 0 : 1;
+                // Grounded escapees jump. The escape branches used to ask for
+                // "no vertical input" on the ground, which reads as neutral, but
+                // the wing circuit has no ground mobility at all: measured in
+                // the dense native trace, a landed player under a live charge
+                // sits at |vx| 3.5 falling to 0.2, while the charge closes at
+                // 14.7 px/tick horizontally. A grounded player that does not
+                // jump is simply stationary, and a charge that locks its line
+                // once and then travels 476 px cannot be left by standing on it.
+                // Vertical -1 is what raises controlJump (see output.Jump =
+                // vertical < 0), and wing ascent is slow, so the jump has to be
+                // spent early rather than at contact.
+                vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-bubble-line";
                 return;
             }
@@ -764,14 +793,14 @@ namespace Chaite.Core
                 // width stays available to run back into. Fleeing the Boss
                 // reaches that edge on its own and never crosses him.
                 horizontal = AwayFromBossAxis(gap);
-                vertical = player.OnGround ? 0 : 1;
+                vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-tornado-bait";
                 return;
             }
             if (Math.Abs(gap) < StandoffPixels)
             {
                 horizontal = AwayFromBossAxis(gap);
-                vertical = player.OnGround ? 0 : 1;
+                vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-standoff";
                 return;
             }
@@ -877,16 +906,32 @@ namespace Chaite.Core
         private static void AwayFromBoss(PlayerSnapshot player,
             in TargetSnapshot boss, out int horizontal, out int vertical)
         {
+            // Flee along the centre-to-centre vector, not perpendicular to it.
+            //
+            // The perpendicular form is the reviewed counter-play for a charge
+            // that has already LOCKED its line: once the Boss is committed, the
+            // shortest way off that line is sideways. Applied as the default
+            // escape for every close state it does the opposite of what the
+            // fight needs, because the perpendicular to a vertical Boss-to-player
+            // vector is purely HORIZONTAL and the perpendicular to a horizontal
+            // one is purely VERTICAL. A Boss hovering directly above therefore
+            // produced a purely vertical escape, which widened nothing on the
+            // axis the charge was about to travel.
+            //
+            // MEASURED (dense native trace, hit at tick 3019): the Boss charged
+            // straight down (bovx -6.2, bovy 15.8) from x 609 while the player
+            // stood at x 640 with vx 0.0 for sixteen consecutive ticks, and the
+            // boxes overlapped by 14 px horizontally and 29 px vertically at
+            // contact. The player never moved on the axis that mattered.
+            //
+            // Running away from the centre instead always increases both gaps
+            // at once, which is the property that matters when the charge's line
+            // is not yet known. Transverse evasion is still wanted once a charge
+            // is live and its line is fixed, and that is handled by the charge
+            // branch rather than by this helper.
             var dx = boss.Center.X - player.Center.X;
             var dy = boss.Center.Y - player.Center.Y;
-            var perpX = dy;
-            var perpY = -dx;
-            if (perpX * -dx < 0f)
-            {
-                perpX = -perpX;
-                perpY = -perpY;
-            }
-            Split(perpX, perpY, out horizontal, out vertical);
+            Split(-dx, -dy, out horizontal, out vertical);
         }
 
         /// <summary>True once the current hover is close enough to its end that
@@ -916,8 +961,31 @@ namespace Chaite.Core
             else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;
         }
 
-        /// <summary>Decomposes a separation vector into native input. An axis
-        /// below the dominance fraction is deliberately left neutral.</summary>
+        /// <summary>Decomposes a separation vector into native input.
+        ///
+        /// Both axes are engaged whenever they carry any component at all. The
+        /// earlier form left an axis neutral when it fell below
+        /// <see cref="DominantAxisFraction"/> of the escape vector, on the
+        /// theory that only the dominant axis was worth spending. Native
+        /// measurement refutes that for this fight: a charge locks its velocity
+        /// once, at state entry, and then travels its fixed distance in a
+        /// straight line, so what decides contact is whether the player has
+        /// moved off that line by the time it arrives -- not how elegant the
+        /// escape vector looked. Zeroing the small axis threw away the only
+        /// component that arrives at full speed on the first tick, and left the
+        /// player coasting with no reason to be anywhere.
+        ///
+        /// MEASURED (dense native trace, tick 4182 hit): for the 24 ticks
+        /// before a body hit the circuit held the player at |vx| 5.1 falling to
+        /// 0.2 with wingTime 0, i.e. standing on the ground, and the horizontal
+        /// gap at contact was about 25 px against a 75 px boss half-width. The
+        /// circuit did not dodge into the boss; it stopped inside the boss's
+        /// footprint and waited. Entry distances of the ten body hits (197 to
+        /// 1020 px) overlap the clean charges at 197 and 233 px, so distance
+        /// does not separate hits from misses and speed does.
+        ///
+        /// A degenerate vector still climbs, because a separation of zero has no
+        /// direction to run in and altitude is the only escape left.</summary>
         private static void Split(float x, float y, out int horizontal,
             out int vertical)
         {
@@ -931,8 +999,8 @@ namespace Chaite.Core
             }
             var nx = x / length;
             var ny = y / length;
-            if (Math.Abs(nx) >= DominantAxisFraction) horizontal = nx > 0f ? 1 : -1;
-            if (Math.Abs(ny) >= DominantAxisFraction) vertical = ny > 0f ? 1 : -1;
+            if (nx != 0f) horizontal = nx > 0f ? 1 : -1;
+            if (ny != 0f) vertical = ny > 0f ? 1 : -1;
         }
 
         private static bool IsFinite(float value) =>
