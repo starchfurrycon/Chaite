@@ -1083,3 +1083,121 @@ revision. The pinned native result is unchanged: weak wing `validBattle True`, t
 hits 8, boss damage 37; strong wing 11 hits alive at the cap, both loadouts
 `FishronFairyWingsDash` / `FishronStrongWingsDash` respectively. **No native zero on either
 loadout.**
+
+## 17. Round 56: the native charge lock, and the owner's perpendicular rule
+
+The owner supplied the mechanic that this document had been missing, and it is now confirmed
+in the native code.
+
+### 17.1 The lock, read from the decompile
+
+`NPC.cs AI_069_DukeFishron`, in the `num28 == 1` case:
+
+```csharp
+ai[0] = 1f;  ai[1] = 0f;  ai[2] = 0f;
+velocity = Vector2.Normalize(player.Center - center) * num7;
+rotation = (float)Math.Atan2(velocity.Y, velocity.X);
+```
+
+`num7` is 17 in expert and 23 when enraged (`flag4`, below 15 percent life). The charge
+velocity is computed **once, on the single tick the boss enters a charge state**, from the
+player's position on that tick. States 1, 6 and 11 never rewrite `velocity`, and the state-1
+wind-up (`ai[2] >= num6`, `num6` = 28 in expert) runs while the boss is already travelling at
+that speed. The whole approach is therefore downhill from one decision made on one tick.
+
+Measured over 40 locked charges in a native run: locked speed was 17.0 on 39 of them and 23.0
+on one (the enraged case), and the boss entered the charge through state 1 on all 40.
+
+### 17.2 Why the dodge must be perpendicular
+
+`maxRunSpeed` is a measured 4.71 and the locked charge closes at 17. The charge line
+therefore cannot be outrun, which is exactly the owner's point: pulling away along the charge
+direction does not work because the player is too slow. The only axis that works is normal to
+the locked line, and the owner's rule is the practical form of that geometry -- dodge
+diagonally up when the boss is above, diagonally down when it is below, and only run straight
+away when the lock was taken from far enough out.
+
+The measured lock geometry supports it. Over the 40 charges, lock distance ranged from 241.6
+to 1183.0 px (median 405.5) and the boss was above the player at the lock on most of them.
+For the near-horizontal locks (`|aim_y|` about 0.02) the required perpendicular is almost
+entirely vertical, which is the diagonal; for the diagonal locks (`|aim_y|` about 0.5 to 0.7)
+it has a large horizontal component, which is the run.
+
+### 17.3 What the old circuit did, measured
+
+The flee branch recomputed the horizontal every tick from the boss's current side. AI_069
+crosses the player during a charge, so the sign was re-derived from a value that flips at the
+crossing. Measured on the native stream, before the change: of 40 locked charges, **27 held
+the correct normal for less than half the episode**, and the diagonal episodes spent **67 to
+100 percent** of their length moving *opposite* the normal, i.e. back across the locked line.
+
+### 17.4 The change
+
+`FishronWingScript` now latches the perpendicular once per charge. `LatchChargeNormal` runs on
+the transition into a charge state, computes the locked aim from the same geometry native
+used, picks the perpendicular that increases the player's clearance from the locked line, and
+stores its horizontal and vertical signs in `_chargeNormalHorizontal` /
+`_chargeNormalVertical`, keyed by `_chargeNormalSequence`. `ChargeEscape` uses the latched
+horizontal instead of the per-tick `away`, and the vertical beats follow the latched vertical
+so that a normal pointing down is never overridden by an ascend beat.
+
+### 17.5 The result is a null result, and the reason matters
+
+Both loadouts measured **exactly** their previous figures after the change:
+
+| loadout | before | after |
+|---|---|---|
+| weak (Fairy Wings) | ticks 8684, hits 8, damage 37, death | ticks 8684, hits 8, damage 37, death |
+| strong (Fishron Wings) | 11000 ticks, hits 11, damage 76, npc contact 3 | 11000 ticks, hits 11, damage 76, npc contact 3 |
+
+The latch is the correct implementation of the owner's rule and is kept, but it did not move
+the outcome, so the locked-charge dodge is **not the binding constraint**. The dense stream
+says what is.
+
+### 17.6 What the dense stream says the hits actually are
+
+Eight life drops, and the same signature on every one:
+
+```
+ tick   dx     dy    |vx|   vy   wingTime  bossState  L R J D
+ 3019   71.8   42.0   4.50  -3.50    130        0      0 1 1 1
+ 3807   46.9  -61.9   4.50  -3.50    119        1      1 0 1 1
+ 5801   12.2  -57.9   4.50  -3.50      0        1      1 0 1 1
+ 7204  -51.0  -65.8   0.00  -3.50      0        0      1 0 1 1
+ 7538   -1.4  -62.6   4.50  -3.50      0        0      1 0 1 1
+ 7884   16.3   51.4   4.50  -3.50      0        1      0 0 0 0
+ 8282  393.5  198.2   4.50  -3.50      0        1      0 1 1 1
+ 8322 -105.8  -15.0   4.50  -3.50      0        0      0 0 1 1
+```
+
+Three things follow, and they redirect the next round:
+
+1. **`|vx| 4.50, vy -3.50` is identical on all eight**, which is the knockback signature
+   already established in section 13.2, not the player's own motion. The last column pair is
+   therefore not evidence about the approach.
+2. **`wingTime` is 0 on six of the eight.** The player is out of flight budget at the contact.
+3. **Contact is diagonal, not head-on.** Against a 150x100 boss and a 20x42 player, vertical
+   contact needs `|dy| < 71` and horizontal needs `|dx| < 85`. Five of the eight sit inside
+   both, but the pattern is a player with no flight budget being caught at 12 to 72 px on the
+   diagonal, and two more are caught by Detonating Bubbles (type 384, `vx` exactly 0) at 440
+   and 107 px rather than by the body at all.
+
+So the remaining constraint is **flight budget plus the diagonal escape**, not the choice of
+charge direction. Section 13.3 reached the same conclusion from the other end (`wingTime == 0`
+before 14 of 19 hits) and this round confirms it on the post-change build.
+
+### 17.7 Housekeeping
+
+- `python tools/analyze-lock-geometry.py <run>` reports the lock geometry and the required
+  perpendicular component per charge.
+- `python tools/analyze-charge-episode.py <run>` reports the held fraction of the normal, the
+  fraction spent opposite it, and the vertical correctness per episode.
+- `python tools/analyze-damage-source.py <run>` reports every life drop with the boss state,
+  boss distance and nearby hostile projectile types, which is how the bubbles were separated
+  from body contacts.
+- The test suite is at **750 passed, 8 failed**, and all 8 failures are a pre-existing missing
+  fixture (`tests/Chaite.Tests/fixtures/observation-conformance.jsonl`), unrelated to this
+  change.
+
+**No native zero on either loadout.** The pinned figures stand at weak 8 hits / 37 damage /
+death, strong 11 hits / 76 damage / alive at the cap.

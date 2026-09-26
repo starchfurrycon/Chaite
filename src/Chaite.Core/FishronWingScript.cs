@@ -97,6 +97,41 @@ namespace Chaite.Core
         /// pattern.</summary>
         private const float EscapeSpeedFloor = 6f;
 
+        /// <summary>Sign of the horizontal component of the latched charge
+        /// normal, and the sign of its vertical component.
+        ///
+        /// Native lock, read from AI_069: the charge velocity is computed and
+        /// frozen on the single tick the Boss enters charge state 1 (or 6, or
+        /// 11) -- `velocity = Vector2.Normalize(player.Center - center) * num7`,
+        /// with num7 = 17 in expert and 23 when enraged. States 1/6/11 never
+        /// rewrite velocity, and the state-1 wind-up lasts num6 = 28 ticks
+        /// during which the Boss is already travelling at that speed, so the
+        /// whole approach is downhill from one decision made on one tick.
+        ///
+        /// That single tick is what makes the dodge a perpendicular one. The
+        /// locked speed is 17 against a measured maxRunSpeed of 4.71, so the
+        /// player can never open the gap along the charge line; the only axis
+        /// that works is normal to it. The owner's rule states the same thing
+        /// operationally: when the Boss begins a locked charge, dodge diagonally
+        /// up if it is above the player and diagonally down if it is below, and
+        /// only run straight away when the lock distance is already large.
+        ///
+        /// Both signs are latched once per charge rather than recomputed each
+        /// tick. Recomputing the horizontal from the Boss's current side is what
+        /// the flee branch used to do, and AI_069 crosses the player during a
+        /// charge, so the sign flipped exactly while the body was on top of the
+        /// player. Measured on the native stream: of 40 locked charges, 27 held
+        /// the correct normal for less than half the episode and the diagonal
+        /// ones (aim_y about -0.5) spent 67 to 100 percent of the charge moving
+        /// *opposite* to the normal, i.e. back across the locked line.</summary>
+        private int _chargeNormalHorizontal;
+        private int _chargeNormalVertical;
+        /// <summary>The charge sequence the normal signs belong to, so a new
+        /// lock re-latches and the rest of the episode reuses them. Starts at -1
+        /// and is only read as "a lock is in force" once a lock has happened, so
+        /// the very first charge of a fight latches like every later one.</summary>
+        private int _chargeNormalSequence = -1;
+
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
         /// Why this knob exists, measured rather than reasoned: the reviewed
@@ -270,6 +305,9 @@ namespace Chaite.Core
             _patternDirection = 0;
             _patternActive = false;
             _tornadoTicksLeft = 0;
+            _chargeNormalHorizontal = 0;
+            _chargeNormalVertical = 0;
+            _chargeNormalSequence = -1;
             _previousState = int.MinValue;
             _previousSequence = int.MinValue;
             _previousTimer = 0;
@@ -316,6 +354,12 @@ namespace Chaite.Core
 
             var state = input.NativeState;
             var dash = state == 1 || state == 6 || state == 11;
+            // The lock. Native computes and freezes the charge velocity on this
+            // one tick, so this is the last moment the player's position can
+            // still influence where the charge goes, and the first moment the
+            // real dodge may begin. Moving before it only re-aims the charge.
+            if (dash && _previousState != state)
+                LatchChargeNormal(player, in boss, input.NativeSequence);
             var stateEdge = state != _previousState ||
                 input.NativeSequence != _previousSequence;
             if (stateEdge)
@@ -667,6 +711,18 @@ namespace Chaite.Core
             {
                 horizontal = _legDirection;
             }
+            else if (_chargeNormalSequence >= 0)
+            {
+                // The locked charge has a latched perpendicular. It outranks the
+                // pattern and the leg schedule because those exist to move the
+                // player around the arena, while this exists to leave the line
+                // the Boss has already committed to. Recomputing `away` from the
+                // Boss's current side instead -- which is what every branch below
+                // does -- flips the sign as the Boss crosses the player, and the
+                // measured result was that diagonal charges spent most of their
+                // length travelling back across the locked line.
+                horizontal = _chargeNormalHorizontal;
+            }
             else
             {
                 horizontal = away;
@@ -695,15 +751,31 @@ namespace Chaite.Core
                     // (Player.WingMovement restores wingTime on landing), so
                     // this is not spent twice, and being airborne is what makes
                     // the horizontal beat mean anything.
-                    vertical = player.OnGround ? -1 : 0;
+                    //
+                    // The latched normal decides the vertical beat as well: a
+                    // mostly horizontal locked charge has a mostly vertical
+                    // normal, and that diagonal is the whole escape. The float
+                    // parts of the closed-loop pattern never applied here -- apex
+                    // taps and beat schedules cannot move the player off a line
+                    // the Boss has already frozen.
+                    vertical = _chargeNormalSequence >= 0
+                        ? _chargeNormalVertical
+                        : (player.OnGround ? -1 : 0);
                     phase = "fishron-wing-charge-horizontal";
                     break;
                 case 1:
-                    vertical = -1;
+                    // The ascend beat always asks for lift, but a normal that
+                    // wants to descend keeps that instead: climbing back onto the
+                    // locked line is the one direction that must not happen.
+                    vertical = _chargeNormalSequence >= 0 && _chargeNormalVertical > 0
+                        ? 1
+                        : -1;
                     phase = "fishron-wing-charge-ascend";
                     break;
                 default:
-                    vertical = 1;
+                    vertical = _chargeNormalSequence >= 0 && _chargeNormalVertical < 0
+                        ? -1
+                        : 1;
                     phase = "fishron-wing-charge-descend";
                     break;
             }
@@ -997,8 +1069,52 @@ namespace Chaite.Core
 
         /// <summary>True once the current hover is close enough to its end that
         /// the next charge is imminent.</summary>
-        private bool PredictChargImminent(int state, int timer)
+        /// <summary>Decides the charge dodge on the frame the Boss locks, and
+        /// keeps that decision for the rest of the episode.
+        ///
+        /// aim is the locked charge direction, normalised, read straight off the
+        /// geometry native used: the charge is aimed from the Boss centre to the
+        /// player centre. The dodge axis is the perpendicular, because the locked
+        /// speed (17, or 23 enraged) is far above maxRunSpeed (4.71) and the
+        /// charge line cannot be outrun. Of the two perpendiculars the one that
+        /// increases the player's clearance from that line is chosen.
+        ///
+        /// The owner's rule is the practical form of the same geometry: a locked
+        /// charge leaves the player a diagonal dodge, upward when the Boss is
+        /// above and downward when it is below, and straight-away running only
+        /// when the lock was taken from far enough out. A mostly horizontal
+        /// charge has a mostly vertical normal, which is that diagonal; a shallow
+        /// one has a large horizontal component, which is the straight run.</summary>
+        private void LatchChargeNormal(PlayerSnapshot player, in TargetSnapshot boss,
+            int sequence)
         {
+            _chargeNormalSequence = sequence;
+            var dx = player.Center.X - boss.Center.X;
+            var dy = player.Center.Y - boss.Center.Y;
+            var lockDistance = (float)Math.Sqrt(dx * dx + dy * dy);
+            if (lockDistance <= 0.01f)
+            {
+                _chargeNormalHorizontal = 0;
+                _chargeNormalVertical = 0;
+                return;
+            }
+            var aimX = dx / lockDistance;
+            var aimY = dy / lockDistance;
+            // The two unit perpendiculars to the aim.
+            var normalAX = -aimY;
+            var normalAY = aimX;
+            var normalBX = aimY;
+            var normalBY = -aimX;
+            // Prefer the one that takes the player further off the locked line.
+            var dotA = normalAX * dx + normalAY * dy;
+            var dotB = normalBX * dx + normalBY * dy;
+            var normalX = dotA >= dotB ? normalAX : normalBX;
+            var normalY = dotA >= dotB ? normalAY : normalBY;
+            _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);
+            _chargeNormalVertical = Math.Abs(normalY) < 0.2f ? 0 : (normalY > 0f ? 1 : -1);
+        }
+
+        private bool PredictChargImminent(int state, int timer)        {
             if (state != 0 && state != 5 && state != 10) return false;
             var limit = _hoverLimit[state];
             if (limit <= 0) return false;
