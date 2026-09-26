@@ -2186,3 +2186,77 @@ Unchanged and still measured:
   the diagnostic is reverted.
 - Weak wing, policy off, guard 0: **4-5 hits, alive at 2400-4000 ticks.**
 - **No native zero over a full fight on either loadout.**
+
+## 28. Round 67: floor-clamp and altitude experiments are refuted; the budget is the binding axis
+
+Section 27 put the failure back on vertical cadence. This round tested three structural answers to
+it on whole native fights. All three are refuted, and the measurements name the binding constraint.
+
+### 28.1 The floor clamp is a real defect, but not the binding one
+
+`ApplyArena` resolves a descend that would reach the floor by setting the vertical to 0:
+`FishronWingScript.cs:1239`, `else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;`.
+That is neither floor-safe nor a dodge. 0 clears `controlJump`, and a released jump with the wings
+out **holds altitude** rather than falling (`Player.cs:26992` refills only on `velocity.Y == 0 ||
+sliding`), so the player neither falls nor climbs and stays on the locked line with
+`controlDown` released.
+
+Three resolutions were built and swept in one invocation (weak wing, policy off, guard 0):
+
+| `CHAITE_FLOOR_ESCAPE` | behaviour | 3000 ticks | 8000 ticks |
+|---|---|---|---|
+| 0 | reviewed circuit (`vertical = 0`) | **4 hits** | **9 hits**, death at 5937 |
+| 1 | climb instead | 6 hits | - |
+| 2 | keep the descend, let the floor stop it | **2 hits** | **11 hits**, death at 5742 |
+| 3 | room-aware flip (identical to 1 at the floor) | 6 hits | - |
+
+Mode 2 leads by 2 hits at 3000 ticks and **loses by 2 at 8000**, with 210 boss damage against 126.
+Mode 1/3 are worse at both horizons. The 3000-tick rank is therefore horizon-dependent and mode 2
+is not an improvement; the clamp remains a defect worth fixing for clarity, but it is not what
+costs the hits.
+
+### 28.2 Minimum altitude has no headroom to reclaim
+
+The hypothesis was that the circuit fights from a thin band near the floor (at lock: `py 7835.7`
+against arena floor 7952, i.e. 116 px) and wastes the arena's 216 tiles of height. A
+`CHAITE_MIN_ALTITUDE` floor was added that forces a climb whenever the branch wants to descend
+below a given altitude while airborne with budget left:
+
+| `CHAITE_MIN_ALTITUDE` | 4000 ticks |
+|---|---|
+| 0 (off) | **4 hits**, alive |
+| 1500 | 7 hits, **death at 2193** |
+| 2500 | run did not complete |
+
+And the premise is wrong. Over the run, the player's centre y is **min 5899, max 7979, mean 6987**
+-- a mean that sits exactly on the upper platform row (`arenaGroundY - 120` tiles = 6992). The
+distribution is
+
+```
+ y 5500-5999 :   9   y 6500-6999 :  96   y 7500-7999 : 39
+ y 6000-6499 :  25   y 7000-7499 :  48
+```
+
+so the circuit already uses most of the arena and spends its time near the top platform, not pinned
+to the floor. Forcing it higher only removes the downward room it still sometimes needs, and
+1500 px did exactly that.
+
+### 28.3 The binding axis is the wing budget
+
+In the same run, the player is airborne with an empty bar on **119 of 217 sampled rows (55%)**, and
+holds `down=1, jump=0` on **112 of 217 (52%)**. Sections 23-24 measured the same thing from the
+drain side. The platform rows sit one wing charge apart (60 tiles) *by design*, so an empty bar is
+supposed to be answered by landing on the next row and refilling; the guard does release the jump
+for that. What the two refuted experiments show is that neither the floor clamp nor the altitude
+band is where the hits come from, which leaves the vertical **cadence** -- when to spend the charge
+and when to land -- as the only lever left on this axis, and that is a scheduling problem over a
+fixed 130-tick resource, not a clamp.
+
+### 28.4 Status
+
+- **Reverted:** `CHAITE_FLOOR_ESCAPE` and `CHAITE_MIN_ALTITUDE` and their uses
+  (`git checkout -- src/Chaite.Core/FishronWingScript.cs`). The refill guard is kept.
+- **Refuted:** floor-escape modes 1, 2, 3 as improvements; minimum altitude as an improvement.
+- Weak wing, policy off, guard 0: **4 hits at 3000-4000 ticks**; **both refuted experiments die
+  faster** than the baseline over 6000+ ticks.
+- **No native zero over a full fight on either loadout.**
