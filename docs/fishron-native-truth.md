@@ -8515,6 +8515,119 @@ the ruling cannot silently regress.
 - **Not achieved:** `hits == 0` at the 6000-tick cap with the weapon silent on either loadout. The objective
   remains **active and incomplete**, and no no-hit claim is made for any DPS below 2000.
 
+## 118. Round 154: what actually kills the player, measured four ways
+
+This section replaces inference with mechanism. Four questions were open after §117 and all four now have
+measured answers.
+
+### 118.1 The bubble model was a red herring, and the knob proved it
+
+§117.4 attributed the low-DPS deaths to Detonating Bubbles. That was WRONG, and the experiment that refuted it is
+worth recording because it is the cheapest possible refutation.
+
+`CHAITE_SIM_BUBBLE_BREAK` now sets the per-tick break chance, and it demonstrably works:
+
+```
+chance 0.00 -> BUBBLE tick=8160 seen=157 broken=0    (157 bubbles alive)
+chance 1.00 -> BUBBLE tick=8160 seen=157 broken=157  (0 bubbles alive)
+```
+
+Both runs produce the **byte-identical** outcome (6 hits, death at 8210, boss at 26790). If bubbles were the
+killer, eliminating every bubble must have changed something. It changed nothing, so they were never the killer.
+The `BUBBLE` census is kept as instrumentation, and the default remains the historical 0.35 so every earlier
+measurement is untouched.
+
+### 118.2 The real killers, by damage
+
+Reading `hurt-observations.jsonl` with the source block, over four 20000-tick runs at 300 DPS:
+
+```
+run            total   from NPC 370 (the boss body)  from projectiles
+rt300-s0         757              389                       368
+rt300-s386       941              847                        94
+rt300-w0         898              627                       271
+rt300-w386       948              894                        54
+```
+
+**NPC 370 is Duke Fishron's own body** and it is the dominant source in every run. The projectiles are:
+
+- **Projectile 386 -- the Cthulhunado.** `SetDefaults`: `width 150; height 42; hostile = true; penetrate = -1;
+  aiStyle = 64; tileCollide = false; timeLeft = 840`. Phase 3 only. The player walks into it and stays in its
+  body, so hits land exactly **40 ticks apart** (the deferral from §114) until it dies.
+- **Projectile 384** -- base damage 25, also hostile, 36-58 per hit.
+
+### 118.3 The Cthulhunado is the strong wing's binding constraint
+
+A scoped diagnostic (`CHAITE_SIM_RETIRE_PROJECTILE`, OFF by default, logged as non-evidence) removes it:
+
+```
+strong, 300 DPS, 20000-tick cap:
+  without retire -> died 10860, boss at 26363
+  retire 386     -> died 15984, boss at    715   <-- 775 HP short of a kill
+weak, 300 DPS:
+  without retire -> died  9919, boss at 31030
+  retire 386     -> died 10851, boss at 26276   <-- barely moves
+```
+
+So the strong wing's phase-3 problem **is** the Cthulhunado, and one mechanical fix there would nearly complete
+the 300 DPS arm. The weak wing's problem is elsewhere. A Cthulhunado does not die to gunfire, so retiring it is a
+**capability probe, not acceptance evidence**, and the knob is documented as such in the source.
+
+### 118.4 The discriminator is PERPENDICULAR travel, not along-axis travel
+
+Correlating all 106-163 charges per run against the hurt ticks:
+
+```
+                                  HIT charges      CLEAN charges
+playerTravelPerpendicularAtMin     3.7 -  82       187 - 235
+minDistance                        8.9 - 154       321 - 446
+playerTravelAlongAxisAtMin       -127 - +235      -279 - +182
+```
+
+Hits happen when the perpendicular escape is **4-80 px**, i.e. the player stays essentially inside the committed
+line; clean charges clear it with 187-235 px. Along-axis travel does **not** discriminate -- `-127` appears in a
+hit and `-279` in a clean charge -- so the "closing speed" reading is confirmed as superficial, independently of
+and consistent with the older refutation recorded in the source.
+
+### 118.5 The wing economy: a third of the fight has no climb
+
+`WINGECO` reports the share of ticks with an empty wing bar:
+
+```
+strong (max 180): empty 35.1-37.7%   low 10.8-11.5%   min 0
+weak   (max 130): empty 25.4-26.2%   low  8.5- 8.9%   min 0
+```
+
+And the hit charges show why this matters: the weak wing arrives at its hits with the bar nearly spent
+(`116/130`, `98/130`, `0/130`), while the strong wing arrives with it full (`148/180`, `180/180`, `180/180`).
+No wing time means no climbing, and the vertical race decides a normally-aimed dodge.
+
+The native refill is `Player.cs:26992` -- `if (((velocity.Y == 0f || sliding) && releaseJump) || (autoJump &&
+justJumped)) wingTime = wingTimeMax;` -- so it needs a **release transition on a zero-vertical-velocity frame**.
+A live sample shows the condition apparently satisfied and the bar still empty:
+
+```
+tick=5100 max=180 now=0 emptyPct=37.7 lowPct=11.5 airborne=False vy=0.00 releaseJump=True
+```
+
+That is the sharpest remaining lead: the circuit believes it has refilled when the engine has not refilled.
+It is recorded as an open hypothesis, not a conclusion -- frame ordering between the commanded controls and
+`Player.Update` has not yet been traced.
+
+### 118.6 Status after this round
+
+- **Established:** bubbles are not the killer (proved by a working knob with an identical outcome).
+- **Established:** the boss's own body is the dominant damage source; projectile 386 (Cthulhunado) is second and
+  is phase-3-only; projectile 384 is a minor third.
+- **Established:** retiring the Cthulhunado takes the strong wing from 10860 to **15984 ticks and 715 HP from the
+  kill** at 300 DPS, and changes the weak wing almost not at all -- so the two arms have DIFFERENT binding
+  constraints.
+- **Established:** perpendicular escape distance (not along-axis) separates hits from clean charges.
+- **Established:** 25-38% of the fight is spent with an empty wing bar.
+- **Unchanged and still met:** strong wing survives-and-kills from 600 DPS, weak wing from 1200 DPS, and the
+  strong wing still records a **zero-hit kill at 2000 DPS** (2881 ticks) after all of the above.
+- **Still not met:** the 300 DPS floor, and no no-hit claim is made below 2000 DPS.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

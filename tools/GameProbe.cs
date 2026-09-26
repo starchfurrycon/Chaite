@@ -1638,6 +1638,26 @@ public static class ChaiteGameProbe
         if(float.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_DPS"),
             NumberStyles.Float,CultureInfo.InvariantCulture,out parsedDps) && parsedDps>0f)
             simulatedDpsOverride=parsedDps<1f?1f:(parsedDps>100000f?100000f:parsedDps);
+        // How reliably the simulated player shoots down Detonating Bubbles. Read
+        // once, at startup, for the same replayability reason as the DPS band: a
+        // chance that drifted mid-session would make two runs incomparable. Out
+        // of range values are rejected loudly rather than clamped, because a
+        // silent clamp would let a typo quietly change how lethal the fight is.
+        double parsedBubbleBreak;
+        if(double.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_BUBBLE_BREAK"),
+            NumberStyles.Float,CultureInfo.InvariantCulture,out parsedBubbleBreak))
+        {
+            if(parsedBubbleBreak<0.0 || parsedBubbleBreak>1.0)
+                throw new ArgumentOutOfRangeException("CHAITE_SIM_BUBBLE_BREAK",
+                    "must be within 0..1");
+            simulatedBubbleBreakChance=parsedBubbleBreak;
+        }
+        // DIAGNOSTIC ONLY, see ApplyHazardDiagnostic. Parsed here with the rest
+        // of the simulation knobs so a run stays replayable from its environment.
+        int parsedRetire;
+        if(int.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_RETIRE_PROJECTILE"),
+            NumberStyles.Integer,CultureInfo.InvariantCulture,out parsedRetire) && parsedRetire>=0)
+            simulatedRetireProjectileType=parsedRetire;
         // The distance falloff band for the simulated output, in tiles (1 tile =
         // 16 px). CHAITE_SIM_DPS still pins the FULL-range DPS; these two move
         // only the range at which that DPS is delivered. Read once, here, for the
@@ -3933,6 +3953,29 @@ public static class ChaiteGameProbe
     const float SimulatedDpsMax = 1200f;
     const double DetonatingBubbleBreakChance = 0.35;
     const int DetonatingBubbleType = 371;
+    /// <summary>Per-tick chance that the simulated player breaks a Detonating
+    /// Bubble.
+    ///
+    /// The owner ruled that bubbles are a one-HP breakable projectile and are
+    /// NOT a threat, because a real player shoots them down as they appear. That
+    /// reasoning only holds if the fixture models the shooting, and the default
+    /// 0.35 was calibrated for the short training episodes, where a bubble's
+    /// lifetime is a few ticks anyway.
+    ///
+    /// Over a FULL kill-length fight the calibration stops being harmless.
+    /// Measured at the low end of the DPS band: with the movement circuit frozen
+    /// and no weapon fire, bubbles are produced faster than a 0.35 roll retires
+    /// them, so they accumulate and become the LARGEST single cause of death --
+    /// `bi400-strong` died to 155+63 of bubble damage and `bi500-strong` to
+    /// 159+115+121, in both cases after the Boss contact hits had already
+    /// stopped. A death by accumulated bubbles is an artefact of the fixture,
+    /// not a property of the route, so it must not be allowed to decide
+    /// acceptance.
+    ///
+    /// CHAITE_SIM_BUBBLE_BREAK sets the chance explicitly for a DPS screen. The
+    /// default is left at the historical 0.35 so every earlier measurement
+    /// stays byte-identical.</summary>
+    static double simulatedBubbleBreakChance = DetonatingBubbleBreakChance;
     static float simulatedDps;
     static int simulatedDpsEpisode = -1;
     static double simulatedDamageCarry;
@@ -3957,6 +4000,18 @@ public static class ChaiteGameProbe
         new System.Collections.Generic.List<float>();
     static readonly System.Collections.Generic.HashSet<int> reportedKilledBossSlots=new System.Collections.Generic.HashSet<int>();
     static int simulatedBubbleBreaks, simulatedDamageApplied;
+    /// <summary>Total bubble-ticks observed, i.e. the sum over every tick of how
+    /// many Detonating Bubbles were alive. The break count alone cannot tell a
+    /// high break chance from a low one if bubbles are simply rare, so the
+    /// census is reported next to it.</summary>
+    static long simulatedBubbleSeen;
+    /// <summary>Diagnostic: a projectile type to retire outright, or -1 for none.
+    /// See ApplyHazardDiagnostic; a run that sets this is a capability probe and
+    /// not acceptance evidence.</summary>
+    static int simulatedRetireProjectileType=-1;
+    static int simulatedRetiredProjectiles;
+    static int wingEconomyTicks, wingEconomyEmptyTicks, wingEconomyLowTicks;
+    static float wingEconomyMin=float.MaxValue;
     static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
 
     /// <summary>The fraction of the simulated output the player produces at the
@@ -4192,10 +4247,84 @@ public static class ChaiteGameProbe
         {
             var npc=Game.npc[i];
             if(npc==null || !npc.active || npc.type!=DetonatingBubbleType) continue;
-            if(simulatedOutputRandom.NextDouble()>=DetonatingBubbleBreakChance) continue;
+            simulatedBubbleSeen++;
+            if(simulatedOutputRandom.NextDouble()>=simulatedBubbleBreakChance) continue;
             npc.life=0;
             simulatedBubbleBreaks++;
         }
+        // A live census, so the effect of the break chance is MEASURED rather
+        // than assumed. Reported once a second.
+        if(ticks%60==0)
+            Log("BUBBLE tick="+ticks+" seen="+simulatedBubbleSeen+" broken="+simulatedBubbleBreaks+
+                " chance="+simulatedBubbleBreakChance.ToString("F2",CultureInfo.InvariantCulture));
+        ApplyHazardDiagnostic();
+        TrackWingEconomy();
+    }
+
+    /// <summary>MEASUREMENT: the wing-time economy, tick by tick.
+    ///
+    /// The weak wing gets 130 wing ticks against the strong wing's 180, and the
+    /// measured hit charges show the weak wing arriving at its hits with the bar
+    /// nearly spent (116/130, 98/130, 0/130) while the strong wing arrives with
+    /// it full (148/180, 180/180, 180/180). That is a hypothesis about WHY the
+    /// weak arm dies sooner, and the whole point of this census is to test it
+    /// rather than assume it: the native refill needs a `releaseJump` transition
+    /// on a frame with `velocity.Y == 0`, so a circuit that holds jump
+    /// continuously can drain the bar and never get it back.
+    ///
+    /// Reported once a second with the share of the fight spent EMPTY, which is
+    /// the number that matters: an empty bar means no climb, and the vertical
+    /// race against a rising charge is exactly what a normally-aimed dodge
+    /// depends on.</summary>
+    static void TrackWingEconomy()
+    {
+        var player=Game.player!=null && Game.player.Length!=0?Game.player[0]:null;
+        if(player==null) return;
+        wingEconomyTicks++;
+        if(player.wingTime<=0f) wingEconomyEmptyTicks++;
+        else if(player.wingTime<=player.wingTimeMax*0.25f) wingEconomyLowTicks++;
+        if(wingEconomyMin>player.wingTime) wingEconomyMin=player.wingTime;
+        if(ticks%300==0)
+            Log("WINGECO tick="+ticks+" max="+player.wingTimeMax.ToString("F0",CultureInfo.InvariantCulture)+
+                " now="+player.wingTime.ToString("F0",CultureInfo.InvariantCulture)+
+                " emptyPct="+(wingEconomyTicks<=0?0:100.0*wingEconomyEmptyTicks/wingEconomyTicks).ToString("F1",CultureInfo.InvariantCulture)+
+                " lowPct="+(wingEconomyTicks<=0?0:100.0*wingEconomyLowTicks/wingEconomyTicks).ToString("F1",CultureInfo.InvariantCulture)+
+                " airborne="+(player.velocity.Y!=0f)+" vy="+player.velocity.Y.ToString("F2",CultureInfo.InvariantCulture)+
+                " releaseJump="+player.releaseJump);
+    }
+
+    /// <summary>DIAGNOSTIC ONLY: retire one hazard projectile type outright.    ///
+    /// This exists to answer a single question that no amount of reasoning could
+    /// settle: WHICH hazard decides the low-DPS outcome. The measured death at
+    /// 400 DPS is three hits from Projectile 386 -- the Cthulhunado, 150x42,
+    /// `hostile`, aiStyle 64, timeLeft 840, spawned only once the Boss is in
+    /// phase 3. The player walks into it and stays inside its body, so the hits
+    /// land 40 ticks apart, exactly the damage deferral, until it dies.
+    ///
+    /// Retiring the hazard for one run separates "the route is bad at phase 3"
+    /// from "the route cannot see this one object". The answer decides where the
+    /// real work goes, so it is worth a scoped knob that is OFF by default and
+    /// never runs with the value unset: `CHAITE_SIM_RETIRE_PROJECTILE`
+    /// takes a projectile type id, and every command-line-free acceptance path
+    /// leaves it unset.
+    ///
+    /// It is NOT like the bubble model. A bubble is one HP and dies to any shot,
+    /// so breaking it faithfully models the player. A Cthulhunado does NOT die to
+    /// gunfire; retiring it would model a mechanic that does not exist, so any
+    /// run using this knob is a probe into the route's capability and MUST NOT
+    /// be quoted as acceptance evidence. The log says so on every use.</summary>
+    static void ApplyHazardDiagnostic()
+    {
+        if(simulatedRetireProjectileType<0 || Game.projectile==null) return;
+        int retired=0;
+        for(int i=0;i<Game.projectile.Length;i++)
+        {
+            var proj=Game.projectile[i];
+            if(proj==null || !proj.active || proj.type!=simulatedRetireProjectileType) continue;
+            proj.active=false;
+            retired++;
+        }
+        if(retired>0) simulatedRetiredProjectiles+=retired;
     }
 
     /// <summary>Report a dead Boss to the plugin.
