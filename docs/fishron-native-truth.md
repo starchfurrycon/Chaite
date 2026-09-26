@@ -7711,6 +7711,54 @@ placeholder.
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-six controlled interventions, one
   improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 106. Round 145: the refill threshold is chaotic -- guard 0 is the unique optimum, axis closed
+
+### 106.1 The full grid, with hit ticks rather than totals
+
+§105 showed guard 0 and guard 60 have **disjoint** hit sets, and the original hits were still present at guard
+30 (`3261`), so the transition had to lie in (30, 60). A fine grid resolves it. Eleven two-point steps:
+
+```
+guard  ticks  hits  death  dmg    hit ticks
+    0  6000    2    False   42    [3259, 4271]                                    <- OPTIMUM
+   30  6000    6    False   54    [1614, 1771, 3261, 3910, 5333, 5825]
+   60  6000    3    False   27    [2256, 2484, 4564]
+   90  6000    5    False   48    [896, 2949, 3314, 3514, 3554]
+  120  6000   11    True    45    [1627, 1870, 1910, 2433, 4431, 4471, 4707, 4924, 4964, 5504, 5912]
+   34  5934   13    True    69    [2477, 2517, 4565, 4605, 4674, 4721, 4761, 4801, 4971, ...]
+   38  5307    8    True    51    [546, 3854, 4139, 4257, 4331, 4588, 4673, 4913]
+   42  2971    7    True    93    [545, 1395, 2131, 2197, 2483, 2555, 2597]
+   46  5509    8    True    69    [544, 762, 2432, 2621, 4104, 4148, 5095, 5156]
+   50  6000    3    False   36    [543, 1785, 2486]
+   56  6000    7    False   72    [2421, 2473, 2800, 3317, 4101, 4141, 5925]
+```
+
+**Four of the six fine-grid points die**, and pairs four apart disagree completely: 34 -> 13 hits/death,
+38 -> 8/death, 42 -> 7/death, 46 -> 8/death. The hit *sets* share almost nothing between adjacent values. This is
+**noisier than the §97 dash-suppression sweep** (which was at least smooth across `0/40/60/90`), so there is no
+tunable region here -- the threshold is a chaotic parameter.
+
+### 106.2 The optimum is isolated and already committed
+
+`guard 0` is the **unique** no-death run at 2 hits. Every other no-death value is strictly worse (50 and 60 give
+3 hits, 56 gives 7). So the committed default of 0 is not a placeholder that happens to be untested -- it is the
+measured global optimum of this axis, by a wide margin.
+
+That also disposes of §105's lead. Guard 60 does retire `t=3259` and `t=4271`, but it buys that with
+`2256/2484/4564`, and no value in (30, 60) avoids both sets: the fine grid's points there either die or carry 7+
+hits. The stamina hits are removable **in principle** — and removing them always costs more than it saves on this
+circuit, because the refill descend and the charge escape are the same mechanism (§105.3).
+
+### 106.3 Status
+
+- **Established:** the refill threshold is a **chaotic** parameter; `guard 0` is the unique no-death run at 2
+  hits and the measured global optimum; four of six fine-grid points (34/38/42/46) die.
+- **Refuted, and the axis closed:** no value of `CHAITE_REFILL_GUARD` retires the committed circuit's two hits
+  without introducing a worse set. Guard 60's removal of both is real but costs 3 unrelated hits.
+- **Unchanged:** default 0, no code change; committed behaviour re-verified identical.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-seven controlled interventions, one
+  improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
