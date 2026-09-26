@@ -615,6 +615,32 @@ namespace Chaite.Core
             {
                 horizontal = away;
             }
+            else if (player.OnGround)
+            {
+                // A grounded player under a live charge always flees on the
+                // horizontal axis, whatever the pattern asks for.
+                //
+                // MEASURED (dense native trace, current build, hit at tick
+                // 3019): the circuit was in this branch with a neutral pattern
+                // charge, so horizontal was 0 -- controls read L 0, R 0 -- for
+                // the entire approach while the boss descended from x 597 to
+                // x 508 at bovy 15.8 with the player pinned at plX 640. The
+                // player then jumped (plvy -6.2) straight up into the incoming
+                // body, and at contact the boxes overlapped 14 px horizontally
+                // and 29 px vertically.
+                //
+                // A neutral charge is a legitimate way to vary the dodge, but
+                // only from the air, where wing cruise is a measured 13.87 and
+                // the player can leave the line on its own. From the ground it
+                // is a death sentence: ground acceleration is about
+                // 0.08 px/tick^2, so the horizontal beat cannot even start, and
+                // with no horizontal input the dash is aimed at the boss too
+                // (the dash writes velocity.X in the facing direction). Fleeing
+                // costs the pattern nothing it needs -- the pattern exists to
+                // desynchronise from AI_069's group clock, and that still
+                // happens while every grounded beat simply runs away.
+                horizontal = away;
+            }
             else if (_patternActive)
             {
                 // +1 is the reviewed flee, -1 is its opposite, and 0 is a neutral
@@ -634,7 +660,28 @@ namespace Chaite.Core
             switch (_chargeBeat)
             {
                 case 0:
-                    vertical = 0;
+                    // Beat 0 is the horizontal beat, which used to ask for no
+                    // vertical input at all. A grounded player then stays
+                    // grounded for the whole beat, and that is fatal in a way
+                    // that has nothing to do with which way it runs: measured
+                    // ground acceleration under the move-speed debuff is about
+                    // 0.08 px/tick^2, so a player caught at a standstill
+                    // accelerates to roughly 0.5 px/tick over six ticks while
+                    // the charge arrives at 14.7. The wings are the only
+                    // mobility that matters, at a measured 13.87 cruise, and
+                    // they do nothing from the ground.
+                    //
+                    // MEASURED (dense native trace): at ticks 3003-3013 the
+                    // player is in exactly this phase with wingTime 0, plvx
+                    // 0.0, and it takes until tick 3019 to reach plvx 4.5 --
+                    // by which point the boss body is already overlapping.
+                    //
+                    // So a grounded player on the horizontal beat takes off
+                    // instead. Contact with support refills the flight budget
+                    // (Player.WingMovement restores wingTime on landing), so
+                    // this is not spent twice, and being airborne is what makes
+                    // the horizontal beat mean anything.
+                    vertical = player.OnGround ? -1 : 0;
                     phase = "fishron-wing-charge-horizontal";
                     break;
                 case 1:
