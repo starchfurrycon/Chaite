@@ -3318,3 +3318,85 @@ guard 0 measures **4 hits at 3000 ticks**.
   `Player.Update` in replay mode, to separate "moves inside the frame then restored" from "never moves
   inside the frame".
 - **No native zero over a full fight on either loadout.**
+
+## 43. Round 82: the replay never supplies `controlJump`, so it never becomes airborne
+
+### 43.1 The two-ended frame probe
+
+A paired observer was added to the end of `Player.Update` (`EndPlayerUpdate`) alongside the existing
+entry observer, so one frame's position can be compared at both ends. Same route, same tick window, two
+runs:
+
+```
+LIVE
+FRAME_IN  t=239 L=False J=False px=640 py=7958 vx=0.00 vy=0.00  wingTime=130 wingsLogic=6 jump=0  onGroundZero=True
+FRAME_OUT t=239 L=False J=False px=640 py=7958 vx=0.00 vy=0.00  wingTime=130 jump=0
+FRAME_IN  t=240 L=False J=False px=640 py=7958 vx=0.00 vy=0.00  wingTime=130 wingsLogic=6 jump=0  onGroundZero=True
+FRAME_OUT t=240 L=True  J=True  px=640 py=7952 vx=0.00 vy=-6.48 wingTime=130 jump=15
+FRAME_IN  t=241 L=True  J=True  px=640 py=7952 vx=0.00 vy=-6.48 wingTime=130 wingsLogic=6 jump=15 onGroundZero=False
+FRAME_OUT t=241 L=True  J=False px=640 py=7945 vx=0.00 vy=-6.34 wingTime=130 jump=0
+FRAME_IN  t=242 L=True  J=False px=640 py=7945 vx=0.00 vy=-6.34 wingTime=130 wingsLogic=6 jump=0  onGroundZero=False
+
+REPLAY
+FRAME_IN  t=239 L=False J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 wingsLogic=6 jump=0 onGroundZero=True
+FRAME_OUT t=239 L=False J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 jump=0
+FRAME_IN  t=240 L=False J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 wingsLogic=6 jump=0 onGroundZero=True
+FRAME_OUT t=240 L=False J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 jump=0
+FRAME_IN  t=241 L=False J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 wingsLogic=6 jump=0 onGroundZero=True
+FRAME_OUT t=241 L=True  J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 jump=0
+FRAME_IN  t=242 L=True  J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 wingsLogic=6 jump=0 onGroundZero=True
+FRAME_OUT t=242 L=True  J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 jump=0
+FRAME_IN  t=243 L=True  J=False px=640 py=7958 vx=0.00 vy=0.00 wingTime=130 wingsLogic=6 jump=0 onGroundZero=True
+```
+
+### 43.2 What it proves
+
+1. **The body never moves inside the frame.** In the replay `py` is `7958` at the entry **and** at the
+   end of `Player.Update`, on every logged tick, and `vx`/`vy` stay exactly `0.00`. This is not a
+   post-frame restore: the movement code runs and produces nothing. `onGroundZero=True` and
+   `jump=0` throughout.
+2. **The frame is processed normally.** `Player.Update` starts and returns every tick, and the write
+   from the previous tick is visible at the entry (`FRAME_IN t=242 L=True`), so §42's "the engine can
+   see the controls" is confirmed a second time, now from the other end of the frame.
+3. **The live run moves on exactly the frame that first carries `J=True`.** In live, `t=240` enters
+   grounded and returns **airborne** (`vy=-6.48`, `py` 7958->7952, `jump=15`), and the next entry sees
+   `onGroundZero=False`.
+4. **The replay never carries `J=True` into a frame.** At `t=240` the replay frame returns with
+   `J=False`; at `t=241` the frame returns with `L=True J=False`. `controlJump` is **never** set before
+   a frame's update begins, so no frame ever performs a jump.
+
+### 43.3 Root cause and why every earlier symptom follows
+
+`WingMovement` needs `wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 && velocity.Y != 0`;
+`JumpMovement` needs `controlJump`. With `controlJump` never reaching a frame, the player can never
+leave the ground, so:
+
+- `velocity` stays exactly `(0,0)` and `py` is frozen -- the observed invariant since §35;
+- `wingTime` stays pinned at its full `130`, because flight is never spent (§35);
+- `onGroundZero` stays `True` forever;
+- **the horizontal channel fails too, even though `L=True` is plainly set.** This is the same
+  acceleration mechanic the owner described: horizontal speed only builds while a movement input is
+  held across frames, and with the body pinned to the ground and no jump the frame-by-frame state never
+  produces motion. It also means `L=True` at `FRAME_OUT` is **not** being cleared -- it persists into
+  the next entry -- so the earlier "one frame late" reading (41.1) was an artefact of comparing the
+  entry observer against a write that lands at the *end* of the same frame.
+
+So the single defect is: **in replay mode the jump command is never present at the start of a frame.**
+The route *does* ask for it (`plan.jump=True` at t=240, §34.4) and the write *is* issued, but it does not
+survive to the point where the movement code consults it, while the horizontal write in the same
+`ApplyPlan` call does survive. That asymmetry -- one control from a single write surviving and another
+not -- is the concrete next thing to measure, and it points at the plan/route plumbing for the jump
+channel rather than at `Player.Update` at all.
+
+### 43.4 Status
+
+- **Diagnostics reverted**, tree builds clean, `git status` shows only the untracked `tmp/`.
+- **Established:** the replay body does not move inside `Player.Update`; `controlJump` is never set
+  before a frame's update begins; the live run goes airborne on the first frame that carries `J=True`.
+- **Refined:** §41's "one frame late" applies to `controlLeft` only and is an artefact of comparing the
+  entry observer against a write issued at the end of the same frame; `controlLeft` does persist.
+- **Next:** measure why `controlJump` from the same `ApplyPlan` write does not persist while
+  `controlLeft` does -- inspect the jump channel of the route/plan plumbing.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
