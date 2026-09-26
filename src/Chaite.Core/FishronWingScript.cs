@@ -1207,8 +1207,8 @@ namespace Chaite.Core
             // of the previous decision: a bad earlier choice becomes the reason
             // to keep making it. The offset has no such feedback, and it is what
             // decides whether the nearest approach clears the body.
-            var rateA = normalAX * dx + normalAY * dy;
-            var rateB = normalBX * dx + normalBY * dy;
+            var rateA = normalAX * player.Velocity.X + normalAY * player.Velocity.Y;
+            var rateB = normalBX * player.Velocity.X + normalBY * player.Velocity.Y;
             var normalX = rateA >= rateB ? normalAX : normalBX;
             var normalY = rateA >= rateB ? normalAY : normalBY;
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);

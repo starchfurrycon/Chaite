@@ -6081,3 +6081,71 @@ rule can only re-spend it. That is the signature of a system whose failure is **
   each displaces the failure instead of eliminating it.
 - **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 79. Round 118: the offset normal REGRESSES the strong wing -- reverted; the strong wing now survives the cap
+
+### 79.1 The regression, isolated to one variable
+
+Round 116 kept the offset-based charge normal (§76) on the strength of a weak-wing measurement alone. The
+strong wing had never been re-measured against it. It was, and **it regresses badly**:
+
+```
+                                        offset normal (§76)   velocity normal (§64)
+strong wing, maxticks 6000   ticks           5341                  6000
+                             HITS               9                    11
+                             death            TRUE                  FALSE
+                             outcome   FailedAfterDeath        test-time-limit
+strong wing, maxticks 11000  ticks           5341                 11000
+                             HITS               9                    12
+                             death            TRUE                  FALSE
+                             npc contact        9                     9
+
+weak wing (for contrast)     ticks           5937                  4598
+                             death            TRUE                  TRUE
+```
+
+The strong wing dies at **5341 with the offset normal at both tick limits**, and **survives the full 11000
+with the velocity normal**. This is a single-variable comparison -- the only edit reverted was the two
+projection lines in `LatchChargeNormal` -- so the offset projection is the cause.
+
+### 79.2 The cause
+
+The two loadouts respond to the same rule in **opposite directions**, and the reason is their vertical
+mobility. The offset normal sends the escape to the side the player already is, which adds **vertical**
+travel; the strong wing (`wingsLogic 26`, `wingTimeMax 180`) converts that into much more altitude than the
+weak wing (`wingsLogic 6`, `wingTimeMax 130`) can. So the rule that rescues the weak wing by removing the
+"escape down the approach axis" defect (§76.1) **over-commits the strong wing vertically** and kills it. The
+weak wing improves (4598 -> 5937, still dying); the strong wing goes from surviving to dead.
+
+**§76 is reverted.** The velocity normal (`§64`, `a46bca3`) is restored, and it is the configuration under
+which the **strong wing satisfies the survival half of the objective**.
+
+### 79.3 What this changes about the objective's status
+
+```
+objective acceptance = hits == 0 AND alive at the -maxticks cap
+
+strong wing, velocity normal, cap 6000:
+   ticks 6000   death FALSE   outcome test-time-limit   HITS 11   npc contact 8
+   -> SURVIVES the cap.  Fails only the hits == 0 half.
+
+weak wing:
+   best alive-at-cap run: none.  Every configuration measured dies before 6000.
+```
+
+So the strong wing is **half-accepted**: it meets the survival criterion at the cap and needs only the hit
+count driven to zero. The weak wing fails both halves with every configuration tried. No run on either
+loadout has reached `hits == 0`, and **no no-hit claim is made**.
+
+### 79.4 Status
+
+- **§76 reverted** (offset normal -> velocity normal); builds clean; verified fresh DLL; the restored line is
+  `normalAX * player.Velocity.X + ...` at `:1210`.
+- **Measured (single variable):** strong wing at cap 6000 = `6000 / 11 hits / death FALSE / test-time-limit`
+  with the velocity normal, versus `5341 / 9 / TRUE / FailedAfterDeath` with the offset normal. At cap 11000:
+  `11000 / 12 / FALSE` versus `5341 / 9 / TRUE`.
+- **Established:** the two loadouts respond to the charge-normal rule in opposite directions because of their
+  vertical mobility, so the rule must be **loadout-aware** -- a single global projection cannot serve both.
+- **Achieved:** the strong wing now survives the 6000-tick cap without death.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
