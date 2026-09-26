@@ -3875,3 +3875,84 @@ after the plan write) in replay and compare it with `JUMP_ENTER` of the same fra
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 50. Round 89: the clear sits between `MotionAfterInput` and `JumpMovement`, inside one `Player.Update`
+
+### 50.1 The measurement
+
+Reading the player's control fields at the probe's existing `MotionAfterInput` hook -- which sits
+immediately after the production `Runtime.ApplyPendingInput` inside `Player.Update`, and therefore
+**after** the plan has written the controls and **before** any movement method runs -- in the same run
+where `JumpMovement` was measured to see `False`:
+
+```
+REPLAY
+AFTERINPUT t=239 guc=240 J=False L=False jump=0 vy=0.00
+AFTERINPUT t=240 guc=241 J=True  L=True  jump=0 vy=0.00
+AFTERINPUT t=241 guc=242 J=True  L=True  jump=0 vy=0.00
+AFTERINPUT t=242 guc=243 J=True  L=True  jump=0 vy=0.00
+... J=True L=True on every tick through t=246
+```
+
+against §49's `JUMP_ENTER` for the same run:
+
+```
+JUMP_ENTER t=240 guc=241 J=False jump=0 vy=0.00 py=7958
+JUMP_ENTER t=241 guc=242 J=False jump=0 vy=0.00 py=7958
+```
+
+**Same frames, same counters: `J=True` at `MotionAfterInput` and `J=False` at `MotionBeforeJump`.** So
+within a single `Player.Update`, the control is correct after the plan write and gone by the time
+`JumpMovement` is entered. This finally puts the clear unambiguously *inside* `Player.Update`, between
+two probe hooks that are a few instructions apart, and it excludes everything upstream of that point: the
+resolver (writes `True`), the plan and route (`planJump=True`), the staged
+`CapturePendingInput`/`ApplyPendingInput` round-trip (§47: faithful; §49: disabling it changes nothing),
+the engine's entry-time `ResetControls` (it runs *before* `ApplyPlan`, which is why both modes read
+`False` at entry), and all the movement-suppressing native flags (§46: all `False`).
+
+### 50.2 Why this round stopped here
+
+The obvious next probe -- a hook adjacent to `MotionAfterInput` to narrow the remaining few instructions
+-- was attempted and **failed on my own IL edit**: the insertion placed the new observer *before*
+`MotionAfterInput` in the instruction stream, which the runner's validator rejects:
+
+```
+The property 'Name' cannot be found on this object.
+```
+
+(That is `prepare-game-probe.ps1:598` dereferencing `$inputReplay[0].Next.Next.Operand.Name` under
+`Set-StrictMode -Version Latest` when the instruction at that slot is my `ldarg.0` pair rather than
+`MotionAfterInput`.) Since three of this round's edits were spent on patch placement rather than on the
+fight, the correct move is to stop adding instructions to `Player.Update` and record where the boundary
+now is. The instrumentation is fully reverted, the tree builds clean, and no measurement from the failed
+run is used.
+
+### 50.3 What the next measurement must be
+
+The clear is between "just after the production input replay" and "`JumpMovement` entry", inside one
+`Player.Update`, with no plugin hook in between other than `ValidatePendingMobility` (`Runtime.cs:607`,
+which only validates optional edges and calls `_game.ValidatePendingMobility`). Two candidate
+mechanisms remain, and the next probe should distinguish them **without adding instructions to
+`Player.Update`**:
+
+1. The engine's own input handling runs a second clear later in the method (the patcher's own comment at
+   `GameProbePatcher.cs:40-41` notes "Branches skipping native input retain the pre-frame test
+   controls", which implies at least one native path that resets controls mid-update).
+2. `ValidatePendingMobility` -> `TerrariaFacade.ValidatePendingMobility` (`TerrariaFacade.cs:3746`) is
+   rewriting or clearing controls while validating optional mobility.
+
+Because the plugin has a working file trace (§47, `CHAITE_DIAG_FILE`), the clean way is to log inside
+`TerrariaFacade.ValidatePendingMobility` -- entirely on the plugin's own side, with no IL changes at all --
+and compare its post-state with `JUMP_ENTER` of the same frame.
+
+### 50.4 Status
+
+- **Tree clean** apart from the untracked `tmp/`; all instrumentation reverted, solution builds clean.
+- **Established:** in replay, `controlJump`/`controlLeft` are `True` at `MotionAfterInput` (after the plan
+  write) and `False` at `MotionBeforeJump` in the **same frame**; the clear is therefore inside
+  `Player.Update` between those two hooks.
+- **Excluded by this measurement:** everything upstream -- resolver, plan/route, staged round-trip,
+  entry-time `ResetControls`, and every movement-suppressing flag.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
