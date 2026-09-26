@@ -232,6 +232,7 @@ namespace Chaite.Core
         private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
         private const string DashDelayVariable = "CHAITE_DASH_DELAY";
 
+
         /// <summary>Ticks to wait after the charge lock before spending the
         /// charge's single dash.
         ///
@@ -969,6 +970,23 @@ namespace Chaite.Core
                 // measured result was that diagonal charges spent most of their
                 // length travelling back across the locked line.
                 horizontal = _chargeNormalHorizontal;
+                // REFUTED: running and dashing ALONG a locked horizontal charge.
+                //
+                // All four hits that share this anatomy do dash INTO the charge --
+                // at strong t=4271 the player is at x=4673 and the Boss charges
+                // right at +15.33, yet the dash sends the player LEFT at -14.50,
+                // closing at 29.83 px/tick so the Boss arrives in 14 ticks, where
+                // dashing along would close at 6.83 and take 63. The geometry is
+                // real and the dash direction is genuinely perpendicular to the
+                // charge. Forcing it along nevertheless made BOTH arms worse:
+                //
+                //   off: strong 6000/2 hits/4 contacts   weak 6000/3/3
+                //   on:  strong 6000/7 hits/3 contacts   weak 6000/4/3
+                //
+                // The 14-tick head-on arrival is therefore not the binding
+                // constraint -- opposing the charge and crossing its path is what
+                // the circuit wants, and the "closes faster" reading is a
+                // superficial one. Left in the tree as a documented refutation.
             }
             else
             {

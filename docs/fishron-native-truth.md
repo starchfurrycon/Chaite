@@ -7244,6 +7244,80 @@ countdown from a lock must use the timer, not the sequence.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
+## 99. Round 138: the dash runs INTO the charge -- measured, refuted, and the search closed
+
+### 99.1 The defect is real: the dash is perpendicular to the locked charge
+
+§98.3 showed the dash is needed for DISPLACEMENT, not merely for i-frames. Checking the direction found a
+systematic defect present in **all four hits that share the §98.1 anatomy**:
+
+```
+strong t=4271  player x=4673.4  boss x=4293.0  boss charges RIGHT (+15.33)  player dashes vx=-14.50
+weak   t=1425  player x=5569.2  boss x=5265.7  boss charges RIGHT (+14.97)  player dashes vx=-14.50
+weak   t=1605  player x=5348.3  boss x=5606.4  boss charges LEFT  (-14.16)  player dashes vx=+14.50
+weak   t=1782  player x=5558.8  boss x=5147.2  boss charges RIGHT (+15.30)  player dashes vx=-14.50
+```
+
+The player is consistently on the side the charge is coming from, and dashes **straight into it**. The
+mechanism is precise: `ChargeEscape` sets `horizontal = _chargeNormalHorizontal`, and for a horizontal charge
+the latched normal is **vertical**, so the horizontal input is 0. `Player.DoCommonDashHandle` then computes the
+dash direction from the **facing**, which is stale, so the dash fires along whatever direction the player last
+faced. At strong t=4271 the pair close at 29.83 px/tick (14.50 + 15.33) and the Boss arrives in 14 ticks;
+dashing *along* the charge would close at 6.83 (15.33 - 8.50 wing cruise) and take **63 ticks**, four times the
+15-tick i-frame window.
+
+### 99.2 Forcing the dash along the charge makes BOTH arms worse
+
+```
+off: strong 6000 / 2 hits / 4 contacts    weak 6000 / 3 hits / 3 contacts
+on:  strong 6000 / 7 hits / 3 contacts    weak 6000 / 4 hits / 3 contacts
+```
+
+So the 14-tick head-on arrival is **not the binding constraint**, and "the dash closes the distance faster" is a
+superficial reading. Opposing the charge and crossing its path is what the fixed circuit wants. The edit was
+reverted; nothing about the shipped behaviour changed.
+
+### 99.3 A dash-into-the-Boss counter was considered and dismissed on engine evidence
+
+Dashing into a charging Boss is a real technique, but the engine does not support it here. `NPC` contact during
+a `dashType == 2` dash calls `Player.GiveImmuneTimeForCollisionAttack(4)`, which grants only **4** invulnerability
+ticks -- not the 15 the dash state carries -- and it is additionally capped by `_immuneStrikes < 3`, i.e. three
+grants inside any 20-tick window and the fourth is refused outright. A shield-dash exchange therefore buys 4
+ticks and cannot be leaned on.
+
+### 99.4 The search is closed on evidence, not on preference
+
+Every principled intervention tried against this circuit has been measured and rejected:
+
+| lever | result |
+|---|---|
+| dash suppression by `\|dy\|` (§97) | **WORKS AND STAYS**: strong 90, weak 50; weak improved 4 hits/5 contacts -> 3/3 |
+| dash timing / delay (§98) | every nonzero delay worse; 24 gives 0 contacts yet 8 hits |
+| stamina / refill scheduling (§98.2) | refuted; 3 of 5 hits occur with a nearly full bar |
+| dash along the charge (§99) | both arms worse |
+| co-location lift ungated (§83) | kills the weak wing (2829 / death / 9 hits) |
+| floor-escape modes, minimum altitude, refill dash, stall breaker, phase offset, knob-b2 (§55-§91) | all refuted |
+
+**The remaining hits are knife-edge coincidences, not a correctable policy error**, and the two defects found
+in §98 and §99 are provably not the binding constraint. Roughly twenty controlled interventions have now been
+tried against this fight; exactly one (§97 suppression) improved it, and the current pure fixed circuit is
+`strong 6000 / 2 hits / death FALSE / 4 contacts` and `weak 6000 / 3 hits / death FALSE / 3 contacts`, both
+deterministic across repeats. Reaching `hits == 0` is not reachable by the incremental route this session has
+exhausted; it would need a different approach to the charge escape than tuning the existing state machine.
+
+### 99.5 Status
+
+- **Established:** the charge dash fires perpendicular to (usually directly into) the locked charge, because
+  the latched normal is vertical for a horizontal charge and the engine then falls back to stale facing.
+- **Measured:** `CHAITE_DASH_ALONG_CHARGE` on/off for both arms.
+- **Refuted:** running and dashing along a locked horizontal charge; and a shield-dash exchange as a counter
+  (`GiveImmuneTimeForCollisionAttack(4)`, capped at three grants per 20 ticks).
+- **Unchanged defaults:** the experiment is reverted; the shipped behaviour is identical to §97.
+- **Best achieved (unchanged, re-verified after the revert):** strong wing `6000 / 2 hits / death FALSE /
+  4 contacts`; weak wing `6000 / 3 hits / death FALSE / 3 contacts`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
