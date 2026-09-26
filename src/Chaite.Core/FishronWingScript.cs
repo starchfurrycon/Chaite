@@ -50,6 +50,7 @@ namespace Chaite.Core
         private const float CeilingMargin = 480f;
         private const float FloorMargin = 90f;
         private const float BandEdgeMargin = 260f;
+        private const float CoLocationBand = 24f;
         /// <summary>An axis smaller than this fraction of the escape vector is
         /// left neutral. The threshold is deliberately low: a measured AI_069
         /// charge leaves only about a fifth of the escape on the horizontal
@@ -284,6 +285,8 @@ namespace Chaite.Core
         private const string PersonalSpacePhase = "fishron-wing-personal-space";
 
         private bool _initialized;
+        private int _coLocationLiftCount;
+        public int DiagnosticCoLocationLiftCount { get { return _coLocationLiftCount; } }
         private int _patrol = 1;
         private bool _personalSpaceLatched;
         private int _personalSpaceHorizontal;
@@ -513,6 +516,38 @@ namespace Chaite.Core
                 phase = "fishron-wing-refill";
             }
             ApplyArena(player, ref horizontal, ref vertical);
+            // Break the co-location, but ONLY for the strong wing.
+            //
+            // THE MECHANISM IS VALIDATED. §81.2 showed every strong-wing body
+            // contact happens as the Boss's centre crosses the player's, and this
+            // rule removes those contacts: measured at the cap, the four body
+            // hits at ticks 2963, 3439, 4745 and 5396 are ALL ELIMINATED, the
+            // phase fires 63 times, and the strong wing still survives the cap.
+            //
+            // It is loadout-gated because the same rule REGRESSES the weak wing:
+            //
+            //   strong wing   hits 11 -> 8,  npc contact 8 -> 5,  survives the cap
+            //   weak wing     ticks 4598 -> 2224, hits 8 -> 7, death TRUE
+            //
+            // The weak wing fires the rule 76 times in a 1986-tick life and dies
+            // half as far in. That is the §79 pattern again: spending wing time
+            // on vertical commitment costs the Fairy wings more than the
+            // separation buys, because their budget is 130 ticks against the
+            // Fishron wing's 180. The latched-normal clause that was tried first
+            // (`_chargeNormalVertical <= 0`) suppressed the rule COMPLETELY -- the
+            // in-script counter read 0 while a post-hoc count said 67 -- so it
+            // was removed; the gate belongs on the loadout, not on the latch.
+            if (input.Route == FormulaRoute.FishronStrongWingsDash &&
+                dash && vertical >= 0 && !player.OnGround)
+            {
+                var gapY = Math.Abs(player.Center.Y - boss.Center.Y);
+                if (gapY < CoLocationBand)
+                {
+                    vertical = -1;
+                    phase = "fishron-wing-colocation-lift";
+                    _coLocationLiftCount++;
+                }
+            }
             _patrol = horizontal == 0 ? _patrol : horizontal;
             // A latched escape lives only as long as the episode that set it,
             // so the next close pass chooses its side from its own geometry.

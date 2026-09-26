@@ -6332,10 +6332,75 @@ spent most of its budget learning that.
   the committed velocity projection is restored (`normalAX * player.Velocity.X` at `:1210`).
 - **Measured:** the co-location lift produced `6000 / 11 / FALSE / 8 contacts`, identical to the baseline, and
   its diagnostic counter read **0** -- the branch never executed.
-- **Established (tooling):** post-hoc recomputation over `boss-observations.jsonl` samples state **after** the
-  player update, whereas the script sees it **before**; near-contact conditions cannot be validated that way.
-- **Nine interventions attempted; none improves the fight.** Six reverted outright, plus §76/§80 (reverted for
-  the strong-wing regression) and this one.
 - **Achieved:** the strong wing survives the 6000-tick cap without death.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
+
+## 83. Round 122: KEPT -- the co-location lift works, and it must be gated to the strong wing
+
+### 83.1 The blocker was the latch, not the sampling
+
+§82 concluded that a post-update sampling offset explained why the co-location lift never fired.
+**That was wrong.** Re-testing the same condition against the stream at shifts of 0, -1 and -2 ticks all gave
+**67** matching ticks, so the pairing was not the problem. The real blocker was the clause
+`_chargeNormalVertical <= 0`: **the latched charge normal was positive throughout the window**, so the rule
+was suppressed on every tick it was meant to act on.
+
+Removing that clause alone made the rule fire **63 times** in the strong-wing run -- which matches the 67
+post-hoc ticks almost exactly -- and produced a real improvement. **The lesson stands in a corrected form:
+validate near-contact rules with an in-script counter, and be suspicious of a latch whose value was never
+measured.**
+
+### 83.2 The mechanism is now validated at the cap
+
+The four strong-wing body hits §81.2 identified are **all eliminated**:
+
+```
+  previously  2963, 3439, 4745, 5396   ->  ELIMINATED
+  now         5099, 5518, 5755, 5874
+```
+
+and the strong wing's numbers improve on every measure while still surviving:
+
+```
+                          baseline (§81)   co-location lift
+ticks                          6000              6000
+HITS                             11                 8
+npc contact (body hits)           8                 5
+player damage taken             638               523
+death                         FALSE             FALSE
+outcome                 test-time-limit   test-time-limit
+```
+
+### 83.3 It must be gated to the strong wing
+
+Applied to both loadouts, the rule **regresses the weak wing**:
+
+```
+gated to strong only:
+  strong   6000 / 8 hits / death FALSE / 5 contacts     (improved from 11 / FALSE / 8)
+  weak     4598 / 8 hits / death TRUE / 3 contacts      (bit-identical to baseline)
+
+ungated (both loadouts):
+  strong   6000 / 8 / FALSE / 5                          (same improvement)
+  weak     2224 / 7 / TRUE, firing 76 times in a 1986-tick life   (regression)
+```
+
+This is the **§79 pattern a third time**: the same vertical-commitment rule that helps the strong wing costs
+the weak wing more than the separation buys, because the Fairy wing's budget is 130 ticks against the Fishron
+wing's 180. The committed rule is therefore conditioned on
+`input.Route == FormulaRoute.FishronStrongWingsDash`.
+
+### 83.4 Status
+
+- **KEPT** in `src/Chaite.Core/FishronWingScript.cs`; source valid UTF-8; builds clean; verified fresh DLL.
+- **Measured (strong, cap 6000):** `6000 / 8 hits / death FALSE / 5 contacts`, against the baseline's
+  `6000 / 11 / FALSE / 8`; all four of §81.2's body-hit ticks eliminated; the phase fires 63 times.
+- **Measured (weak, cap 6000):** `4598 / 8 / TRUE / 3 contacts` -- bit-identical to baseline, confirming the
+  gate is inert for the Fairy wing.
+- **First intervention in nine to improve the fight.** It is still **not** an acceptance: 8 hits remain
+  (4 body + 4 projectile).
+- **Corrected:** §82.2's sampling-offset explanation was wrong; the blocker was the unmeasured
+  `_chargeNormalVertical` latch.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
