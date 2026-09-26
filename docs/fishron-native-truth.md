@@ -934,3 +934,80 @@ both be true, and reconciling them is the single highest-value next step: instru
 per-tick counter to one file, so the applied plan can be matched to the script invocation
 that produced it. Whatever the answer, the fix belongs where the input is written, and it
 must make the horizontal persistent rather than per-tick.
+
+## 15. Round 54: the session gate is ruled out, and the contradiction is isolated
+
+Section 14.5 proposed two explanations for the 1439 ticks that receive no horizontal control
+while the planner asks for a direction. This round eliminated the first one.
+
+### 15.1 The session gate is not the cause
+
+`Runtime.cs:309` is the one place that clears controls without applying a plan:
+
+```csharp
+if (!update.ApplyControls || _game.IsDead(player))
+{
+    _game.ClearCombatControls(player);
+    ...
+    return;
+}
+```
+
+Instrumenting that branch (gated on `CHAITE_GATE_TRACE`, since removed) produced **no trace
+file at all** over a 3600-tick run, which means the branch never executed during the battle:
+`update.ApplyControls` was true and the player was not dead on every tick. The plugin did
+apply a plan on every tick of the fight.
+
+That eliminates the "the plugin deliberately applies nothing" explanation, and it removes the
+`EncounterController` session-state machine (`ApplyControls` is derived at
+`EncounterController.cs:102/112/137-139` from `HasEncounter`, `PlayerDead` and the
+respawn settle frame) from suspicion.
+
+### 15.2 The contradiction, stated precisely
+
+After this round the following are all measured, on the same builds, and cannot all be true
+together:
+
+| observation | value | how measured |
+|---|---|---|
+| script returns a neutral horizontal | **never** (0 of 3360) | `FishronWingScript` return trace |
+| last write to `plan.Horizontal` in `PlanFormula` | 0 rows at 0 | `PlanFormula` trace |
+| value leaving `PlanFormula` | 0 rows at 0 | `PlanFormula` return trace |
+| `ApplyPlan` entry sees `hor == 0` | **1000 of 3160** | probe `ObserveApplyPlanBefore` |
+| `ApplyPlan` runs per tick | exactly 1 | probe hook with tick counter |
+| the runtime gate that skips `ApplyPlan` | never fires | `Runtime` gate trace |
+| applied `L`/`R` both false | **1439 of 3600** | per-tick observation stream |
+
+The two rows in bold conflict: the probe's `ApplyPlan`-entry hook and the per-tick
+observation stream are both probe-side reads, and they disagree about whether the plan
+carried a direction.
+
+### 15.3 What is nonetheless established, and is enough to act on
+
+Independent of the contradiction, the following are solid and already explain the observed
+failure mode:
+
+- the player is **near-stationary before 10 of 19 hits** (median pre-hit `|vx|` 0.87) and has
+  **`wingTime == 0` before 14 of 19** (section 13.3);
+- the input is **intermittent**, with 1439 of 3600 ticks receiving no horizontal control, and
+  the player is seen **coasting on momentum** (velocity drifting -6.65 to -5.20 with `L` 0)
+  rather than stopping, which is exactly the acceleration behaviour the owner described
+  (section 14.3);
+- the circuit **can** travel fast -- 5 of 19 hits are taken at `|vx|` 5.10 to 12.97 -- so the
+  mobility is available and the problem is that it is not being sustained at the contact;
+- the strong wing, which is better on every mobility axis, takes **more** hits (section 13.1),
+  so neither vertical mobility nor wing budget size is the constraint.
+
+### 15.4 Next step
+
+The contradiction in 15.2 has to be settled before any further code change, because every
+plausible fix depends on knowing whether the plan carries the direction. The decisive
+instrument is a single file written from `ApplyPlan` that records, per call, a monotonically
+increasing call counter **and** the plan's `PhaseId`, `Horizontal`, `Jump` and `Drop`, paired
+against the script trace by call index rather than by tick. That pairing is what the two
+existing traces lack, and it is the only reason they cannot be reconciled.
+
+No code change should be made on the strength of the contradiction alone, and none was made
+this round. The pinned native result is unchanged: weak wing `validBattle True`, ticks 8684,
+hits 8, boss damage 37; strong wing 11 hits, alive at the cap. No native zero on either
+loadout.
