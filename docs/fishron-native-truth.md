@@ -6715,3 +6715,51 @@ the one avenue these frames argue for and it has not been tested against the cur
 - **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 89. Round 128: the floor-clearance rule is REVERTED -- altitude is load-bearing
+
+§88.2 concluded that both remaining hits share a cause, altitude, and that a floor-clearance rule was the one
+avenue those frames argued for which had not been tested against the current machine. It was implemented:
+
+```csharp
+if (input.Route == FormulaRoute.FishronStrongWingsDash &&
+    dash && vertical >= 0 && !player.OnGround &&
+    player.Center.Y > _floorY - FloorClearanceBand &&          // 160 px
+    Math.Abs(player.Center.X - boss.Center.X) < FloorClearanceRange &&  // 520 px
+    player.WingTime > _refillGuardBudget)
+{
+    vertical = -1;
+    phase = "fishron-wing-floor-clearance";
+}
+```
+
+**It regresses sharply:**
+
+```
+                        §88 best        + floor clearance
+strong  ticks/hits/death/contacts   6000/2/FALSE/3    6000/7/FALSE/11
+```
+
+Hits go from **2 to 7** and body contacts from **3 to 11**. This is the **fourth time** the same shape has
+appeared (§70's unconditional ascend lift, §78's minimum altitude, §86's margin 900, and now this): **any rule
+that raises the player's altitude during the fight moves the W cycle and the charges redistribute.** The two
+floor-level hits are the *cost* of a configuration that avoids eleven others, not an independent defect.
+
+**Altitude is load-bearing in this fight, not incidental.** The rule is reverted; the committed source and its
+DLL hash `D38B8A23E6162308` are byte-identical to the state that measured the best results.
+
+### 89.1 Where this leaves the objective
+
+Twelve of fourteen interventions have failed, and the two that worked (§83 co-location lift, §86 turnaround
+margin) both won by **improving separation within the existing cycle** rather than by adding a new vertical
+commitment. The remaining 2 strong-wing hits are a dash toward a locked charge at a 14.9 px vertical gap
+(§88.1) and a floor track at the Boss's altitude (§88.2); both would need a **timing** change, not a
+**threshold** change, and every threshold change tried so far has cost more than it bought.
+
+- **Reverted**; tree clean, no mojibake, source valid UTF-8, DLL hash `D38B8A23E6162308`.
+- **Measured:** floor clearance gives `6000 / 7 hits / FALSE / 11 contacts` against §88's `6000 / 2 / FALSE / 3`.
+- **Established:** altitude-raising rules redistribute hits rather than removing them -- the fourth such result.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`, both
+  surviving the cap.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
