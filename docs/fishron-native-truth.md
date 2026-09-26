@@ -8279,6 +8279,39 @@ particular rule failed.
   re-verified through `tools/verify-fishron-routes.ps1` after the revert. The objective remains **active and
   incomplete**, and no native zero is claimed.
 
+## 115. Round 151: the hits are close passes, not edge traps -- and the weak wing's side bias is the one behavioural difference measured
+
+### 115.1 Neither loadout is trapped against an arena edge
+
+Fitting the hypothesis that the hits come from being cornered, absolute player X over each fight:
+
+```
+weak   wing: player X min 650.0  max 5730.2  (span 5080)   boss X 738.6 .. 5898.2
+strong wing: player X min 650.0  max 5648.0  (span 4998)   boss X 576.9 .. 5878.8
+
+weak   hits at playerX 5543.5 / 5380.8 / 5497.7  (dx +23.3 / +43.5 / +13.8)
+strong hits at playerX 5527.9 / 4623.1           (dx +79.9 / +8.2)
+```
+
+The arena's left edge is X 650 and its right edge is around X 6400, so the furthest-right hit (X 5543) still has roughly **850 px of room to its right**. **No hit is an edge trap.** Every hit sits at a small `dx` (8.2 to 79.9), so all five are the same mechanism: the boss's body box meeting the player's during a close pass, exactly as §113.2 described for the weak wing.
+
+### 115.2 The one measured behavioural difference between the loadouts
+
+```
+weak   wing: time in left third 10%   middle 29%   right third 61%
+strong wing: time in left third 46%   middle 29%   right third 25%
+```
+
+Both start at the left (tile 21). The strong wing turns around often enough to stay roughly **balanced** (46 / 29 / 25); the weak wing **drifts right and stays there** (10 / 29 / 61), spending six times as long on its right third as on its left. Since the weak wing's three hits are all in that right region, the side bias is the only behavioural difference this session has been able to measure between the two loadouts' horizontal handling.
+
+It is a **consequence**, not a cause that can be edited directly: the same script drives both, and the divergence comes from the weak wing's smaller `wingTimeMax` (130 against 180), which changes how often the refill and turnaround branches win. A rule cannot simply "turn around more" -- §111.2 measured that pinning `horizontal` in the pre-charge window is fatal on both arms, and §78 measured that desynchronising the turnaround costs more than the separation buys. Recorded as a characterisation, not a lever.
+
+### 115.3 Status
+
+- **Established:** no hit on either loadout is an arena-edge trap -- the furthest-right hit has ~850 px of room to its right -- and all five hits occur at `dx` between 8.2 and 79.9, i.e. they are the same close-pass body contact.
+- **Established:** the weak wing spends 61% of the fight in its right third against the strong wing's 25%, with both starting from the left. This is a **consequence** of the smaller `wingTimeMax` (130 vs 180), not an independently editable lever.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3, re-verified through `tools/verify-fishron-routes.ps1`. The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
