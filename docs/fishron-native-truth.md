@@ -5267,3 +5267,83 @@ the W cycle from the Boss's attack clock. **No edit was made this round**, so th
   `:1230-1235` asserting `= 640` is stale.
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 69. Round 108: the pinned-axis detector is REVERTED -- it made the fight worse
+
+### 69.1 What was tried
+
+§68.3 established that `_bandLeft` is `worldLeft + BandEdgeMargin` = `16 + 260` = **276**, while the engine
+clamps the player at `leftWorld + 640` ≈ **640**, so `ApplyArena`'s `atLeftWall` test is `false` throughout
+the **364 px** between them and the measured pin is never caught. The attempt was to detect the pin from its
+**symptom** rather than from a predicted edge -- an axis that is commanded but does not move is blocked:
+
+```csharp
+var commanded = horizontal != 0;
+var blocked = Math.Abs(player.Velocity.X) < 0.05f;
+if (commanded && blocked) _pinnedHorizontalTicks++;
+else _pinnedHorizontalTicks = 0;
+if (_pinnedHorizontalTicks >= 2)
+{
+    horizontal = -horizontal;
+    _pinnedHorizontalTicks = 0;
+}
+```
+
+Two consecutive ticks were required because the first tick of a legitimate reversal has `vx ~ 0` while the
+velocity crosses zero, and the flip itself clears the counter so the cost is bounded to one input flip per
+episode.
+
+### 69.2 The measurement: worse on every axis
+
+```
+                        §64 baseline (dense6k)   pinned-axis detector
+ticks                          4598                  3760  (died 838 ticks EARLIER)
+HITS                              8                     8
+boss damage                      31                    90
+death                          TRUE                  TRUE
+npc contact                       3                    10
+shield rows                      48                    47
+dash-active ticks                45                    37
+```
+
+**Every axis is worse**: death 838 ticks earlier, damage nearly tripled (31 -> 90), and npc contacts more
+than tripled (3 -> 10). Reverted; the tree is clean and the §64 fix is intact.
+
+### 69.3 Why it failed, and what it does not tell us
+
+`Math.Abs(player.Velocity.X) < 0.05f` does **not** isolate the pinned state. The player legitimately passes
+through `vx ~ 0` at every direction reversal, and on the ground `|vx|` is small for long stretches under the
+move-speed debuff (`FishronWingScript.cs:792-794` measures ground acceleration at about `0.08 px/tick^2`, so
+a standstill persists for many ticks). So the detector fired in states that were **not** pins and reversed
+the input while the player was merely slow -- which is exactly the class of timing disturbance that
+`FishronWingScript.cs:635-648` warns about, where removing the station desynchronises the W cycle from the
+Boss's attack clock.
+
+Two conclusions, and the second is the important one:
+
+1. **A velocity-magnitude test is the wrong instrument** for this pin. The usable discriminator is that the
+   position itself does not change (`x` held at exactly `640.0000`) while input is commanded -- i.e. compare
+   the **position** across ticks, not the velocity against a threshold.
+2. **The pin is not established as the cause of the late death.** Detecting and breaking it made the fight
+   decisively worse, which is evidence *against* "the pin causes the late hits" as a simple causal story.
+   §68.1's correlation (the pin precedes the lethal cluster) may be a **symptom**: a charge pattern that
+   forces the player to the edge is what produces both the pin and the hits, in which case breaking the pin
+   merely moves the failure elsewhere -- which is what the numbers show.
+
+This is the **fourth** perpendicular/pinning intervention this session to measure worse or neutral (§55,
+§56.2/B, §57, and now §69). The pattern across all four is that the late-game failure is not caused by any
+single local input decision.
+
+### 69.4 Status
+
+- **Edit reverted.** Tree clean apart from untracked `tmp/`; builds clean; the §64 velocity-normal fix
+  (`a46bca3`) is intact and verified present (`rateA >= rateB` at `:1198-1199`).
+- **Measured:** the pinned-axis detector gives `ticks 3760 / HITS 8 / damage 90 / death TRUE / npc contact 10`
+  against the §64 baseline's `4598 / 8 / 31 / TRUE / 3` -- worse on every axis.
+- **Refuted:** that breaking the horizontal pin improves the weak-wing fight, and that a velocity-magnitude
+  threshold identifies the pin.
+- **Next instrument (recorded, not yet built):** detect the pin by an **unchanged position** across
+  consecutive ticks while input is commanded, which is what the measurement actually shows, and treat §68.1's
+  pin-hit correlation as unproven causality.
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
