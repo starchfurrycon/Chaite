@@ -3919,8 +3919,20 @@ namespace Chaite.Plugin
         {
             var usedFallback = optionalEdgeRejected &&
                 !featherPhysicsRejected && ApplyLateMobilityFallback(player);
-            if (!usedFallback) NeutralizePendingInput(player);
-            return usedFallback;
+            if (usedFallback) return true;
+            if (featherPhysicsRejected && !optionalEdgeRejected)
+            {
+                // Section 52: a failed feather-fall certificate concerns one
+                // optional edge (the potion-up slow-fall input). Zeroing every
+                // control also discarded the plan's jump, horizontal and dash,
+                // which were never in question, so the takeoff frame lost its
+                // jump and the whole replay diverged from its recorded run.
+                // Drop only the feather-fall input; the manoeuvre is not unsafe.
+                SetPendingControl(player, "controlUp", false);
+                return false;
+            }
+            NeutralizePendingInput(player);
+            return false;
         }
 
         private void NeutralizePendingInput(object player)

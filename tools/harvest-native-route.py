@@ -67,39 +67,49 @@ def _pick_controls(row: dict) -> tuple[int, int, int, int, int] | None:
     payload. Its key names carry a `control` prefix -- `controlLeft`,
     `controlRight`, `controlJump`, `controlUp`, `controlDown`, `controlDash` --
     because those are the native `Player` fields the probe reads back, whereas
-    the plan shape uses the plan names.
+    what the run ACTUALLY applied, not what the planner asked for.
+
+    The choice is PER CHANNEL, because the two sources fail differently:
+
+    * `jump` must come from the PLAN. `MovementActionGate.ResolveJump` is not
+      idempotent, so feeding the applied `controlJump` back through the gate
+      suppresses the jump. MEASURED (see the note above): a route harvested
+      entirely from the control snapshot recorded 1 hit live but replayed to 6
+      hits and a death, first diverging at tick 240 where the original applied
+      jump=True and the replay produced jump=False.
+    * `up`, `down` and `dash` must come from what was APPLIED. Here the plan is
+      the unsafe source: at tick 254 the plan carried drop=1 while the live run's
+      applied `controlDown` was false, so a plan-based route replayed a descent
+      the recorded fight never performed. MEASURED: 947 of 1199 ticks differed,
+      first divergence exactly tick 254, with the replay's `planDash=True` while
+      live had `planDash=False` and `vy` -4.74 against -4.48.
     """
+    source = row.get("actualAtApplyReturn")
+    applied = source if isinstance(source, dict) and source else {}
+
     plan = row.get("plan")
     if isinstance(plan, dict) and plan:
         horizontal = plan.get("horizontal")
         direction = 0 if not isinstance(horizontal, (int, float)) else (
             -1 if horizontal < 0 else (1 if horizontal > 0 else 0))
-        return (
-            direction,
-            int(bool(plan.get("jump"))),
-            int(bool(plan.get("featherFallUp"))),
-            int(bool(plan.get("drop"))),
-            int(bool(plan.get("dash"))),
-        )
-
-    source = row.get("actualAtApplyReturn")
-    if not isinstance(source, dict) or not source:
+        jump = int(bool(plan.get("jump")))
+    elif applied:
+        left = bool(applied.get("controlLeft"))
+        right = bool(applied.get("controlRight"))
+        direction = _direction(left, right)
+        jump = int(bool(applied.get("controlJump")))
+    else:
         return None
 
-    def flag(*names: str) -> bool:
+    def aflag(*names: str) -> int:
         for name in names:
-            if name in source:
-                return bool(source.get(name))
-        return False
+            if name in applied:
+                return int(bool(applied.get(name)))
+        return 0
 
-    left = flag("controlLeft", "left", "Left")
-    right = flag("controlRight", "right", "Right")
-    jump = flag("controlJump", "jump", "Jump")
-    up = flag("controlUp", "up", "Up")
-    down = flag("controlDown", "down", "Drop", "Down")
-    dash = flag("controlDash", "dash", "Dash")
-
-    return (_direction(left, right), int(jump), int(up), int(down), int(dash))
+    return (direction, jump, aflag("controlUp", "up", "Up"),
+            aflag("controlDown", "down", "Drop", "Down"),
+            aflag("controlDash", "dash", "Dash"))
 
 
 def harvest(path: str) -> tuple[list[tuple[int, tuple[int, int, int, int, int]]], dict]:

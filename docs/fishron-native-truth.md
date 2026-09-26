@@ -4137,3 +4137,80 @@ Two candidate fixes, in order of preference:
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**. Live weak-wing formula route, 1200 ticks:
   **1 hit**.
 - **No native zero over a full fight on either loadout.**
+
+## 53. Round 92: the granular feather-fall fix cuts the replay from 6 hits and a death to 2 hits
+
+### 53.1 The fix, and its measured effect
+
+§52 established that the replay's takeoff frame was lost because a **feather-fall** rejection produced
+`resolution=all-controls-neutral`, zeroing the jump, the horizontal direction and the dash together.
+Applying §52's preferred fix -- make the rejection granular -- in `ResolveRejectedPendingMobility`
+(`TerrariaFacade.cs:3917-3937`): a feather-physics-only rejection now clears **only** the feather-fall
+input (`SetPendingControl(player, "controlUp", false)`) and the coarse `NeutralizePendingInput` is reserved
+for a gravity/dash edge rejection, where the whole manoeuvre really is unsafe.
+
+Measured on the **same** route (`tmp/route-densefix.txt`, 1200 ticks, weak wing):
+
+```
+before:  ticks 1200  HITS 6  boss damage 54  death True   (shield rows 17, dash-active 13, npc contact 4)
+after :  ticks 1200  HITS 2  boss damage 18  death False  (shield rows 19, dash-active 17, npc contact 2)
+```
+
+**Three of the six hits and the death are gone**, and the takeoff now happens: the per-tick diff against
+the live source run shows the two runs agreeing exactly through `guc=253` (`pos (640.00, 7889.08)`,
+`vel (0.000, -5.010)`, `jump=0`, `wingTime=130`, identical plans), where before they diverged at the
+takeoff frame `guc=241`. Divergence now begins at `guc=254`.
+
+### 53.2 The next divergence, and the corrected source theory
+
+At `guc=254` the replay has `planDash=True` and `vy=-4.74` while live has `planDash=False` and `vy=-4.48`.
+Instrumenting the replay block itself (`R_READ`, on the plugin's log) reads out the values the route
+supplies:
+
+```
+R_READ frames=0  tick=241 dir=-1 jump=True  up=True  down=False dash=False preDash=False
+R_READ frames=13 tick=254 dir=-1 jump=False up=False down=False dash=True  preDash=False
+```
+
+So at tick 254 the route itself carries `dash=True` and the planner had `preDash=False`: **the route is the
+source, and the desync is on the tick axis, not in the applied-vs-plan channel.**
+
+The harvester's own docstring records the decisive earlier measurement on this axis: a route harvested
+entirely from the applied controls replayed the *jump* wrongly (`MovementActionGate.ResolveJump` /
+`JumpMotion.ResolveControl` are **not idempotent**), producing 6 hits and a death with the first divergence
+at tick 240 where the original applied `jump=True` and the replay produced `jump=False`. So harvesting the
+applied controls wholesale is not the answer either.
+
+`tools/harvest-native-route.py` now therefore chooses **per channel**: `jump` from the plan (it must be
+able to win the gate), and `up`/`down`/`dash` from what was actually applied. That change is kept, but on
+its own it does not fix tick 254, because the route already carries the stray `dash=True` for that tick.
+
+### 53.3 The remaining blocker: the jump channel needs a release frame
+
+The takeoff is still suppressed for one frame. `JumpMotion.ResolveControl` (`JumpMotion.cs:38-46`) returns
+`requested && (!grounded || state.ReleaseReady || state.AutoJump || grappling)`, and the frame is grounded,
+so the jump requires **`state.ReleaseReady`**. `ReleaseReady` is only set by `ApplyJump` on a frame where
+`controlJump` is false (`JumpMotion.cs:55-59`). The route's first route-driven frame is `tick=241` with
+`jump=True` (`R_READ frames=0 tick=241 jump=True`), so the replay reaches the resolver with no preceding
+released-input frame in the route-driven region, `ReleaseReady` is false, and the takeoff is refused. Once
+the replay misses that jump its whole trajectory is offset and it takes its 2 hits.
+
+This also explains the docstring's earlier "not idempotent" observation precisely: it is the same
+`ReleaseReady` requirement. The fix is to guarantee a released-input frame **before** the first requested
+jump in the replayed region -- either by extending the harvested route to cover the takeoff approach
+(the recorded run's frames before 241, which the current harvest starts at tick 2 with all-neutral rows),
+or by having the replayer prime `ReleaseReady` when the route's first nonzero jump follows only neutral
+frames.
+
+### 53.4 Status
+
+- **Kept and verified:** the granular feather-fall rejection (`TerrariaFacade.cs:3917-3937`) and the
+  per-channel harvest source (`tools/harvest-native-route.py:72-112`). All diagnostics reverted, solution
+  builds clean, `git status` shows only those two files plus untracked `tmp/`.
+- **Measured:** replay of the fresh dense live route, weak wing, 1200 ticks: **2 hits / 18 damage / no
+  death** (was 6 hits / 54 damage / death), agreeing with live through `guc=253`.
+- **Identified but not fixed:** the route's `dash=True` at tick 254 (tick-axis desync), and the takeoff
+  frame refused for want of `ReleaseReady` in the route-driven region.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**. Live weak-wing formula route, 1200 ticks:
+  **1 hit**.
+- **No native zero over a full fight on either loadout.**
