@@ -3787,8 +3787,7 @@ public static class ChaiteGameProbe
     }
 
     public static void BeforeUpdate()
-    {
-        if (failed) return;
+    {        if (failed) return;
         try
         {
             if (!booted) return;
@@ -4137,7 +4136,17 @@ public static class ChaiteGameProbe
 
     static void ApplySimulatedPlayerOutput()
     {
-        if(episodeLimit<=0) return;
+        // OWNER RULING 2026-09-26: firing is not to be taken over by the program
+        // and not to be trained -- the fixture simply removes the corresponding
+        // health from the Boss, so the DPS requirement can be screened directly.
+        // `CHAITE_SIM_DPS` already pins an exact DPS with a carried fractional
+        // remainder, drains the expected root, and reports the kill through the
+        // ordinary state machine. The only thing that blocked it here was the
+        // episode guard below, which belongs to the training loop: an acceptance
+        // run has no episodes, so an explicit DPS override now admits the drain
+        // there too. With no override set, behaviour is unchanged everywhere.
+        bool explicitDps=simulatedDpsOverride>0f;
+        if(episodeLimit<=0 && !explicitDps) return;
         if(simulatedDpsEpisode!=episodeIndex)
         {
             simulatedDpsEpisode=episodeIndex;

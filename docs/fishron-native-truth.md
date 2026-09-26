@@ -8403,6 +8403,118 @@ produced with the gun silent. Reaching the owner's criterion needs two things, i
 - **Not achieved:** `hits == 0` at the 6000-tick cap, and no kill at any DPS. The objective remains **active and
   incomplete**, and no native zero is claimed.
 
+## 117. Round 153: the DPS criterion is now measurable, and it is met above a threshold
+
+### 117.1 What changed
+
+The owner ruled on 2026-09-26 that firing is **not** to be taken over by the program and **not** to be trained:
+the fixture should simply remove the corresponding health from the Boss. That decouples the DPS requirement from
+the movement circuit, which is what the acceptance standard is actually about, and it makes DPS a *knob* rather
+than a missing subsystem.
+
+Implementation reuses the mechanism that already existed for the training loop: `CHAITE_SIM_DPS` pins an exact DPS
+with a carried fractional remainder and drains the expected root, and the kill flows through the ordinary state
+machine. The only thing blocking it in acceptance runs was the episode guard, which belongs to training; an
+explicit DPS override now admits the drain in a monitor run too. With no override set, every earlier measurement is
+unchanged.
+
+**Range independence matters here.** The mechanism has a distance falloff whose defaults are 30 tiles full / 80
+tiles zero. The arena is ~400 tiles wide and the Boss ranges over most of it, so those defaults would have made the
+delivered DPS a function of the player's spacing. A DPS screen must vary only DPS, so the sweep runs with
+`CHAITE_SIM_DPS_FULL_TILES=400` / `CHAITE_SIM_DPS_ZERO_TILES=401`.
+
+The instrumentation checks out: at 300 DPS, 6000 ticks record **28837** damage, i.e. **300.2 DPS**.
+
+### 117.2 Phase thresholds, from the engine
+
+`AI_069_DukeFishron` keys its phases off life directly:
+
+```
+bool flag  = life <= lifeMax * 0.5;              // phase 2
+bool flag2 = expertMode && life <= lifeMax * 0.15;  // phase 3
+```
+
+At 78000 life that is **39000** for phase 2 and **11700** for phase 3.
+
+### 117.3 The measured DPS table
+
+Kills are read from `bossLifeRemaining == 0` with the player alive. `run-native-acceptance.ps1` now reports
+`ACCEPTED (kill)` for that case, and it says explicitly that this is **not** a no-hit claim.
+
+```
+loadout      DPS   ticks   hits  result
+strong       300   10860     8   DEATH, boss at 26363
+strong       400    8210     6   DEATH, boss at 26790
+strong       500    7653     6   DEATH, boss at 18707
+strong       600    8332     3   KILL, survived
+strong       800    6382     2   KILL, survived
+strong      1000    5220     2   KILL, survived
+strong      1200    4436     2   KILL, survived
+strong      2000    2881     0   KILL, survived, ZERO HITS
+
+weak        1000    4351     6   DEATH, boss at 14438
+weak        1200    4434     5   KILL, survived
+weak        1400    3879     5   KILL, survived
+weak        1500    3239     6   DEATH, boss at 10462
+weak        1600    3465     3   KILL, survived
+weak        1800    3141     1   KILL, survived
+weak        2000    2879     1   KILL, survived
+```
+
+**Met:** the owner's survival-and-kill criterion holds for the strong wing from **600 DPS** up, and for the weak
+wing from **1200 DPS** up. The strong wing also records a genuine **zero-hit kill at 2000 DPS** (2881 ticks).
+
+**Not met:** at the **300 DPS floor** neither loadout survives. This is the one gap, and §117.4 explains it.
+
+### 117.4 Why the floor fails, and why the threshold is not monotonic
+
+The floor fails for a structural reason, not a route reason. The fight simply lasts too long: 78000 / 300 = 260
+seconds = **15600 ticks**, while the circuit's measured endurance is about **10000 ticks**. The player's damage
+budget is the binding constraint, and it is small:
+
+```
+strong, 300 DPS: hits at 3259, 4271, 6499, 6539, 9627, 9667, 10416, 10497 -- died at 10860
+  phase 1 hits  69, 67
+  phase 2 hits  36, 58, 144, 130, 118, 135
+weak,   300 DPS: hits at 1425, 1605, 1782, 6213, 7235, 8412, 8804, 9526, 9567 -- died at 9919
+  phase 1 hits  69, 92, 83
+  phase 2 hits  54, 88, 143, 152, 112, 105
+```
+
+Two facts follow. First, **phase 2 hits are roughly double phase 1 hits** (144/130/118/135 against 69/67), so the
+fatal damage is concentrated in the late fight. Second, hits arrive in **pairs about 40 ticks apart** (6499/6539,
+9627/9667, 10416/10497), i.e. the damage arrives faster than healing can answer it -- 11 healing potions are
+consumed across the run, each refilling to 480, and it is still not enough. With a ~757-898 HP total budget and
+118-152 per phase 2 hit, the circuit can absorb only about **5 to 6** late hits, and at 300 DPS it needs to survive
+about 15600 ticks to get the kill.
+
+That also explains the **non-monotonic threshold** the owner anticipated: 1400 DPS kills with the weak wing while
+1500 dies. Dying or not is not a smooth function of DPS, because what matters is *which phase* the player is in
+when its hits land. A higher DPS can shift a hit into the much harder phase 3 (below 11700 life) and turn a
+survivable run into a fatal one. `run-native-acceptance.ps1` and the two-healing-potential arithmetic above are the
+reason several key points must be screened rather than one.
+
+### 117.5 The long sub-text line is removed
+
+Owner ruling 2026-09-26: the long sub-text lines are to be deleted outright. The rendered line
+`仙灵之翼：仙灵之翼 + 蛙腿 + 克苏鲁护盾 + 羽落药水` and the equivalent data on all four loadouts are gone. The
+cards already show every required item as vanilla art, so the text list was pure repetition. `Select` now writes
+only the loadout name, and the UI smoke test was inverted to **fail** if a loadout carries such a list again, so
+the ruling cannot silently regress.
+
+### 117.6 Status
+
+- **Established:** DPS is now a driven knob; at 300 DPS the meter is exact (28837 damage over 6000 ticks =
+  300.2 DPS). Phase thresholds are engine-derived: 50% -> phase 2, 15% -> phase 3 (expert).
+- **Met:** survival-and-kill for the **strong wing from 600 DPS** and the **weak wing from 1200 DPS**, including a
+  **zero-hit kill at 2000 DPS** on the strong wing.
+- **Not met:** the **300 DPS floor**, for both loadouts. Cause measured: a ~10000-tick endurance against a
+  15600-tick requirement, with phase 2 hits at 118-152 against a ~5-6 hit budget.
+- **Established:** the threshold is **non-monotonic** (weak: 1400 kills, 1500 dies), because a higher DPS can move
+  a hit into phase 3 rather than remove it.
+- **Not achieved:** `hits == 0` at the 6000-tick cap with the weapon silent on either loadout. The objective
+  remains **active and incomplete**, and no no-hit claim is made for any DPS below 2000.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

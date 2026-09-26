@@ -367,8 +367,12 @@ namespace Chaite.Manager
                     failures.Add("Loadout has no name: " + loadout.Key);
                 if (loadout.Icons.Length == 0)
                     failures.Add("Loadout shows no art: " + loadout.Key);
-                if (loadout.Requirements.Length == 0)
-                    failures.Add("Loadout lists no requirement: " + loadout.Key);
+                // OWNER RULING 2026-09-26: the console carries no explanatory
+                // sub-text. The required items are shown as card art only, so a
+                // loadout must NOT carry a repeated text list of them.
+                if (loadout.Requirements.Length != 0)
+                    failures.Add("Loadout still carries sub-text requirements: " +
+                        loadout.Key);
                 foreach (var icon in loadout.Icons)
                     if (SpriteCatalog.Find(icon.Key) == null)
                         failures.Add("Loadout icon is not in the sprite catalog: " +

@@ -55,10 +55,7 @@ namespace Chaite.Manager
                     SpriteCatalog.BundleOfBalloons,
                     SpriteCatalog.FeatherfallPotion
                 },
-                new[]
-                {
-                    "Lilith的项链", "气球束（马掌气球束同族）", "羽落药水"
-                },
+                new string[0],
                 "在海洋用松露虫钓鱼"),
 
             new LoadoutDefinition("fishron-fairy", BossFamily.Fishron,
@@ -68,7 +65,7 @@ namespace Chaite.Manager
                     SpriteCatalog.FairyWings, SpriteCatalog.FrogLeg,
                     SpriteCatalog.ShieldOfCthulhu, SpriteCatalog.FeatherfallPotion
                 },
-                new[] { "仙灵之翼", "蛙腿", "克苏鲁护盾", "羽落药水" },
+                new string[0],
                 "在海洋用松露虫钓鱼"),
 
             new LoadoutDefinition("fishron-strong", BossFamily.Fishron,
@@ -78,10 +75,7 @@ namespace Chaite.Manager
                     SpriteCatalog.FishronWings, SpriteCatalog.FrogLeg,
                     SpriteCatalog.ShieldOfCthulhu, SpriteCatalog.FeatherfallPotion
                 },
-                new[]
-                {
-                    "猪龙鱼之翼（或同级强化翼）", "蛙腿", "克苏鲁护盾", "羽落药水"
-                },
+                new string[0],
                 "在海洋用松露虫钓鱼"),
 
             new LoadoutDefinition("fishron-chillet", BossFamily.Fishron,
@@ -91,7 +85,7 @@ namespace Chaite.Manager
                     SpriteCatalog.Chillet, SpriteCatalog.ChilletIgnis,
                     SpriteCatalog.BundleOfBalloons, SpriteCatalog.FeatherfallPotion
                 },
-                new[] { "可靠的疾旋鼬 或 可靠的疾旋火鼬", "气球束（马掌气球束同族）", "羽落药水" },
+                new string[0],
                 "在海洋用松露虫钓鱼")
         };
 

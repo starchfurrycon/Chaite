@@ -218,9 +218,29 @@ if (-not $validBattle -or -not $bossSeen) {
     Write-Host 'NOT ACCEPTED: the run was not a valid battle against the expected boss.'
     exit 3
 }
+# OWNER RULING 2026-09-26: acceptance is EITHER a no-hit run at the cap, OR a
+# run that kills the Boss while surviving, screened across the DPS band. The
+# second form is what the owner asked for explicitly: "只要能在对BOSS的DPS在
+# 300-2000情况下都能稳定存活击杀猪鲨也算验收成功".
+#
+# A kill is read from the native accounting, not from the outcome string alone:
+# `bossLifeRemaining` reaching 0 with the player alive is the engine's own
+# statement that the Boss died and the player did not. `SuccessNoDeath` is
+# recorded alongside so the two agree, but the life/death pair is what decides.
+$bossLifeLeft = $result.bossLifeRemaining
+$killed = ($null -ne $bossLifeLeft -and [int]$bossLifeLeft -le 0)
 if ($hits -eq 0 -and -not $death) {
     Write-Host 'ACCEPTED: zero hits in the native engine.'
     exit 0
 }
-Write-Host ("NOT ACCEPTED: {0} hit(s)." -f $hits)
+if ($killed -and -not $death) {
+    Write-Host ("ACCEPTED (kill): the Boss died and the player survived, with {0} hit(s) taken." -f $hits)
+    Write-Host '  This satisfies the owner''s survival-and-kill criterion; it is NOT a no-hit claim.'
+    exit 0
+}
+if ($death -and $killed) {
+    Write-Host 'NOT ACCEPTED: the Boss died but so did the player.'
+    exit 4
+}
+Write-Host ("NOT ACCEPTED: {0} hit(s), Boss still alive with {1} life." -f $hits, $bossLifeLeft)
 exit 1

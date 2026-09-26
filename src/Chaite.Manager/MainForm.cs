@@ -384,23 +384,26 @@ namespace Chaite.Manager
         }
 
         /// <summary>
-        /// Records the owner's pick and shows what it needs.
+        /// Records the owner's pick.
         ///
-        /// It deliberately writes nothing. The mod decides the route from the
-        /// equipment actually worn when the Boss appears, so a selection here
-        /// cannot widen or narrow admission; treating it as a filter would mean
-        /// a mis-click silently stops the mod from taking over. The requirements
-        /// are the one thing the owner has to act on, so they are the only thing
-        /// printed -- the old trailing explanation of how the route is chosen is
-        /// gone.
+        /// It deliberately writes nothing but the name. The mod decides the route
+        /// from the equipment actually worn when the Boss appears, so a selection
+        /// here cannot widen or narrow admission; treating it as a filter would
+        /// mean a mis-click silently stops the mod from taking over.
+        ///
+        /// OWNER RULING 2026-09-26: the long requirements line is REMOVED. The
+        /// cards already show every required item as art, so spelling the same
+        /// list out again was pure repetition and exactly the explanatory
+        /// sub-text the console is not supposed to carry. Only the name remains,
+        /// and only while an action is in progress does the field say anything
+        /// else.
         /// </summary>
         private void Select(LoadoutCard card)
         {
             _selected = card;
             foreach (var other in _cards)
                 other.Selected = ReferenceEquals(other, card);
-            _statusDetail.Text = card.Loadout.Name + "：" +
-                string.Join(" + ", card.Loadout.Requirements);
+            _statusDetail.Text = card.Loadout.Name;
         }
 
         private Control BuildFooter()
