@@ -2012,3 +2012,97 @@ present, so the source is read rather than inferred.
   `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`).
 - Best single-invocation baseline, weak wing, policy off, guard 0: **4 hits, alive at 3000 ticks,
   66 boss damage.**
+
+## 26. Round 65: the dodge goes the wrong way — a read of the script's own output
+
+Section 25 left the four hits unexplained: they were in boss hover state 0 in the sampled
+channel with no projectile nearby. A dense capture resolves what they are, and a temporary
+diagnostic that logs the script's own per-tick output narrows the failure to one decision.
+
+### 26.1 The four hits are body contact during a charge, not bubbles
+
+Dense capture (`artifacts/game-probe-dense-guard0`, 3761 contiguous rows, weak wing, policy off,
+guard 0, 4000-tick cap, 4 hits):
+
+```
+ tick   dmg  bossState  ai1    dx      dy      wingTime  immune  projectiles<200
+  950    98      1        0   +104.0  -26.5      10        40    none
+ 2146    77      1        0    +38.3   +6.3      57        40    none
+ 2278    77      0     -300    +81.4  -65.0       0        40    none
+ 2668    99      1        0    -60.0  -61.9      32        40    none
+```
+
+Three of the four are charge ticks (`bossState 1`, `ai1 0`) with offsets inside the contact box
+(`|dx| < 85`, `|dy| < 71`), and **no hostile projectile is recorded within 200 px on any of
+them**. The fourth (2278) is `bossState 0` with `ai1 -300`, which is the hover that immediately
+follows a charge; the boss is still moving at charge speed through it. So this build's four hits
+are boss body contact, and the section-25 reading of "hover state 0, source unidentified" was an
+artefact of the sampled channel being too sparse to catch the charge state.
+
+### 26.2 The failure is a wrong-direction dodge, with the budget available
+
+Full trace of the hit at tick 2146 (the boss locks at tick 2120 when its state goes 0 -> 1):
+
+```
+ tick  st  dx       dy     pvx     pvy    wt  d  phase
+ 2120   1  -526.4  +108.3  (lock)          58     precharge-jump
+ 2121   1  -495.2  +102.4  +?            57  1  charge-descend
+ 2130   1  -228.5   +67.4  +11.82  +1.14  57  1  charge-descend
+ 2136   1   -73.0   +62.1   +7.67  +3.54  57  1  charge-descend
+ 2137   1   -65.3   +55.1   -9.00  -3.60  57  1  charge-descend   <- knockback
+ 2146   1   +38.3    +6.3   +4.50  -3.50  57  1  charge-descend   <- hit
+```
+
+At the lock the player is **above** the boss (`dy +108`) and the boss's locked velocity is
+`(-16.94, +1.44)` -- it travels left and slightly **upward**, i.e. toward the player. The owner's
+rule says this is the case for a **diagonal climb**: the boss is below, so the escape must have an
+upward component. The player instead held `controlDown` for the whole 25-tick episode and never
+climbed. `pvy` never exceeds +3.54 before the hit, so the vertical axis contributed nothing to the
+dodge, and the horizontal separation alone decayed from 526 px to 38 px while the charge closed.
+
+**`wingTime` is 57 for the entire episode** -- the bar was healthy. This is not the empty-bar
+failure of section 23; it is a dodge aimed along the wrong axis with full budget in hand.
+
+### 26.3 The latch produced a normal that the geometry does not support
+
+A temporary diagnostic (since reverted) logged the script's own output per tick. At the lock:
+
+```
+ tick  st  dx       dy      script phase                  hor vert jump dash  nh  nv  nseq  wt
+ 2120   1  -526.4  +108.3  fishron-wing-precharge-jump    -1   -1    1    0    0   1    2   58.0
+ 2121   1  -495.2  +102.4  fishron-wing-charge-descend     1    1    0    1    1   1    4   57.0
+```
+
+`nseq` moved from 2 to 4, so `LatchChargeNormal` did re-fire on the charge edge, and it latched
+`(nh, nv) = (1, 1)`.
+
+Working the same geometry by hand from the recorded centres:
+
+```
+player.Center - boss.Center = (-526.4, +108.3)
+aim      = (-0.979, +0.201)
+normalA  = (-aimY, +aimX) = (-0.201, -0.979)   dot with (dx,dy) = +125   <- larger, so chosen
+normalB  = (+aimY, -aimX) = (+0.201, +0.979)   dot = -125
+```
+
+which quantises to `(nh, nv) = (0, -1)` -- a climb, which is the correct answer and the one the
+owner's rule gives. The latch instead produced **(1, 1)**, whose vertical sign is the opposite.
+Every tick of the episode then followed `_chargeNormalVertical = +1` into `charge-descend`.
+
+So the chain is: the latch computes the wrong normal vertical at the lock, the charge branch
+faithfully obeys it, and the player descends into an upward-travelling charge. **One wrong sign in
+one latch is worth 4 hits over 4000 ticks.**
+
+The discrepancy between the hand computation and the latched value is not yet explained. The
+candidate is that the `TargetSnapshot` centre the script reads is not the NPC centre the
+observation channel records, which would also explain `nh = 1` where the geometry gives `0.201`
+(close to the 0.2 quantisation threshold -- a different boss centre would move it across). Pinning
+that is the immediate next step, and it needs the diagnostic kept during one run rather than
+inferred.
+
+### 26.4 Status
+
+- **Reverted:** the temporary `CHAITE_SCRIPT_TRACE` diagnostic (`git checkout --`).
+- **Kept:** the refill guard and `CHAITE_REFILL_GUARD` from sections 23-24.
+- Weak wing, policy off, guard 0: **4 hits, alive at 3000-4000 ticks**, 66-84 boss damage.
+- **No native zero over a full fight on either loadout.**
