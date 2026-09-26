@@ -848,28 +848,6 @@ namespace Chaite.Core
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
             plan.ToggleMount = script.ToggleMount;
-            // TEMPORARY INSTRUMENTATION (remove once resolved): record the plan
-            // value at the point of last write in PlanFormula. The script trace
-            // proves FishronWingScript returns +/-1 on every tick, so a plan
-            // horizontal of 0 must be written here or later on this path.
-            if (Environment.GetEnvironmentVariable("CHAITE_GUARD_TRACE") == "1")
-            {
-                try
-                {
-                    System.IO.File.AppendAllText(
-                        System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
-                            "guard-trace.jsonl"),
-                        "{\"state\":" + input.NativeState +
-                        ",\"vx\":" + snapshot.Player.Velocity.X.ToString("0.###",
-                            System.Globalization.CultureInfo.InvariantCulture) +
-                        ",\"scriptHor\":" + script.Horizontal +
-                        ",\"planHor\":" + plan.Horizontal +
-                        ",\"drop\":" + (plan.Drop ? "true" : "false") +
-                        ",\"dash\":" + (plan.Dash ? "true" : "false") +
-                        ",\"phase\":\"" + (script.Phase ?? "") + "\"}\n");
-                }
-                catch { }
-            }
             if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
             ApplyConsumables(snapshot, ref plan);

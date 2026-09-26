@@ -492,3 +492,99 @@ be maintained. A hold that zeroes horizontal speed is therefore the opposite of 
 correct response to a bubble. This should be narrowed or exempted for the formula route,
 but it was **not** changed this round because it is not on the measured failing path and
 changing it could not be validated against this failure.
+
+## 10. Round 49: horizontal input continuity, and the acceleration constraint
+
+The owner supplied the missing mechanism: Terraria has **acceleration**, so horizontal
+speed must be **maintained continuously**. A player that taps a direction and then stops
+loses the accumulated speed and is effectively stationary, and because vertical
+acceleration is plentiful while horizontal is not, the horizontal axis is the one that has
+to be held. The dash exists to bring the speed up quickly when it has been lost.
+
+The measured player state agrees with this reading:
+
+```
+ maxRunSpeed        4.71     runAcceleration  0.1256
+ moveSpeedDebuffFactor 1     runSlowdown      0.2
+```
+
+`runAcceleration` 0.1256 means reaching the 4.71 cap from rest takes roughly 38 ticks, and
+losing it takes far less. So a gap of even a few ticks without horizontal input leaves the
+player far below the speed needed to clear a charge closing at 14.7 to 17.0.
+
+### 10.1 Input continuity, measured
+
+Across 8685 dense ticks of a full fight:
+
+| metric | value |
+|---|---|
+| ticks with horizontal input held | **5822 / 8685 (67%)** |
+| number of separate held runs | **93** |
+| longest held runs | **368, 353, 337, 320, 288, 267, 220, 213, 210, 202, 192, 186** |
+| median \|vx\| | 6.70 |
+| p90 \|vx\| | 12.67 |
+| max \|vx\| | 14.50 |
+| ticks with \|vx\| < 0.5 | **1128 (13%)** |
+
+So the input is *mostly* continuous -- long runs of 200 to 368 ticks are the norm -- but
+there are **93 breaks**, and 13% of the fight is spent effectively stationary. The breaks
+are not the general case; they are the specifically fatal case, and they cluster at the
+body contacts.
+
+### 10.2 The canonical break
+
+The window before hit 1 reproduces it exactly (from the prehit stream):
+
+```
+ off  tick   vx     vy   wing | L R U D J Dash | phase
+ -44  2975  0.00   8.62     0 | 0 0 0 1 1    1 | precharge-jump
+ -32  2987  0.00  10.01     0 | 0 0 0 1 1    1 | precharge-jump
+ -24  2995  0.00  10.01     0 | 0 0 0 1 1    1 | charge-horizontal-dash
+ -12  3007  0.00  10.01     0 | 0 0 0 1 1    1 | charge-horizontal
+  -4  3015  0.00  -6.21   130 | 0 0 0 1 1    1 | charge-horizontal
+   0  3019  4.50  -3.50   130 | 0 1 0 1 1    1 | personal-space
+```
+
+44 ticks with `L 0 R 0`, `Down` held, falling at `vy 10.01` (= `maxFallSpeed`), at
+`plX` 640. The horizontal input appears only on the hit frame, where the plan finally
+switches to `personal-space`, which is far too late to build speed.
+
+### 10.3 What was ruled out, and what is still open
+
+Instrumenting every stage of the pipeline shows the decision layer is *not* asking for a
+stop:
+
+| probe point | result |
+|---|---|
+| `FishronWingScript` return, 3160 ticks | never returns a neutral horizontal (only `+/-1`) |
+| last write to `plan.Horizontal` in `PlanFormula` | `horAfter == 0` on **0** rows |
+| value leaving `PlanFormula` (`returnHor`) | `0` on **0** rows |
+| `ApplyPlannedOutput` delta (`horBefore` vs `horAfter`) | mismatches on **0** rows |
+
+But the probe's own hook at the first instruction of `ApplyPlan` reports
+`hor == 0` on **1000 of 3160** rows, all of them `route=FishronFairyWingsDash` and
+`strategy=formula-fishron`, including **196** `precharge-jump` rows and **177**
+`charge-horizontal` rows.
+
+That is a direct contradiction with the layer-by-layer trace and it is **not resolved**.
+Two candidate explanations remain, and both are testable:
+
+1. The probe's `ObserveApplyPlanBefore` reaches the game through a path where the plan is
+   a different instance or a stale copy, so its `hor == 0` rows are not the plan
+   `PlanFormula` returned.
+2. `ApplyPlan` is invoked more than once per tick on some ticks, and the applied call is
+   one whose plan was produced by a different route.
+
+Until one of these is settled by measurement, the cause of the 44-tick dead window is
+**open**, and no change should be made on the assumption that the planner is at fault.
+
+### 10.4 Direction for the next round
+
+The actionable statement does not depend on 10.3. Whatever clears or omits the horizontal
+input, the requirement is the owner's: **never let the horizontal axis drop to zero**, and
+use the dash to restore speed quickly rather than as an attack timing aid. Concretely, a
+guard belongs at the point the input is finally applied, not in the decision layer, and it
+should assert "horizontal input is held unless the arena edge makes that direction
+impossible". That is checkable with the same continuity statistic used in 10.1: the 93
+breaks and the 1128 near-zero ticks are the target, and a correct fix drives those to near
+zero without needing the plan-level contradiction to be resolved first.
