@@ -6404,3 +6404,62 @@ wing's 180. The committed rule is therefore conditioned on
   `_chargeNormalVertical` latch.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 84. Round 123: the remaining hits are classified, and the wall-unpin fix is REVERTED
+
+### 84.1 The eight remaining strong-wing hits have two distinct causes
+
+With §83's co-location lift in place the strong wing's eight hits split cleanly:
+
+```
+  4 PROJECTILE, type 384 (shark), damage 61/33/43/43, at ticks 1852, 2032, 2378, 2418
+  4 BODY, type 370, damage 95/73/83/92, at ticks 5099, 5518, 5755, 5874
+```
+
+**The projectile hits are incidental.** At each one the player is at full cruise (`vx` 7.9-8.0) and simply
+runs into a lingering shark; they cost 180 HP total and are not worth a dedicated rule.
+
+**The body hits are wall traps.** Three of the four (5518, 5755, and 5874 one tick later) catch the player at
+`x = 640.0` with `vx = 0.00` for six or more consecutive ticks while `plan.horizontal` is still `-1`, with the
+boss `ai` timer at 19-23 -- mid-charge. The player is motionless and the charge connects for free at 73-83
+damage. The fourth (5099) is a centre crossing at altitude 4589, the §81.2 mechanism again.
+
+### 84.2 Why the obvious fix does not work
+
+`ApplyArena`'s band-edge test cannot fire at `x = 640`: `_bandLeft` is
+`worldLeft + BandEdgeMargin = 16 + 260 = 276`, which is **364 px inside** the position the player is pinned
+at. (The comment at the head of `ApplyArena` claims `_bandLeft` *is* 640; that is stale -- 640 is the arena's
+constructed left edge, not this constant.)
+
+So a wall-unpin rule was added using the engine's own stuck signal plus `arena.ClearanceLeft/Right` to locate
+the real obstruction: while `|vx| < 0.5`, if the command is into a wall within 56 px, reverse it. It is
+**logically sound and measured no effect at all**:
+
+```
+                        §83 (lift only)      + wall unpin
+strong    ticks/hits/death/contacts   6000 / 8 / FALSE / 5    6000 / 8 / FALSE / 5
+weak      ticks/hits/death/contacts   4598 / 8 / TRUE  / 3    4598 / 8 / TRUE  / 3
+```
+
+**The branch never fired, and the frames show why.** The motionless player at `x = 640` with `vx = 0.00` is
+not pressing into the wall -- it is in **knockback**. In every recorded case the velocity arrives at
+`+4.50, -3.50`, which is exactly **53% of 8.5**, the native knockback fraction, and the plan's horizontal has
+already flipped to `+1`. The command is not being absorbed; the player was simply still moving left when the
+wall stopped it, and then the hit converted the motion into knockback. There is no pinned-input state to
+detect, so the rule has nothing to act on.
+
+### 84.3 Status
+
+- **Reverted.** The rebuilt DLL is **hash-identical** to the §83 build (`B4DA86A04A015A66`), so §83's
+  verified numbers stand unchanged and the wall-unpin code is gone.
+- **Measured:** the wall unpin produced `6000 / 8 / FALSE / 5` (strong) and `4598 / 8 / TRUE / 3` (weak),
+  identical to §83 on both loadouts, and its branch never fired.
+- **Established (frame-level):** the strong wing's 8 hits are 4 incidental shark contacts at cruise speed
+  (180 HP total) and 4 body hits, three of which are wall traps at `x = 640` where the velocity is
+  `+4.50, -3.50` knockback rather than a pinned command.
+- **Established:** `_bandLeft = 276` while the player pins at `x = 640`, so the band-edge guard in
+  `ApplyArena` is inert for this arena.
+- **Ten interventions attempted; one (§83) improves the fight.** The best achieved is the strong wing at
+  `6000 / 8 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
