@@ -4645,3 +4645,72 @@ state-machine change (§55).
   its source over all 1199 common ticks.
 - **Not achieved:** zero hits on either loadout over a full fight.
 - **No native zero over a full fight on either loadout.**
+
+## 60. Round 99: consolidated session state, so the next session starts from measured facts
+
+### 60.1 What is done and verified
+
+Before this session `CHAITE_ROUTE_FILE` did not replay at all. Four defects were found and fixed, each with
+its own measured effect, all committed:
+
+1. **The harvest writer dropped the dash channel** -- five format placeholders for six controls
+   (`harvest-native-route.py:215`), so the trailing `dash` was silently discarded from every route. That
+   armed the plugin's pending-dash validation, which called `NeutralizePendingInput` and **zeroed every
+   control and every captured control on every tick**, so the replayed body never moved. Fixing it is what
+   first made the replay body move at all.
+2. **The feather-fall rejection resolved to `all-controls-neutral`**, discarding the jump, the horizontal
+   direction and the dash together, which lost the takeoff frame (`TerrariaFacade.cs:3917-3937`).
+3. **The route reader decoded six-column files as five-column**, shifting every channel from `up` onward,
+   so the `down` bit replayed as a **dash 92 ticks early** (`RouteReplay.cs:163-207`).
+
+Combined effect on one route, replaying the weak-wing live route:
+
+```
+HITS 6 / damage 54 / death True   ->  HITS 2 / 18 / False  ->  HITS 1 / 9 / False
+per-tick diff over 1199 common gameUpdateCounts: 0 differing ticks
+```
+
+**The acceptance channel the objective requires is demonstrated**: native per-tick replay reproduces its
+recorded run exactly (identical hits, damage, death flag, shield rows, dash ticks, npc contacts).
+
+### 60.2 Baseline used throughout
+
+Committed state machine, live weak wing, `fishron-fairy-wing`, 3000 ticks: **4 hits / 66 boss damage /
+no death / 6 npc contacts**, hits at ticks 950, 2146, 2278, 2668.
+
+### 60.3 Not done
+
+**No native zero-hit full fight exists on either loadout.** The objective is not met and must not be
+reported as met.
+
+### 60.4 Excluded, each by direct measurement -- do not repeat
+
+- **Perpendicular escape direction**: flipping the charge-normal tie-break reproduced the baseline exactly,
+  with identical hit ticks.
+- **Perpendicular escape magnitude**: the latched normal already yields +5.63, +4.17 and +2.18 px/tick of
+  clearance on three of the four contacts, at or above the ~4.25 px/tick the race needs.
+- **Flight budget**: two of four contacts occur with `wingTime` 57 and 54, not with a spent wing.
+- **The floating-point tie-break itself**: it selects the better perpendicular in three of four cases.
+- **Prioritising the charge beat over the personal-space escape**: measured worse (6 hits / 99 damage).
+
+### 60.5 Next target
+
+**The along-line component.** The two contacts with the *best* clearance rates (+5.63 and +4.17 px/tick)
+still connect, and the charge closes the along-line distance at 17.0 px/tick while the player's velocity
+retains a large component along the line (+4.7 on sequence 1). Surviving therefore requires the along-line
+component of the player's velocity during a locked charge to be driven toward zero -- or reversed to match
+the charge -- while the perpendicular escape continues. The three failed attempts all aimed at the
+perpendicular and none touched this term.
+
+### 60.6 Method constraints for whoever continues
+
+- A live-route replay reproduces the **recorded** controls: it can inspect failing frames but **cannot judge
+  a state-machine change**. State-machine changes require a fresh **live** run.
+- **Short runs are not evidence.** A 1200-tick zero was measured and then showed **6 hits at 3000 ticks** in
+  the same configuration. Acceptance needs full-fight length (3000+ ticks) against the committed baseline.
+  `run-native-acceptance.ps1` will print `ACCEPTED` for a short quiet window.
+- Harvest with the fixed writer; a live-route replay is then tick-exact (0 differing ticks over 1199).
+
+### 60.7 Status
+
+Tree clean apart from untracked `tmp/`; solution builds clean. Objective remains **active and incomplete**.
