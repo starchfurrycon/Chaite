@@ -1201,3 +1201,100 @@ before 14 of 19 hits) and this round confirms it on the post-change build.
 
 **No native zero on either loadout.** The pinned figures stand at weak 8 hits / 37 damage /
 death, strong 11 hits / 76 damage / alive at the cap.
+
+## 18. Round 57: the flight budget is the real constraint, and it is a refill problem
+
+Section 17.6 named flight budget as the remaining constraint. This round measured it directly
+and then tested the obvious repair, which failed. Both the measurement and the failure are
+worth recording.
+
+### 18.1 The native refill, read exactly
+
+`Player.cs:26992`:
+
+```csharp
+if (((velocity.Y == 0f || sliding) && releaseJump) || (autoJump && justJumped))
+{
+    wingTime = wingTimeMax;
+    mount.ResetFlightTime(this);
+}
+```
+
+`justJumped` is set at `Player.cs:20867` only when `sliding || velocity.Y == 0f`, i.e. on the
+tick the player touches support. Refilling therefore requires a **landing**, or a
+zero-vertical-velocity frame with the jump released. The arena places its platform rows 60
+tiles apart (`GameProbe` `PlatformRowSpacingTiles`), which the probe's own comment calls
+"about one wing charge of climb between layers".
+
+### 18.2 Measured on the dense weak-wing stream (8446 planned ticks)
+
+```
+refills (wingTime returned to max): 23
+ticks with wingTime <= 0          : 4896 / 8446  (58.0%)
+ticks with justJumped (landing)   : 17  (0.2%)
+airborne rows                     : 8351 / 8446  (98.9%)
+airborne runs: 24   median 350   p90 559   max 759
+airborne runs longer than one full budget (130): 22 of 24 (91.7%)
+```
+
+The player is airborne for **98.9 percent** of the fight and out of flight budget for **58
+percent** of it. Only **23 refills** happen in 8446 ticks, and **22 of the 24 airborne runs are
+longer than the entire 130-tick budget** -- median 350, longest 759.
+
+Every one of the 17 landings refilled to the maximum, so the refill itself works perfectly.
+The problem is purely that landings are rare: gravity only reaches the next platform row after
+the budget is already spent, so the player oscillates between a full budget and an empty one
+(`wingTime == 0` on 5076 of 8446 ticks, with the rest spread almost uniformly from 10 to 130)
+instead of holding a comfortable reserve.
+
+### 18.3 The repair that was tried, and why it did nothing
+
+The first hypothesis was that `Down` was preventing landings: platforms are one-way, and in
+Terraria holding `Down` makes the player fall through them. `Down` is indeed held on 7061 of
+the 8351 airborne ticks (84.5 percent), so the theory was plausible.
+
+A guard was added to `FishronWingScript` that released `Down` (`Vertical = 0`, `Jump = false`)
+once `wingTime` fell to 35 percent of maximum, tagged `-refill` in the phase. It was written
+twice:
+
+1. **First form**, only on ticks where a descent was already commanded
+   (`output.Vertical > 0`). Instrumented with `CHAITE_REFILL_TRACE`, it was reached **1453
+   times in a 3000-tick run**, but `wingTime` was already **0 on 701** of those -- far too late
+   to matter -- and the full-run result was **bit-identical** to the baseline.
+2. **Second form**, acting on the budget alone regardless of phase, standing down only while an
+   ascent was commanded. This fires on **5829 of 8446 ticks** (`wingTime <= 45`), and the
+   result was **bit-identical again**: weak wing 8684 ticks, 8 hits, 37 damage, death; strong
+   wing 11000 ticks, 11 hits, 76 damage, npc contact 3.
+
+A follow-up check explains the null: of the 5829 guarded rows, `Down` was actually held on only
+4540, so the guard was already changing far less than it appeared to, and the rows where it did
+change something did not alter where the player ended up. **The guard was reverted**, because it
+is an unverified change of my own that produced no measured effect; only the section 17 work,
+which implements the owner's stated rule, remains.
+
+The deeper reason a descent guard cannot fix this on its own is that the circuit is only
+airborne-and-empty because it spends the entire budget before looking for a surface. Making the
+descent start earlier does not create a landing that the fight's own geometry does not offer
+within reach; the budget has to be **budgeted**, with landings scheduled across the fight
+instead of discovered at the end of each run.
+
+### 18.4 A false trail worth recording
+
+The long airborne runs first looked like a falling-through-platforms bug, because a run showed
+`Y 6026` to `6998` and the platform rows sit 960 px apart. That reading was wrong: `Y 6026` is
+level flight, not a fall. The airborne `vy` histogram is bimodal at **-10 (1653 ticks)** and
+**+10 (1255 ticks)** with only 252 rows near `|vy| <= 1`, so the player is climbing to the wing
+ceiling or falling at terminal velocity almost all of the time. There is no hovering phase to
+blame and no missing platform.
+
+### 18.5 Also recorded
+
+- A 3000-tick run reported `HITS 0` and `ACCEPTED: zero hits in the native engine`. This is
+  **not** a zero-hit result and must not be read as one: the same run reported
+  `boss damage: 0` and `boss life left: 78000`, so the fight had barely begun. Native
+  acceptance is `hits == 0` over a run that actually fights, and section 12a's rule stands.
+- New tool `tools/analyze-wing-budget.py` reports refills, empty-budget share, landing count and
+  the airborne-run distribution against the budget.
+- The pinned figures are unchanged: weak wing 8684 ticks / 8 hits / 37 damage / death; strong
+  wing 11000 ticks / 11 hits / 76 damage / alive at the cap. **No native zero on either
+  loadout.**
