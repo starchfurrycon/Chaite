@@ -5614,3 +5614,81 @@ loadouts), the state is:
   the two that reduce hit count trade cheap grazes for lethal connections.
 - **Still not achieved:** zero hits on either loadout; no accepted run at the cap. The objective remains
   **active and incomplete**, and no native zero is claimed.
+
+## 73. Round 112: what acceptance actually requires, and the fight's real shape
+
+### 73.1 Acceptance does NOT require killing the boss
+
+This matters because it had been implicitly treated as a two-sided objective. The harness verdict is:
+
+```
+tools/run-native-acceptance.ps1:221-225
+if ($hits -eq 0 -and -not $death) { 'ACCEPTED: zero hits in the native engine.' }
+else { "NOT ACCEPTED: {0} hit(s)." -f $hits }
+```
+
+and `docs/approach-2026-09-16-closed-loop-training.md:885` states the rule directly:
+**"「无伤」验收从此只认 `hits == 0`，不区分「靠无敌帧穿过」与「完全没有接触」。"**
+
+So acceptance is **`hits == 0` and alive**, evaluated at the `-maxticks` cap. Killing Duke Fishron is **not
+part of it**, and it is in fact out of reach: from `result.json` the boss has **`lifeMax 78000`**, and across
+4599 ticks of the baseline the player dealt **`bossDamage: 31`**. `outcome: test-time-limit` is therefore the
+normal, expected end of a passing run -- not a failure. **The task is a survival-and-evasion problem, not a
+damage race.** Every prior framing of the remaining work should be read that way.
+
+### 73.2 The fight's real shape (measured)
+
+```
+boss width / height across the whole run: 150 x 100, unchanged  -> the Boss NEVER ENRAGES
+player wet flag: False on all 4599 ticks                       -> the player is NEVER in water
+arena: 399 tiles (groundLeft 1, groundRightExclusive 400), world 4200x1200 tiles
+       three layers: ground 7958 plus wooden platforms at y ~7040 and y ~6080
+player x range over the run: 640 .. 5978  (span 5338 px = 334 tiles)
+player y range over the run: 6108 .. 7958
+
+where the hits happen -- ai[0] is the Boss state, all 8 hits:
+  hit@ 905  ai=[0,-300,  6,7]  vel=(  7.9, -6.7)   <- hover/setup
+  hit@2433  ai=[1,  0, 18,1]   vel=( 14.7,  8.6)   <- charging
+  hit@3264  ai=[1,  0, 19,1]   vel=(-15.1,  7.8)   <- charging
+  hit@3792  ai=[1,  0, 11,4]   vel=( 17.0, -0.2)   <- charging
+  hit@3918  ai=[1,  0, 21,8]   vel=( 14.9,  8.1)   <- charging
+  hit@4096  ai=[1,  0, 21,1]   vel=(-12.8, 11.2)   <- charging
+  hit@4151  ai=[1,  0, 18,3]   vel=( 16.9, -1.4)   <- charging
+  hit@4209  ai=[0,  0,  0,5]   vel=(-14.9,  7.8)   <- hover/setup
+```
+
+**Seven of the eight hits occur in `ai[0] == 1`: the locked charge.** The eighth (tick 905) is a hover
+contact. So the entire problem is the charge, and the geometry is fixed by the native hitboxes: Boss body
+150x100, player 20x42, so a body connection needs `|dx| < 85` **and** `|dy| < 71`. The boss's own collision
+half-height is 50, so clearing its body vertically needs on the order of `50 + 21 = 71 px` from its centre --
+close to the ~85 px figure the earlier sections used for the horizontal clearance. Both are of the same order
+and both exceed what the player creates before a 17 px/tick charge arrives.
+
+Two things this rules out, which had been open questions:
+
+- **Enrage is not a factor.** The boss stays 150x100 for the whole fight, so no late-fight size or speed
+  change explains the lethal cluster. It also means the ocean-biome restriction (the concern behind the
+  300-tile arena) is not being violated in a way that triggers enrage here.
+- **Water is not a factor.** The monitor fixture runs with `oceanBasinFilled = false`
+  (`tools/GameProbe.cs:5734`), and the player is never wet, so no liquid physics enters the problem.
+
+### 73.3 What this leaves
+
+The problem is now stated with nothing extraneous: **keep a 20x42 body more than 85 px horizontally or 71 px
+vertically from a 150x100 body that charges in a straight line at 12.8-17.0 px/tick, eight times, while never
+dying and never needing to win.** The boss is fully deterministic, the arena is flat with two platform rows,
+and the replay channel is validated tick-perfect (§60.1), so this is a solvable evasion problem -- but §72.3
+shows it is **not** solved by any of the six local input-rule changes tried, all of which were evaluated at
+the cap and all of which lost. The remaining work is the cycle-level rescheduling described in §72.4.
+
+### 73.4 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean; the
+  §64 velocity-normal fix (`a46bca3`) is intact.
+- **Clarified:** acceptance is `hits == 0` **and alive** at the cap; **killing the boss is not required** and
+  is out of reach (78000 HP versus 31 damage dealt). `test-time-limit` is a normal passing end state.
+- **Measured:** the boss never enrages (150x100 throughout); the player is never wet; **7 of 8 hits are during
+  the `ai[0]==1` charge**; contact needs `|dx| < 85 && |dy| < 71`.
+- **Ruled out:** enrage and water physics as contributors.
+- **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
+  incomplete**, and no native zero is claimed.
