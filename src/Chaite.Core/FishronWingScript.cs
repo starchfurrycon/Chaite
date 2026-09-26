@@ -718,6 +718,31 @@ namespace Chaite.Core
                     vertical = 0;
             }
             ApplyArena(player, ref horizontal, ref vertical);
+            // REFUTED: holding `away` across the uncovered tail of the
+            // dash-body-hit deferral (CHAITE_BODY_WINDOW).
+            //
+            // The deferral itself is the durable finding and it is EXACTLY 10
+            // ticks, measured on every dash-body-hit that was followed by damage
+            // in both 6000-tick runs: 4262->4272 (strong) and 1416->1426,
+            // 1596->1606, 1773->1783 (weak). It is a constant -- independent of
+            // loadout, of the closing geometry, and of the launch direction --
+            // so the collision's 4 i-frames (Player.cs:21284) can never cover it
+            // and the last 6 ticks are always exposed. The circuit spends exactly
+            // those ticks pre-positioning for the NEXT charge, letting dx
+            // collapse 67.9 -> 13.8 before the hit lands.
+            //
+            // Holding `away` over those 6 ticks was the narrowest possible form
+            // of the repair and it still fails on the strong wing:
+            //
+            //   off: strong 6000/2 hits/42 dmg   weak 6000/3 hits/48 dmg
+            //   on:  strong 6000/6 hits/27 dmg   weak 6000/3 hits/48 dmg
+            //
+            // Note the tell: damage FALLS 42 -> 27 while hits RISE 2 -> 6. The
+            // rule is not being ignored -- it is converting two hard hits into
+            // six soft ones, i.e. the override changes which contact lands rather
+            // than preventing one. That is the same signature as every other
+            // `horizontal` override, and it closes the last variant of the width
+            // axis. Reverted.
             // REFUTED: holding the width open through the pre-charge window
             // (CHAITE_WIDTH_HOLD).
             //

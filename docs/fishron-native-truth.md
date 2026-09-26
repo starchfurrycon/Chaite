@@ -8218,6 +8218,67 @@ was strictly worse at every nonzero value.
   through both the script and route channels. The objective remains **active and incomplete**, and no native zero
   is claimed.
 
+## 114. Round 150: the dash-body-hit deferral is exactly 10 ticks, and the last width variant is closed
+
+### 114.1 The deferral is a constant: 10 ticks
+
+Pairing every dash-body-hit (`contact: true` in `shield-events.jsonl`) with the next life decrease gives the
+deferral between the collision and the damage it causes:
+
+```
+strong: dash@4262 -> hit@4272   defer 10
+weak  : dash@1416 -> hit@1426   defer 10
+        dash@1596 -> hit@1606   defer 10
+        dash@1773 -> hit@1783   defer 10
+```
+
+**Exactly 10, in every case that produced damage, on both loadouts, at every closing geometry and both launch
+directions.** This is the missing piece of §113.3: `GiveImmuneTimeForCollisionAttack(4)` (`Player.cs:21284`) grants
+**4** i-frames over a **10**-tick deferral, so ticks 5 through 10 are unprotected by construction. The pairing also
+shows two contacts that were *not* followed by damage (strong `t=353`, `t=1831`, and `t=5153`; the next hit after
+each is thousands of ticks away), confirming that a dash-body-hit is a necessary but not sufficient antecedent of a
+hit.
+
+### 114.2 The circuit spends exactly those 6 ticks turning around
+
+At the weak wing's `t=1773` hit the launch carries the player away at `vx +9.00`, and over the next 10 ticks that
+decays only to `+8.20` -- yet `dx` **collapses from 67.9 to 13.8** because the circuit begins pre-positioning for
+the next charge. So the ten ticks in which the player is most exposed are the ten the circuit uses to reverse.
+
+### 114.3 Narrowest form of the repair, still refuted -- but with a diagnostic tell
+
+`CHAITE_BODY_WINDOW` held `away` for ticks 5..10 only: six ticks, on an event-triggered window, at the one moment
+the circuit should not be turning around. That is the narrowest version of the width repair, and it is deliberately
+ten times shorter than the fatal whole-window `CHAITE_WIDTH_HOLD` (§111.2). It still fails:
+
+```
+off: strong 6000 / 2 hits / 42 dmg     weak 6000 / 3 hits / 48 dmg
+on:  strong 6000 / 6 hits / 27 dmg     weak 6000 / 3 hits / 48 dmg
+```
+
+The tell is worth recording: **damage falls 42 -> 27 while hits rise 2 -> 6.** The rule is not being ignored; it
+converts two hard hits into six soft ones, i.e. it moves *which* contact lands rather than preventing one. That is
+the signature of every `horizontal` override tried in this session, and it closes the last variant of the width
+axis. Reverted and deleted.
+
+Incidentally this establishes that `EyeShieldDashState` already carries `EocHit` and `EocDash` (raised in
+`GravityDashMotion.cs`), so a collision can be detected in-script with no probe change -- useful even though this
+particular rule failed.
+
+### 114.4 Status
+
+- **Established:** the dash-body-hit's deferred damage lands **exactly 10 ticks** after the collision, on both
+  loadouts and at all measured geometries, against only **4** granted i-frames -- so ticks 5..10 are unprotected
+  by construction. A dash-body-hit is necessary but not sufficient for a hit.
+- **Established:** `EyeShieldDashState.EocHit` / `.EocDash` are already available to the script, so native
+  collision detection needs no probe change.
+- **Refuted and closed:** holding `away` across the uncovered tail (`CHAITE_BODY_WINDOW`, 6 ticks, the narrowest
+  form of the width repair) -- strong 2 -> 6 hits, with damage falling 42 -> 27, the tell that it relocates a
+  contact instead of preventing one. Weak unchanged. Reverted and deleted.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3,
+  re-verified through `tools/verify-fishron-routes.ps1` after the revert. The objective remains **active and
+  incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

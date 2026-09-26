@@ -167,7 +167,11 @@ if ($zero.Count -eq $results.Count) {
     Write-Host 'ZERO-HIT: both loadouts recorded hits == 0.' -ForegroundColor Green
 } else {
     $hitList = ($results | ForEach-Object { $_.Hits }) -join ' / '
-    Write-Host ("ZERO-HIT NOT ACHIEVED: hits are {0}. The objective requires hits == 0 at the " +
-        "6000-tick cap and that remains UNMET." -f $hitList) -ForegroundColor Yellow
+    # NOTE: `("a {0} " + "b" -f $x)` is a PowerShell precedence trap -- `-f` binds
+    # to the SECOND literal only, so the first keeps its placeholder. Build the
+    # message as one string first.
+    $msg = "ZERO-HIT NOT ACHIEVED: hits are $hitList. The objective requires " +
+        "hits == 0 at the 6000-tick cap and that remains UNMET."
+    Write-Host $msg -ForegroundColor Yellow
 }
 exit 0
