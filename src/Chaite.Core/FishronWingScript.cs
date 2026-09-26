@@ -189,6 +189,35 @@ namespace Chaite.Core
         /// branch.</summary>
         private const string LegChargesVariable = "CHAITE_LOOP_LEG_CHARGES";
 
+        /// <summary>Wing budget at or below which the circuit stops climbing while
+        /// airborne so that it can land and refill, in wingTime units.
+        ///
+        /// The guard exists because an airborne player with no budget has no
+        /// vertical authority at all, which makes every charge that arrives in
+        /// that state unavoidable. MEASURED (dense native trace, script only, hit
+        /// at tick 533): wingTime was 0 on every row from tick 508 to 533 while
+        /// the player was airborne throughout, so it never landed and never
+        /// refilled, and the latched normal could not be executed.
+        ///
+        /// A threshold of 0 releases the climb only once the bar is already
+        /// empty. A larger threshold reserves enough budget to actually complete
+        /// a dodge, at the cost of landing earlier. Read from the environment so
+        /// it can be swept in-engine on whole native fights without a rebuild; a
+        /// missing, malformed or negative value falls back to 0, which reproduces
+        /// the reviewed circuit exactly.</summary>
+        private const string RefillGuardVariable = "CHAITE_REFILL_GUARD";
+
+        private static float ReadRefillGuard()
+        {
+            var raw = Environment.GetEnvironmentVariable(RefillGuardVariable);
+            float value;
+            if (string.IsNullOrEmpty(raw) ||
+                !float.TryParse(raw.Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out value) || value < 0f)
+                return 0f;
+            return value;
+        }
+
         /// <summary>Per-charge horizontal pattern for the closed loop, one entry
         /// per charge within an attack group.
         ///
@@ -290,6 +319,9 @@ namespace Chaite.Core
         private float _bandRight;
         private float _floorY;
         private float _ceilingY;
+        /// <summary>Empty-bar guard threshold, read once per instance so a whole
+        /// fight is planned against one value. See RefillGuardVariable.</summary>
+        private readonly float _refillGuardBudget = ReadRefillGuard();
         // Indexed by native state; only the hover states are used.
         private readonly int[] _hoverLimit = { 30, 30, 80, 90, 180, 30, 30, 120, 90, 180, 30, 30, 30 };
 
@@ -475,7 +507,7 @@ namespace Chaite.Core
             // therefore suppressed only while the bar is empty and the player is
             // airborne: the descend branches are untouched, and a grounded player
             // is untouched so the takeoff that refills the bar still happens.
-            if (player.WingTime <= 0f && !player.OnGround && vertical < 0)
+            if (player.WingTime <= _refillGuardBudget && !player.OnGround && vertical < 0)
             {
                 vertical = 1;
                 phase = "fishron-wing-refill";

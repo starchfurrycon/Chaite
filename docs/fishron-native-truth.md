@@ -1844,3 +1844,91 @@ the same quantity as the life-drop count and should not be quoted as if it were.
   **strong 5341 ticks / 9 hits / death / `npc contact` 9**. With the policy on, weak is 8684 / 8 /
   death and strong 11000 / 11 / alive, but those are policy results, not the state machine's.
 - **No native zero over a full fight on either loadout.**
+
+## 24. Round 63: the refill guard made sweepable, and an environment-drift trap
+
+Section 23.2 added the empty-bar refill guard with a hard 0 threshold. This round made the
+threshold sweepable to ask whether *reserving* budget beats *reacting at empty*, and in doing so
+found that the session's environment drifts between tool invocations, which invalidated part of
+section 23's evidence.
+
+### 24.1 The knob
+
+`CHAITE_REFILL_GUARD` (wingTime units, default 0) is read once per script instance:
+
+```csharp
+if (player.WingTime <= _refillGuardBudget && !player.OnGround && vertical < 0)
+{
+    vertical = 1;
+    phase = "fishron-wing-refill";
+}
+```
+
+A threshold of 0 is the reviewed circuit plus the guard of section 23.2; unset, malformed or
+negative values fall back to 0, so a probe run without the variable reproduces the previous build.
+Setting the variable to a value above `wingTimeMax` disables the guard entirely, which is what
+makes a clean on/off A/B possible.
+
+### 24.2 The guard is real: on/off A/B inside one invocation
+
+Both runs below were launched from the **same** shell invocation with only
+`CHAITE_REFILL_GUARD` changed, weak wing, policy explicitly off, 3000-tick cap:
+
+| guard | hits | ticks | boss damage | death | `npc contact` |
+|---|---|---|---|---|---|
+| 100000 (disabled) | 5 | **1692** | 57 | **True** | 5 |
+| 0 (enabled) | **4** | **3000** | 66 | **False** | 6 |
+
+With the guard disabled the script dies at tick 1692; with it enabled the same script survives the
+full 3000 ticks. This is the same build, the same seed and the same parameters, so the guard is
+confirmed to change the outcome rather than merely the telemetry.
+
+### 24.3 The threshold sweep (weak wing, policy off, 6000-tick cap)
+
+| guard | hits | ticks | boss damage | `npc contact` |
+|---|---|---|---|---|
+| 0 | 9 | 5937 † | 126 | 12 |
+| 10 | 8 | 5015 † | 162 | 13 |
+| 20 | 8 | 4653 † | 210 | 14 |
+| 30 | 8 | 2983 † | 128 | 10 |
+| 45 | 8 | 4477 † | 144 | 11 |
+| 60 | **7** | 3698 † | 111 | 9 |
+
+† every row ended in `FailedAfterDeath`.
+
+The hits column is nearly flat (9, 8, 8, 8, 8, 7) while survival **degrades** as the threshold
+rises: 5937 ticks at guard 0 down to 3698 at guard 60, with a non-monotonic wobble at guard 30.
+Reserving budget by landing earlier buys at most one fewer hit and costs about forty percent of
+the fight's duration, so it is a trade and not a fix. Guard is kept at its default of 0.
+
+### 24.4 The environment drifts between tool invocations
+
+The sweep above reports 9 hits at guard 0, while the A/B in 24.2 reports 4 hits at guard 0, and
+an earlier dense run reported 4 hits with the guard unset. The runs cannot all be the same
+configuration. Two candidate explanations were tested:
+
+- **The dense probe flag.** Controlled A/B, dense off versus dense on, otherwise identical, both
+  in one invocation: **4 hits / 84 boss damage / `npc contact` 8 in both, digit for digit.**
+  Dense mode changes only the observation row limit (`GameProbe.cs:200`), so this is refuted --
+  and it also means the 4000-tick dense artifact and the 4000-tick sampled artifact are the same
+  fight.
+- **Environment drift.** The session environment is re-created between tool invocations and is
+  not reliably what the previous call left behind. Earlier in this session it carried
+  `CHAITE_OBS_WORLD_BOUND=18`, `CHAITE_PROJECTILE_SLOTS=12`, `CHAITE_PROJ_SORT=threat` and
+  `CHAITE_POLICY_FILE`; those are planner-visible knobs, not just probe settings. The guard
+  sweep ran in a later invocation from the A/B, and the two differ by more than the guard value.
+
+**Consequence: a comparison is only trustworthy when both arms run inside a single invocation
+with the difference explicit.** Section 23.4's policy on/off table (2 hits versus 4) was taken
+from two separate invocations and is therefore **not** established; it is withdrawn here. The
+same applies to section 23.5's four-hit breakdown, which came from an invocation whose
+environment is no longer reconstructible.
+
+### 24.5 Status
+
+- **Kept:** the refill guard, parameterised by `CHAITE_REFILL_GUARD`, default 0, confirmed by a
+  single-invocation A/B (death at 1692 -> alive at 3000).
+- **Withdrawn:** section 23.4's policy on/off comparison and section 23.5's hit attribution.
+- **Best current single-invocation baseline, weak wing, policy off, guard 0:** 4 hits, alive at
+  3000 ticks, 66 boss damage.
+- **No native zero over a full fight on either loadout.**
