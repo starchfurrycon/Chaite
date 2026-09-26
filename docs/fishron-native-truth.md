@@ -4714,3 +4714,64 @@ perpendicular and none touched this term.
 ### 60.7 Status
 
 Tree clean apart from untracked `tmp/`; solution builds clean. Objective remains **active and incomplete**.
+
+## 61. Round 100: the wing's capability is not the bound -- the commanded escape is
+
+### 61.1 The capability measurement
+
+Read from the committed-baseline live run (`game-probe-weak-3000-base`), over the whole 3000-tick fight:
+
+```
+player |vx| max       = 14.50 px/tick
+player vy max (down)  = 10.01 px/tick
+player vy min (up)    = -9.91 px/tick
+```
+
+So the weak wing (Fairy Wings) can command **up to ~10 px/tick vertically** and **~14.5 px/tick
+horizontally**. The perpendicular escape a locked, near-horizontal charge needs is about **4.25 px/tick**
+(§58.1: ~85 px of clearance to create over a ~20-tick charge), and §59.1 measured the latched normal
+already yielding +5.63 / +4.17 / +2.18 px/tick of clearance.
+
+**Conclusion: the constraint is not the wing's capability.** The airframe can deliver more than twice the
+required perpendicular rate. What is missing is the *commanded* escape, and §59.1's item 3 says which part:
+the two contacts with the **best** clearance rates still connect, because the player keeps translating
+**along** the locked line while the charge closes it at 17.0 px/tick.
+
+### 61.2 The arithmetic of the remaining gap
+
+For sequence 1 (`prehit`, lock at tick 928):
+
+```
+charge direction (unit)          (-0.890, +0.456)
+player velocity at lock          (-6.8, -2.9)
+  -> component along the line    (-6.8)(-0.890) + (-2.9)(0.456) = +4.7 px/tick
+  -> clearance rate onto normal  +5.63 px/tick
+needed clearance rate            ~4.25 px/tick   (already met)
+needed along-line component      ~0              (measured +4.7)
+```
+
+The perpendicular term is satisfied; the along-line term is not. Driving the along-line component to zero
+while holding the perpendicular rate is the single concrete change that the measurements support, and it is
+**not** what any of the three failed attempts did (§60.4). With `|vx|` up to 14.5 and `|vy|` up to 10
+available, such a split is well inside the airframe's envelope, so this is a solvable control problem
+rather than a capability wall.
+
+### 61.3 What a next session should do
+
+1. Compute the charge direction at the lock (`Normalize(player - boss)` frozen at the lock tick, which is
+   exactly what the native code uses -- §"NATIVE CHARGE LOCK") and decompose the commanded input into
+   along-line and perpendicular parts.
+2. Command the perpendicular part at full strength (the normal, as today) and **cancel the along-line
+   part** -- do not keep running down the corridor the charge is travelling.
+3. Validate with a fresh **live** 3000-tick run against the committed baseline (4 hits / 66 damage), because
+   a live-route replay reproduces recorded controls and cannot judge a state-machine change.
+4. Only after the sign is deliberate, revisit the `0.2` deadband, since §56.2/B showed that removing it
+   while the sign is still tie-broken makes things worse.
+
+### 61.4 Status
+
+- Tree clean apart from untracked `tmp/`; solution builds clean.
+- **Measured capability bound:** weak wing commands up to ~14.5 px/tick horizontal and ~10 px/tick
+  vertical, against a ~4.25 px/tick requirement -- capability is not the constraint.
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
