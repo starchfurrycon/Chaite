@@ -7118,15 +7118,68 @@ variations seen in §95.2 were produced by the partially-wired variant, not by n
   engine-behaviour rules must live in `ChargeEscape` or `Cruise`.
 - **Verified:** reverted tree reproduces `strong 6000/2/FALSE/3` and `weak 6000/4/FALSE/5`, and the runs are
   deterministic across repeats.
-- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+## 97. Round 136: the dash suppression, WIRED CORRECTLY, is real -- and improves the weak wing
+
+### 97.1 §96's correction put the rule where it runs
+
+§96 established that the §95 rule sat in `DecideMovement`, the policy-only hook that returns immediately with no
+`CHAITE_POLICY_FILE` configured. The rule was re-implemented **inside `ChargeEscape`** (the instance method that
+actually produces the dash proposal). `ChargeEscape` sees no `FormulaScriptInput`, so the loadout is latched
+into a `_dashSuppressRoute` field in `Tick` before the call.
+
+### 97.2 CONTROLLED sweep -- the parameter now discriminates
+
+With the rule provably live (verified by reading the enclosing method, not by assumption):
+
+```
+STRONG wing   gap = 0 (baseline)  2 hits / 3 contacts
+              gap =  40           6 hits / 3
+              gap =  60           8 hits / 4
+              gap =  90           2 hits / 4   <- optimum
+              gap = 120           8 hits / 5 + DEATH
+              gap = 150           7 hits / 6
+
+WEAK wing     gap = 0 (baseline)  4 hits / 5 contacts
+              gap =  30           8 hits / 6 + DEATH
+              gap =  50           3 hits / 3   <- optimum
+              gap =  75           7 hits / 4 + DEATH
+```
+
+Three things follow. First, **the rule is real**: unlike §95.2, the value now changes the outcome, and 0 is
+distinct from every positive value. Second, **the optima are loadout-dependent** -- strong needs `>= 90` and is
+killed by nothing in its useful range, while weak is *killed by 90* and wants 50; a single value cannot serve
+both, the same §79/§83 pattern. Third, the optima are again **sharp**: 50 gives 3 hits while 30 and 75 both
+kill.
+
+### 97.3 The defaults, and the new best state
+
+Both routes now take their own measured optimum (`FishronFairyWingsDash => 50`, otherwise `90`), with
+`CHAITE_DASH_SUPPRESS` overriding both (`0` disables the rule and reproduces the pre-§97 circuit).
+
+```
+strong wing   6000 / 2 hits / death FALSE / 4 npc contacts   boss damage 42   (was 2 / 3, unchanged in hits)
+weak wing     6000 / 3 hits / death FALSE / 3 npc contacts   boss damage 48   (was 4 / 5)  <-- NEW BEST
+```
+
+Both reproduce on repeat, so these are deterministic. **The weak wing improves on both axes at once -- one
+fewer hit AND two fewer body contacts -- which is the first change in this fight that has done that.**
+
+### 97.4 Status
+
+- **Established:** the dash-suppression rule is real when placed in `ChargeEscape`; §95.2's *conclusion* is
+  reinstated on correct evidence, though its *reasoning* (that the rule had been running) was wrong.
+- **Measured:** controlled sweeps for both loadouts; optima 90 (strong) and 50 (weak), both sharp.
+- **Changed default behaviour:** the weak wing is now `6000 / 3 hits / FALSE / 3 contacts`, improved from
+  `6000 / 4 / FALSE / 5`, and reproducible.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 3 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
-> **§95.2 is RETRACTED by §96.** The dash-suppression rule was placed in `DecideMovement`, which returns
-> immediately when no policy is configured, so it never executed and §95.2's sweep is not a measurement of
-> anything. **§95.1 below is unaffected and remains the round's real result.**
+> **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
+> real, but §95 had it in `DecideMovement` (the policy-only hook), where it never executed. **§95.1 below is
+> unaffected and is the round's real result.**
 
 ### 95.1 The hit anatomy, measured at last
 

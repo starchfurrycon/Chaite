@@ -229,6 +229,33 @@ namespace Chaite.Core
         private const string RefillGuardVariable = "CHAITE_REFILL_GUARD";
         private const string CoLocationRoutesVariable = "CHAITE_COLOCATION_ROUTES";
         private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
+        private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
+
+        /// <summary>Vertical gap (px) below which a ready charge dash is
+        /// suppressed, so those frames go to the vertical escape instead of a
+        /// horizontal dash that cannot outrun the charge. Route-dependent, from
+        /// the controlled sweep at the call site. CHAITE_DASH_SUPPRESS forces one
+        /// value for both routes when set to a positive number, and 0 disables
+        /// the rule entirely (reproducing the pre-§97 circuit).</summary>
+        private static float DashSuppressGap(FormulaRoute route)
+        {
+            var raw = Environment.GetEnvironmentVariable(DashSuppressVariable);
+            if (!string.IsNullOrEmpty(raw))
+            {
+                var text = raw.Trim();
+                float forced;
+                if (text == "0") return 0f;
+                if (float.TryParse(text, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out forced) && forced > 0f)
+                    return forced;
+            }
+            return route == FormulaRoute.FishronFairyWingsDash ? 50f : 90f;
+        }
+
+        /// <summary>The route of the episode being driven, latched in Tick.
+        /// ChargeEscape is an instance method and sees no FormulaScriptInput, so
+        /// the loadout-dependent gate above reads it from here.</summary>
+        private FormulaRoute _dashSuppressRoute = FormulaRoute.FishronStrongWingsDash;
 
         /// <summary>Whether the drained-bar refill also drops the jump command at
         /// the apex, so the native `velocity.Y == 0 && releaseJump` clause
@@ -523,6 +550,7 @@ namespace Chaite.Core
 
             output.Accepted = true;
             output.Fire = true;
+            _dashSuppressRoute = input.Route;
             int horizontal, vertical;
             string phase;
             var dashInput = false;
@@ -946,7 +974,33 @@ namespace Chaite.Core
             // which is exactly a timing the old latch could not express.
             if (!_dashIssued && mobility != null && mobility.CanDash &&
                 mobility.DashReady)
-                dash = true;
+            {
+                // CONTROLLED EXPERIMENT, in the ACTIVE path this time.
+                //
+                // The dash is horizontal (dashType 2, speed ~14.5). MEASURED
+                // (game-probe-pin640-strong-6k, the t=2486 hit): at the lock the
+                // escape normal is 97% vertical, but the dash fires along the
+                // charge axis at vx -14.50 against a +16.97 charge -- it cannot
+                // win on that axis, and it replaces the climb for nine frames,
+                // leaving |dy| 40.2 against the 71 needed.
+                //
+                // §95 tried this inside DecideMovement, which is the
+                // policy-only hook and returns immediately when no policy is
+                // configured, so it never ran. This copy is in ChargeEscape,
+                // which is the method that actually produces the proposal.
+                // The threshold is LOADOUT-DEPENDENT, as §79/§83 found for the
+                // co-location lift. CONTROLLED sweep, rule in this method:
+                //
+                //   strong:  0 -> 2   40 -> 6   60 -> 8   90 -> 2   120 -> 8+death  150 -> 7
+                //   weak:    0 -> 4   30 -> 8+death   50 -> 3   75 -> 7+death
+                //
+                // Strong needs >= 90 and weak is killed by 90, so a single value
+                // cannot serve both. Each route takes its own measured optimum;
+                // the weak wing's 50 is its best result to date (3 hits AND 3
+                // contacts, against 4 hits and 5 contacts unsuppressed).
+                if (Math.Abs(player.Center.Y - boss.Center.Y) >= DashSuppressGap(_dashSuppressRoute))
+                    dash = true;
+            }
         }
 
         /// <summary>Everything that is not a charge.
