@@ -6654,3 +6654,64 @@ rebuilt DLL is again `D38B8A23E6162308` -- the exact binary that produced the 2-
   `6000 / 2 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 88. Round 127: the last two strong-wing hits, frame by frame
+
+Both survivors of §86 are on the floor and are **specific geometric failures**, not general ones.
+
+### 88.1 Hit at 2487 -- the dash carries the player into the charge
+
+The Boss locks at t=2473 (`ai[0]` 0 -> 1) with the player at `(1000.9, 7883.5)` and the Boss at
+`(758.7, 7898.4)`: `dx +242`, `dy -14.9`. The player is 242 px **to the right** of the Boss. The script's
+command is `horizontal = -1` -- **it runs left, straight at the Boss** -- and on the next frame a dash fires and
+takes `vx` to **-14.50**:
+
+```
+t=2473  P=(1000.9,7883.5) v=( -5.85,+1.92)  dx=+242.2  dy=-14.9  ai=[1,0,0,3]
+t=2474  P=( 986.4,7884.5) v=(-14.50,+1.05)  dx=+210.7  dy=-12.8  ai=[1,0,1,3]  <- dash, -14.5
+t=2477  P=( 944.8,7883.0) v=(-13.57,-0.98)  dx=+118.2  dy=-11.2  ai=[1,0,4,3]
+t=2478  P=( 931.5,7881.8) v=(-13.26,-1.25)  dx= +88.0  dy=-11.4  ai=[1,0,5,3]
+t=2479  P=( 940.5,7877.5) v=( +9.00,-4.28)  dx= +80.0  dy=-14.6  ai=[1,0,6,3]  <- reversal
+t=2487  P=( 984.3,7843.5) v=( +3.09,-3.10)  dx= -11.9  dy=-40.2  ai=[1,0,14,3]  <- HIT
+```
+
+At the lock the vertical gap is only **14.9 px**, so the co-location lift fires and reverses the dash to
+`+9.00, -4.28`, and `dy` does grow all the way to `-40.2`. **It is not enough**: the escape needed 71 px and had
+eight ticks to find it while covering the 88 px of remaining horizontal gap, and the reversal cost the two
+frames that the closing 88 px took. The `dy` at the hit, 40.2, is the largest separation either hit reaches.
+
+### 88.2 Hit at 2562 -- running the floor at the Boss's own altitude
+
+The Boss descends diagonally while the player tracks along the ground at `y = 7979` with `vy = 0.00` for the
+entire approach:
+
+```
+t=2540  P=( 832.7,7979.0) v=( -7.98,+0.00)  dx=-321.8  dy=+134.4
+t=2548  P=( 786.6,7979.0) v=( -4.70,+0.00)  dx=-247.6  dy= +71.2   <- threshold crossed
+t=2557  P=( 759.0,7979.0) v=( -1.77,+0.00)  dx=-139.7  dy=  +0.2   <- Boss at player altitude
+t=2562  P=( 755.4,7960.0) v=( +0.11,-6.21)  dx= -74.6  dy= -51.7   <- HIT
+```
+
+The Boss closes at about **10 px/tick horizontally and 7.9 px/tick vertically**, while the player's horizontal
+speed **decays from -7.98 to -0.11** -- the wall-approach turnaround is fighting it -- and `vy` stays exactly
+`0.00` for the first 20 ticks. `dy` crosses the 71 px threshold at t=2548 and passes through zero at t=2557
+with **no vertical separation at all**. Only in the last three ticks does the player climb, at -6.2 px/tick,
+which is too late: it converts a 74.6 px horizontal gap into a hit because the horizontal gap was already
+inside the 85 px body half-width.
+
+**The common cause is altitude.** Both hits happen at the floor (y 7843-7979, ground is 7958) at the Boss's own
+elevation, where the only escape is horizontal and the horizontal escape is what the wall turnaround is
+suppressing. §70's unconditional ascend lift and §78's minimum-altitude rules were both measured harmful in
+their earlier forms, but they were tested **before** §83 and §86 changed the cycle; a floor-clearance rule is
+the one avenue these frames argue for and it has not been tested against the current machine.
+
+### 88.3 Status
+
+- **Unchanged** source: `PinnedWallMargin = 640f`, `CoLocationBand = 24f`, DLL hash `D38B8A23E6162308`.
+- **Established (frame-level):** hit 2487 is a dash *toward* the locked charge (`vx -5.85` -> `-14.50`) from a
+  242 px horizontal gap at only 14.9 px vertical separation; the §83 lift reverses it but reaches only 40.2 px
+  of the 71 needed. Hit 2562 is a floor track at the Boss's altitude with `vy = 0.00` for 20 ticks while the
+  Boss closes diagonally at 10 px/tick horizontal.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
