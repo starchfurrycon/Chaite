@@ -458,8 +458,52 @@ namespace Chaite.Core
             _previousState = state;
             _previousSequence = input.NativeSequence;
             _previousTimer = input.NativeTimer;
+
+            // Refill the wing budget at the apex by TAPPING rather than holding.
+            //
+            // Player.WingMovement only restores the flight budget under
+            // `(velocity.Y == 0f || sliding) && releaseJump` (vanilla 1.4.5.8
+            // Player.cs:26996), so the budget comes back only at zero vertical
+            // speed WITH the jump key released. The circuit asked for a held
+            // jump -- output.Jump is `vertical < 0`, and the facade keeps the
+            // key down for the whole window -- so releaseJump was never true and
+            // the budget was never refilled in the air.
+            //
+            // MEASURED (dense native trace, 8685 ticks): wingTime is 0 on 4896
+            // rows, 56% of the fight, and six of the eight body contacts happen
+            // with wingTime 0 while the player moves at about 4.5 px/tick against
+            // a boss closing at 6.4 to 22.9. An empty budget is why: wings are the
+            // only mobility that outruns a charge, at a measured 13.87 cruise
+            // against a 4.71 foot speed, and `maxRunSpeed 4.71` is exactly the
+            // speed the player dies at.
+            //
+            // At the apex the player's vertical speed passes through zero, so
+            // releasing the key for exactly that tick satisfies the native
+            // condition and hands back the full 130-tick budget. Outside a
+            // charge there is nothing to lose by doing so: the circuit is
+            // ground-anchored and re-jumps whenever it wants lift.
+            if (output.Jump && !player.OnGround &&
+                Math.Abs(player.Velocity.Y) <= ApexVelocityTolerance &&
+                !_apexTapped)
+            {
+                output.Jump = false;
+                _apexTapped = true;
+            }
+            else if (!output.Jump || player.OnGround)
+            {
+                _apexTapped = false;
+            }
             return output;
         }
+
+        /// <summary>Vertical speed at which the player counts as being at the
+        /// apex of a jump, where the native wing refill can be claimed.</summary>
+        private const float ApexVelocityTolerance = 0.5f;
+
+        /// <summary>Set for the tick the apex tap was spent, so the budget is
+        /// claimed once per apex rather than on every tick the player happens to
+        /// be near zero vertical speed.</summary>
+        private bool _apexTapped;
 
         /// <summary>
         /// Applies the trained residual to the scripted decision computed just
