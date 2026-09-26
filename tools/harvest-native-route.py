@@ -46,24 +46,58 @@ def _direction(left: bool, right: bool) -> int:
 
 
 def _pick_controls(row: dict) -> tuple[int, int, int, int, int] | None:
-    """Read the controls that reached the player on this tick.
+    """Read the per-tick input this row should replay.
 
-    `actualAtApplyReturn` is preferred because it is sampled at the point the
-    plan has been applied, so it describes the frame that will actually run.
-    Older streams only carry `plan`, which is the request rather than the
-    result, so it is the fallback rather than the default.
+    `plan` is preferred, and the reason is measured. `CHAITE_ROUTE_FILE` is read
+    by `Runtime` and written into the plan's own fields -- `plan.Horizontal`,
+    `plan.Jump`, `plan.Dash`, `plan.Drop`, `plan.FeatherFallUp` -- which are then
+    passed through the facade. So the route carries a control *request*, and the
+    matching record of that request is `plan`, not the facade's output.
+
+    Harvesting the facade's output instead (`actualAtApplyReturn`) does not
+    round-trip, because the facade's `MovementActionGate.ResolveJump` is not
+    idempotent: replaying a harvest built from `controlJump` puts the gate's own
+    output back through the gate, which suppresses the jump. MEASURED: a 1200
+    tick route harvested from the control snapshot recorded 1 hit, and replaying
+    it produced 6 hits and a death, with the first divergence at tick 240 where
+    the original applied `jump=True` and the replay produced `jump=False`. Over
+    the 50 commonly sampled ticks, 28 disagreed.
+
+    The control snapshot stays as the fallback for streams that predate the plan
+    payload. Its key names carry a `control` prefix -- `controlLeft`,
+    `controlRight`, `controlJump`, `controlUp`, `controlDown`, `controlDash` --
+    because those are the native `Player` fields the probe reads back, whereas
+    the plan shape uses the plan names.
     """
-    source = row.get("actualAtApplyReturn") or row.get("plan")
-    if not isinstance(source, dict):
+    plan = row.get("plan")
+    if isinstance(plan, dict) and plan:
+        horizontal = plan.get("horizontal")
+        direction = 0 if not isinstance(horizontal, (int, float)) else (
+            -1 if horizontal < 0 else (1 if horizontal > 0 else 0))
+        return (
+            direction,
+            int(bool(plan.get("jump"))),
+            int(bool(plan.get("featherFallUp"))),
+            int(bool(plan.get("drop"))),
+            int(bool(plan.get("dash"))),
+        )
+
+    source = row.get("actualAtApplyReturn")
+    if not isinstance(source, dict) or not source:
         return None
 
-    # The keys differ between the plan shape and the control snapshot shape.
-    left = bool(source.get("left", source.get("Left", False)))
-    right = bool(source.get("right", source.get("Right", False)))
-    jump = bool(source.get("jump", source.get("Jump", False)))
-    up = bool(source.get("up", source.get("Up", False)))
-    down = bool(source.get("down", source.get("Drop", source.get("Down", False))))
-    dash = bool(source.get("dash", source.get("Dash", False)))
+    def flag(*names: str) -> bool:
+        for name in names:
+            if name in source:
+                return bool(source.get(name))
+        return False
+
+    left = flag("controlLeft", "left", "Left")
+    right = flag("controlRight", "right", "Right")
+    jump = flag("controlJump", "jump", "Jump")
+    up = flag("controlUp", "up", "Up")
+    down = flag("controlDown", "down", "Drop", "Down")
+    dash = flag("controlDash", "dash", "Dash")
 
     return (_direction(left, right), int(jump), int(up), int(down), int(dash))
 
@@ -84,7 +118,12 @@ def harvest(path: str) -> tuple[list[tuple[int, tuple[int, int, int, int, int]]]
             except ValueError:
                 stats["unparsable"] += 1
                 continue
-            tick = row.get("tick")
+            tick = row.get("gameUpdateCount")
+            if not isinstance(tick, int):
+                # Older streams only carry the probe's own counter. It is not the
+                # axis the route reader uses, so a route keyed on it is applied at
+                # a constant offset; see the note at GameProbe's gameUpdateCount.
+                tick = row.get("tick")
             if not isinstance(tick, int):
                 continue
             controls = _pick_controls(row)

@@ -2682,3 +2682,76 @@ escape. Every one was a plausible reading of the geometry and every one lost to 
   on the ones that fail.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
 - **No native zero over a full fight on either loadout.**
+
+## 34. Round 73: the replay channel was starved, mis-keyed and mis-read -- all three fixed
+
+The objective's acceptance口径 is native per-tick replay through `CHAITE_ROUTE_FILE`. It did not
+work at all, for three independent reasons, each of which had to be fixed before a route could even
+be built. All three are now fixed and the route demonstrably reaches the plan.
+
+### 34.1 The probe starved the channel (`GameProbe.cs`)
+
+`actualAtApplyReturn` was emitted only under `if(hasObservedPlanReturn)`, which is set on the tick an
+apply returns. An apply returns once per charge sequence, so the snapshot was written on **4 of 221**
+rows while `plan` was null on the other 217. `tools/harvest-native-route.py` prefers
+`actualAtApplyReturn` and falls back to `plan`, so it read the entire fight as neutral. The snapshot
+is now emitted on **every** row, and its `tick` falls back to the current tick, with a new `fresh`
+flag so a reader can still distinguish a live apply from a held value. The underlying `observed*`
+fields are persistent readbacks of the player's own controls, so the last written value *is* the
+state that persists into every tick in between, which is exactly what a replay needs.
+
+### 34.2 The harvester read the wrong key names (`tools/harvest-native-route.py`)
+
+The reader looked for bare `left`/`right`/`jump`/`up`/`down`/`dash`, but the control snapshot uses the
+native `Player` field names with a `control` prefix (`controlLeft`, `controlRight`, `controlJump`,
+`controlUp`, `controlDown`, `controlDash`); the bare names exist only on the plan shape. Every row
+therefore decoded as `(0,0,0,0,0)`: a harvest over a 1200 tick fight reported
+`left=0 right=0 jump=0 dash=0` while the stream itself carried `L=True R=False J=True` on 17 rows.
+
+It now prefers the **plan**, and that is the correct source rather than the facade's output. The
+route channel writes `plan.Horizontal`, `plan.Jump`, `plan.Dash`, `plan.Drop`, `plan.FeatherFallUp`,
+so the route carries a control **request** and `plan` is the record of that request. Harvesting the
+facade's output does not round-trip, because `MovementActionGate.ResolveJump` is not idempotent:
+putting the gate's own output back through the gate suppresses the jump.
+
+### 34.3 The route was keyed on the wrong tick axis (`GameProbe.cs`)
+
+`RouteReplay.TryReadTick` compares the route's absolute tick against
+`Runtime.CurrentGameTick()`, which is `Main.GameUpdateCount`. The probe's own `ticks` counter does
+**not** share that origin. A route harvested on `ticks` (1..1200) was therefore applied at a constant
+offset. The boss row now publishes `gameUpdateCount` and the harvester keys on it, falling back to
+`ticks` only for older streams with a note that such a route is offset. The harvested range moved
+from `1..1200` to `2..1200`, confirming the offset is real.
+
+### 34.4 What works now
+
+With all three fixed, one dense 1200-tick run (weak wings, **1 hit**) harvests to a complete
+**1200/1200 tick route with 0 neutral fillers** (`left=271 right=636 jump=432 dash=11`), and
+replaying it gives `replayFrame=0` at tick 240 with `plan.jump=True plan.horizontal=-1`, **exactly
+matching the live run**. The route is read, covers every frame, and lands on the plan.
+
+### 34.5 The remaining gap: a control bit is not a faithful reproduction
+
+The replay still does not reproduce the fight -- **6 hits and a death against the recorded 1 hit**.
+The divergence is isolated to a single frame and is instructive: at tick 240 the live run and the
+replay have **identical applied controls** `(L=True, R=False, J=True, D=False, Dash=False)` and
+identically seeded state, yet the live player is at `y 7951.5` (it rose) and the replay player is
+still at `y 7958` (it did not). The control bit is the same and the body behaves differently, so
+`controlJump` alone does not determine whether a jump happens: `MovementActionGate.ResolveJump` and
+the native wing/jump state machine carry memory across frames that the harvested per-tick bits do
+not encode. Reproducing the recorded fight therefore needs the route to carry the *resolved* input
+each frame, or the gate's cross-frame state, rather than only `plan`'s request bits.
+
+This also means the earlier `standoff-dense` zero-hit artifact cannot be trusted as evidence either:
+it came from an older build (different DLL hashes, `bossDamage` 18 over 4000 ticks, i.e. a barely
+fought run) and the same configuration on the current build gives 4 hits / 84 damage. **No native
+zero-hit full fight exists on either loadout.**
+
+### 34.6 Status
+
+- **Fixed:** the starved snapshot, the harvester's key names and source, and the tick axis. A
+  complete non-neutral route can now be built and is read by the engine.
+- **Open:** the replay's per-tick control bits do not reproduce the recorded jump, so the acceptance
+  channel is not yet a faithful replayer.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**; dense 1200-tick run: 1 hit.
+- **No native zero over a full fight on either loadout.**

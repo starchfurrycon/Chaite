@@ -1306,22 +1306,51 @@ public static class ChaiteGameProbe
                 {"riskScore",observedPlan.RiskScore},{"tacticalMode",observedPlan.TacticalMode.ToString()},{"weaponIssue",observedPlan.WeaponIssue},
                 {"replayFrame",observedPlan.ReplayFrame}
             };
-        if(hasObservedPlanReturn)
-            actual=new Dictionary<string,object>
-            {
-                {"tick",observedPlanReturnTick},{"controlUseItem",observedControlUseItem},{"controlJump",observedControlJump},
-                {"controlHook",observedControlHook},{"controlLeft",observedControlLeft},{"controlRight",observedControlRight},
-                {"controlUp",observedControlUp},{"controlDown",observedControlDown},{"controlDash",observedControlDash},
-                {"controlMount",observedControlMount},{"controlQuickHeal",observedControlQuickHeal},
-                {"controlQuickMana",observedControlQuickMana},{"controlUseTile",observedControlUseTile},
-                {"controlThrow",observedControlThrow},{"selectedItem",observedSelectedItem},
-                {"itemTime",observedItemTime},{"itemAnimation",observedItemAnimation},
-                {"mouseScreen",new Dictionary<string,object>{{"x",observedMouseX},{"y",observedMouseY}}}
-            };
+        // Emitted on EVERY row, not only on the tick an apply returned.
+        //
+        // MEASURED and this starved the acceptance channel: with the guard
+        // `if(hasObservedPlanReturn)` this block was emitted on only 4 of 221
+        // rows, because an apply returns once per charge sequence while the
+        // observation stream samples far more often. `tools/harvest-native-route.py`
+        // prefers `actualAtApplyReturn` and falls back to `plan`, and both were
+        // null on those rows, so the harvester read the whole fight as neutral --
+        // `controls left=0 right=0 jump=0 dash=0` over 3761 emitted ticks, 3544 of
+        // them neutral fillers. A route built from that replays a player who never
+        // moves, which makes `CHAITE_ROUTE_FILE` unable to accept anything.
+        //
+        // The observed* fields are persistent readbacks of the player's own
+        // controls, so the last value written IS the state that persists into
+        // every tick in between; that is exactly what a replay needs. `plan` stays
+        // gated on the plan being fresh, because unlike the controls a stale plan
+        // is a claim about intent rather than a record of state.
+        actual=new Dictionary<string,object>
+        {
+            {"tick",hasObservedPlanReturn?observedPlanReturnTick:ticks},{"controlUseItem",observedControlUseItem},{"controlJump",observedControlJump},
+            {"controlHook",observedControlHook},{"controlLeft",observedControlLeft},{"controlRight",observedControlRight},
+            {"controlUp",observedControlUp},{"controlDown",observedControlDown},{"controlDash",observedControlDash},
+            {"controlMount",observedControlMount},{"controlQuickHeal",observedControlQuickHeal},
+            {"controlQuickMana",observedControlQuickMana},{"controlUseTile",observedControlUseTile},
+            {"controlThrow",observedControlThrow},{"selectedItem",observedSelectedItem},
+            {"itemTime",observedItemTime},{"itemAnimation",observedItemAnimation},{"mouseScreen",new Dictionary<string,object>{{"x",observedMouseX},{"y",observedMouseY}}},
+            {"fresh",hasObservedPlanReturn}
+        };
         int reasonMask=battleObservationReasons|(periodic?1:0)|(dense?64:0);
         var row=new Dictionary<string,object>
         {
             {"schema","chaite-boss-observation/v1"},{"tick",ticks},{"nativeFrames",nativeFrames},
+            // The route channel is keyed on Main.GameUpdateCount, not on this
+            // probe's own `ticks` counter: RouteReplay.TryReadTick compares the
+            // route's absolute tick against Runtime.CurrentGameTick(), which is
+            // Main.GameUpdateCount. MEASURED, and this broke the whole acceptance
+            // path: a 1200 tick route harvested on `ticks` (1..1200) replayed with
+            // 6 hits and a death instead of the recorded 1 hit, and at tick 240 --
+            // where the route carries jump=1 and the live run applied
+            // controlJump=True -- the replay's plan.jump read back False. The
+            // route was being applied at a constant offset because the two
+            // counters do not share an origin. Publishing gameUpdateCount here is
+            // what lets tools/harvest-native-route.py key the route on the axis
+            // the reader actually uses.
+            {"gameUpdateCount",Game.GameUpdateCount},
             {"reasonMask",reasonMask},{"transitionsSincePreviousRow",battleObservationPendingTransitions},
             {"sessionState",SessionState()},{"plan",plan},{"actualAtApplyReturn",actual},{"applyPending",observedPlanPending},
             {"applyCalls",observedPlanCalls},{"applyReturns",observedPlanReturns},
