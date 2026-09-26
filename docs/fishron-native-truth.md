@@ -2605,3 +2605,80 @@ clearance** before the charge arrives, which requires a vertical share that the 
   speed-based reading.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
 - **No native zero over a full fight on either loadout.**
+
+## 33. Round 72: the perpendicular-clearance metric, and a third refuted axis change
+
+### 33.1 The metric
+
+Section 32 established that a charge is survived exactly when the player's **perpendicular distance
+from the Boss's flown path** reaches 85 px (hitbox overlap: `boss 150x100`, `player 20x42`). That is
+now measured per lock over one dense fight (45 locks; every lock registered as the state-1 edge with
+`ai1 == 0`), sampling perpendicular distance at 0/5/10/15 ticks after the lock:
+
+```
+ lock  dist  aimY   perp@0  perp@5  perp@10 perp@15  maxPerp  need  reached85?
+  344  490.8  +0.43      0.0    18.0    38.2    60.7     60.7  85   NO
+  402  233.8  -0.96      0.0    54.5    91.7   112.2    112.2  85   yes
+  460  344.7  -0.02      0.0    44.4    78.9   103.7    103.7  85   yes
+  518  303.3  +0.60      0.0    40.1    85.9   131.9    131.9  85   yes
+  754  506.4  +0.31      0.0    56.1   112.3   166.6    166.6  85   yes
+  870  538.6  -0.42      0.0     1.3     3.4    11.3     11.3  85   NO
+  928  370.0  +0.46      0.0    24.2    53.9    46.9     53.9  85   NO
+  986  454.7  +0.05      0.0    16.7    43.8    81.6     81.6  85   NO
+ 1348  455.5  +0.81      0.0    26.9    47.7    64.1     64.1  85   NO
+ 1584  893.8  +0.45      0.0    24.1    53.7    85.9     85.9  85   yes
+ 1642  201.4  +0.94      0.0    70.9   135.7   188.2    188.2  85   yes
+ 1758  340.0  +0.55      0.0    31.2    66.7    59.7     66.7  85   NO
+ 1816  333.6  +0.08      0.0    13.9    17.2     9.4     17.2  85   NO
+ 2004 1358.8  +0.66      0.0    72.0   141.1   202.8    202.8  85   yes
+ 2062  858.1  +0.08      0.0    37.3    64.1    79.6     79.6  85   NO
+```
+
+**14 of 22 sampled locks reach 85 px within 15 ticks.** The failures are not correlated with the
+lock distance: a lock taken at 201.4 px clears 188.2 px of perpendicular, while one at 538.6 px
+manages only 11.3 and one at 1358.8 px is fine. The striking feature is that the failures are
+**flat or non-monotonic** -- `perp` goes 24.2 -> 53.9 -> 46.9, or 13.9 -> 17.2 -> 9.4, or
+31.2 -> 66.7 -> 59.7 -- whereas the successes are steadily rising (0 -> 50 -> 99 -> 140). A flat or
+falling perpendicular means the escape is not being executed at all, and the two almost-zero cases
+(11.3 and 17.2) are the **stall episodes** of sections 30-31.
+
+So the circuit separates cleanly into two failure populations: locks where the escape runs (and
+mostly succeeds) and locks where the body does not move laterally (and always loses). The stall,
+which section 32.3 showed is not *by itself* the cause of the hits, is nevertheless exactly the
+condition of every failed clearance.
+
+### 33.2 The perpendicular-axis change is refuted
+
+Section 32's target said the close-range escape should follow the latched normal rather than the
+purely horizontal `AwayFromBossAxis(gap)`. That was implemented behind `CHAITE_PERP_ESCAPE` (when a
+charge normal is latched, `personal-space` returns it instead of the horizontal exit) and swept in
+one invocation:
+
+| `CHAITE_PERP_ESCAPE` | hits | boss damage | dash ticks |
+|---|---|---|---|
+| 0 (off, reviewed) | **4** | 66 | 32 |
+| 1 (on) | **7** | 150 | 32 |
+
+**Refuted -- it roughly doubles the damage taken.** The reason is visible in the `aimY` column: for a
+charge locked from the hovering Boss the aim is often near-vertical (`+0.94`, `-0.96`, `-0.88`), and
+for a near-**vertical** aim the perpendicular is near-**horizontal** -- which is what
+`AwayFromBossAxis(gap)` already produced. So the change mostly replaced a working horizontal escape
+with a latched normal that, at close range, points back along a nearly horizontal line into the
+incoming charge. The section-32.1 reasoning ("the escape must be the normal") is correct as
+geometry, but it does not follow that `personal-space` should abandon its own side choice, because
+the two are not the same vector at close range.
+
+This is the fourth structural axis change measured and refuted: floor-escape modes (28), minimum
+altitude (28), the refill dash (29), the stall breaker (32), and now the perpendicular close-range
+escape. Every one was a plausible reading of the geometry and every one lost to the reviewed circuit.
+
+### 33.3 Status
+
+- **Reverted:** `CHAITE_PERP_ESCAPE` and its use.
+- **Kept:** one pixel of spawn clearance (31); the refill guard.
+- **New metric:** per-lock perpendicular clearance against the 85 px need; **14 of 22 reach it**.
+- **New reading:** every failed clearance is a flat-or-falling `perp` trace, and the two near-zero
+  ones are the stall episodes -- so the escape runs correctly on most locks and does not run at all
+  on the ones that fail.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
+- **No native zero over a full fight on either loadout.**
