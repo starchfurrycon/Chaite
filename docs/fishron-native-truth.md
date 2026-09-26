@@ -5033,3 +5033,92 @@ at 4598.
   a death-free run at the `-maxticks` cap (6000).
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 66. Round 105 (session close): both loadouts measured; the objective is NOT met
+
+### 66.1 The strong-wing set, measured for the first time this session
+
+§60-§65 evaluated only the weak wing. The strong wing (Fishron Wings, `wingsLogic` 26, `wingTimeMax` 180)
+was run once with the kept velocity-normal build:
+
+```
+tools/run-native-acceptance.ps1 -RunName strongwing-3000 -Phase monitor ^
+  -MaxTicks 3000 -WallSeconds 900 -FormulaRoute fishron-strong-wing
+
+valid battle : True     boss seen : True
+ticks        : 3000     HITS      : 2      boss damage : 18
+death        : False    npc contact : 2    shield rows : 35   dash-active : 33
+armor+accessory : 1547,1549,1550,3990,2609,0,860,491,3097,0   (accessory 2609 = Fishron Wings)
+```
+
+No pre-fix strong-wing baseline was taken this session, so the improvement is **not** measured for this
+loadout -- only the current absolute result is known. Do not compare it to the weak-wing baseline.
+
+### 66.2 The complete measured picture at session close
+
+```
+loadout                 ticks   HITS   damage   death   npc contact
+weak  (fairy-wing)       3000     2       9     False       1        <- after §64 fix
+weak  (fairy-wing)       4598     8      31     TRUE        3        <- same build, longer
+weak  (fairy-wing)       3000     4      66     False       6        <- pre-fix baseline §60.2
+strong(fishron-wing)     3000     2      18     False       2        <- no pre-fix baseline
+```
+
+**Every hit recorded at every length and on both loadouts is Boss body contact** (`kind: npc, type: 370`);
+**no projectile hit was ever recorded**, which is consistent with the owner's correction that the one-HP
+bubble projectiles need no special handling provided lateral speed is maintained.
+
+### 66.3 Objective status at session close -- stated without softening
+
+The objective requires, for **both** loadouts, a formulaic positioning state machine measured at native
+`hits == 0`. That is **not met**:
+
+- No loadout reaches zero at any tested length.
+- The weak wing reaches its best result (2 hits) at 3000 ticks and then **dies at 4598** with the same build.
+- The strong wing has been measured once (2 hits at 3000) and its longer-run behaviour is **unknown**.
+- Therefore **no no-hit claim is made**, and none may be inferred from these numbers.
+
+What **is** delivered and verified this session:
+
+1. `CHAITE_ROUTE_FILE` is a faithful tick-perfect native replayer -- the acceptance channel the objective
+   names. Verified by a per-tick diff: **0 differing ticks over 1199 common ticks**, with identical hits,
+   damage, death flag, shield rows, dash ticks and npc contacts (§60.1).
+2. Four defects in that channel were found, fixed and measured (harvest writer dropping the dash channel;
+   feather-fall rejection neutralising all controls; six-column routes decoded as five-column).
+3. The charge-contact defect was root-caused: the perpendicular was selected by two **identically zero**
+   dot products, so the code always took normal A and could command the player to **descend out of a charge
+   it had to climb out of** (§63.1, §64.1).
+4. A principled, idempotent fix -- select the perpendicular by projecting the **player's velocity** (§64.2) --
+   which at 3000 ticks cut the weak wing from **4 hits / 66 damage / 6 contacts** to
+   **2 hits / 9 damage / 1 contact**, and left **zero projectile hits**.
+5. A tightened acceptance rule: a 3000-tick verdict, **including the harness's own `ACCEPTED`**, is
+   **provisional**; only a death-free run at the `-maxticks` cap counts (§65.2).
+
+### 66.4 Exact reproduction
+
+```
+# build
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" `
+    Chaite.sln -p:Configuration=Release -v:minimal -nologo
+
+# weak wing, 3000 ticks (current best: 2 hits / 9 damage)
+& .\tools\run-native-acceptance.ps1 -RunName weak-3000 -Phase monitor `
+    -MaxTicks 3000 -WallSeconds 900 -FormulaRoute fishron-fairy-wing
+
+# weak wing at the cap (currently dies at 4598)
+& .\tools\run-native-acceptance.ps1 -RunName weak-6000 -Phase monitor `
+    -MaxTicks 6000 -WallSeconds 900 -FormulaRoute fishron-fairy-wing
+
+# strong wing
+& .\tools\run-native-acceptance.ps1 -RunName strong-3000 -Phase monitor `
+    -MaxTicks 3000 -WallSeconds 900 -FormulaRoute fishron-strong-wing
+```
+
+`-wallseconds` must be in `15..900`; `-maxticks` in `600..24000`. Always confirm the DLL is newer than the
+source before trusting a run (§63.2), and clear `CHAITE_*` environment variables between runs.
+
+### 66.5 Status
+
+- Tree clean apart from untracked `tmp/`; solution builds clean; the §64 fix is committed (`a46bca3`).
+- **Objective NOT met.** No native zero on either loadout. Goal left **active** for the next session.
+- **No no-hit claim is made anywhere in this document without a measured zero.**
