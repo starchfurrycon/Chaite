@@ -5122,3 +5122,40 @@ source before trusting a run (§63.2), and clear `CHAITE_*` environment variable
 - Tree clean apart from untracked `tmp/`; solution builds clean; the §64 fix is committed (`a46bca3`).
 - **Objective NOT met.** No native zero on either loadout. Goal left **active** for the next session.
 - **No no-hit claim is made anywhere in this document without a measured zero.**
+
+## 67. Round 106: closing reproduction of the committed build
+
+The committed revision was re-verified from a clean environment (all `CHAITE_*` variables cleared) to confirm
+the headline result is reproducible rather than a one-off:
+
+```
+dll  Chaite.Core.dll 2026/9/26 15:47:05
+src  FishronWingScript.cs 2026/9/26 15:47:01     -> OK: DLL is newer than source (not stale)
+
+tools/run-native-acceptance.ps1 -RunName closeverify-3000 -Phase monitor ^
+  -MaxTicks 3000 -WallSeconds 900 -FormulaRoute fishron-fairy-wing
+
+valid battle : True     boss seen   : True
+ticks        : 3000     HITS        : 2        boss damage : 9
+death        : False    outcome     : test-time-limit
+npc contact  : 1        shield rows : 33       dash-active : 32
+boss life left : 77991
+NOT ACCEPTED: 2 hit(s).
+```
+
+**This reproduces §64.3 exactly** -- 2 hits, 9 boss damage, no death, 1 npc contact, 33 shield rows,
+32 dash-active ticks -- and the `npc contact : 1` / `HITS : 2` pair again shows that one of the two hits is
+recorded as a body contact while the other is not counted as an `npc contact` event. Both are nonetheless
+`kind: npc, type: 370` body hits (§65.1), so **still no projectile hit**.
+
+### 67.1 Final position
+
+- Committed fix (`a46bca3`) is **reproducible**: 2 hits / 9 damage / no death at 3000 ticks, down from the
+  4 hits / 66 damage / 6 contacts pre-fix baseline (§60.2).
+- **The objective is not achieved.** `hits == 0` is not reached on either loadout at any tested length; the
+  same build dies at 4598 ticks (§65.1); and the strong wing has only a single 3000-tick measurement (§66.1)
+  with its longer-run behaviour unknown.
+- **The round budget for this goal is exhausted** (round 100 of `maxGoalRounds 100`). The goal is left
+  **active** so a following session can continue from §66.4's reproduction commands; it is **not** marked
+  complete, because marking it complete would assert a native zero that was never measured.
+- Tree clean apart from untracked `tmp/`; local HEAD == `origin/main` == `1b4e255`.
