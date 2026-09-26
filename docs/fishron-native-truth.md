@@ -4503,3 +4503,77 @@ weak wing's entire 30-tick budget before the lock, leaving `wingTime 10` when th
   6 npc contacts**. Live weak-wing route replay is tick-identical to its source over 1199 common ticks.
 - **Not achieved:** zero hits on either loadout over a full fight.
 - **No native zero over a full fight on either loadout.**
+
+## 58. Round 97: the lock aims exactly at the player, so escape must be created during the charge
+
+### 58.1 The corrected geometric model
+
+§57 concluded the constraint was "perpendicular clearance at the lock versus closing speed", quoting a
+75 px offset at the lock. Measuring the offset properly **refutes that framing**: at the lock tick the
+perpendicular offset is **exactly zero for all four contacts**.
+
+```
+seq  lockTick  lockDist  wingTime at lock  |dy| at lock  chargeSpeed  perpOffset
+ 1      928       370           10              169          17.0          0.0
+ 2     2120       537           57              108          17.0          0.0
+ 3     2236       351           11              180          17.0          0.0
+ 4     2646       417           54              130          17.0          0.0
+```
+
+That is not a coincidence in the data, it is the mechanism: `AI_069_DukeFishron` computes the locked
+charge velocity as `Vector2.Normalize(player.Center - center) * num7`, so the charge line **passes through
+the player at the lock by construction** (already established for the plugin's own latch in §"NATIVE
+CHARGE LOCK"). The 75 px figure in §57 was the offset measured on the *following* frame, after the player
+had begun moving off the line -- it is a **consequence** of the escape, not a budget available at the lock.
+
+So the real constraint is a **race**: from a zero-perpendicular start, the player must create ~85 px of
+perpendicular separation before the Boss's body covers the remaining **along-line** distance. With the
+charge at 17.0 px/tick and the player needing ~85 px of offset over a ~20-tick charge, the perpendicular
+escape must sustain roughly
+
+```
+85 px / 20 ticks  ~  4.25 px/tick   perpendicular to the charge line
+```
+
+### 58.2 Wing budget is NOT the differentiator
+
+§57 speculated the weak wing's 30-tick budget was being spent by the pre-charge jump and that this was the
+binding constraint. The measurement above refutes that too: **two of the four contacts happen with a nearly
+full budget** (`wingTime` 57 and 54) and two with a nearly empty one (10 and 11). A constraint that is
+absent in half the failures is not the constraint.
+
+What the failing frames show instead (§52's trace) is that the perpendicular escape is **not being
+committed**. During `fishron-wing-charge-horizontal` the player's perpendicular speed is only about
+2.0-2.9 px/tick (the vertical component is largely rounded away and the horizontal component is aimed
+along the line), well short of the 4.25 px/tick the race needs. The escape direction is not wrong (§57
+proved the sign is a no-op); the escape **magnitude** is.
+
+### 58.3 What this means for the fix
+
+The remaining weak-wing work is therefore to **maximise perpendicular speed during the charge**, not to
+change which way it points and not to save flight budget. Concretely the `charge-horizontal` branch should
+push the normal's dominant component as a sustained input (the normal for a near-horizontal charge is
+near-vertical, so that means committing the vertical input for the whole charge), and the `0.2` deadband
+that quantises a real component to zero should be removed **only after** the sign is made deliberate rather
+than tie-broken -- the two are coupled, which is why §"56.2/B" (deadband removed, sign still arbitrary) and
+§"55" (charge beat prioritised) both made things worse rather than better.
+
+Given the project's own discipline that a state-machine change can only be judged by a **fresh live run**
+at full-fight length (a live-route replay reproduces the recorded controls, §55), any such change must be
+validated at 3000 ticks against the committed baseline, not at 1200.
+
+### 58.4 Status
+
+- **Tree clean** apart from untracked `tmp/`; builds clean. No experiment left in the tree this round.
+- **Corrected:** the perpendicular offset at the lock is **exactly zero for all four remaining contacts**,
+  because the native lock aims the charge at the player by construction. §57's "75 px at the lock" was a
+  post-lock consequence and is withdrawn as a budget statement.
+- **Ruled out:** flight budget as the binding constraint -- two of four contacts occur with `wingTime` 57
+  and 54.
+- **Now indicated:** the escape must create ~85 px of perpendicular separation during a ~20-tick charge,
+  i.e. sustain ~**4.25 px/tick** perpendicular, against the ~2.0-2.9 px/tick actually measured. The defect
+  is escape **magnitude**, not direction.
+- **Baselines:** committed state machine, live weak wing, 3000 ticks: **4 hits / 66 damage / no death /
+  6 npc contacts**. Live weak-wing route replay is tick-identical to its source over 1199 common ticks.
+- **Not achieved:** zero hits on either loadout over a full fight.
+- **No native zero over a full fight on either loadout.**
