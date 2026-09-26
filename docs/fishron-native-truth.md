@@ -2755,3 +2755,65 @@ zero-hit full fight exists on either loadout.**
   channel is not yet a faithful replayer.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**; dense 1200-tick run: 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 35. Round 74: the replay reads the route and still does not move the body
+
+### 35.1 The divergence is total, not vertical
+
+Section 34.5 isolated the replay divergence to tick 240, where the live and replay runs have
+identical applied controls. Probing the full player state at that tick shows the divergence is not
+about the jump at all:
+
+```
+tick 240 dense3   pos=(640,7952) vel=(0.00,-6.48) wingTime=130
+tick 240 replay3  pos=(640,7958) vel=(0.00, 0.00) wingTime=130
+
+tick 420 dense3   pos=(845,7324) vel=(5.87,-9.28) wingTime=38
+tick 420 replay3  pos=(640,7885) vel=(0.00, 1.47) wingTime=130
+```
+
+At tick 240 the replay's body has **velocity (0,0)**, and at tick 420 its **x is still 640** while the
+live body has moved to 845 -- with `plan.horizontal = -1` in both. So the replay is not merely failing
+to jump; **it is not moving horizontally either**, and `velocity` is exactly zero while `wingTime`
+sits at its full 130. Over the whole run the live body spans y 5875.9..7958 (1082 px of motion) and
+the replay only 7842.0..7958 (116 px), all of it near the spawn position.
+
+### 35.2 The jump gate is not the cause
+
+`MovementActionGate.ResolveJump` was the natural suspect, since it is the only thing between
+`plan.Jump` and `controlJump` and it carries cross-frame state. It was bypassed behind
+`CHAITE_JUMP_DIRECT` (setting `controlJump` straight from `plan.Jump`) and the replay was re-run:
+
+| replay configuration | hits | boss damage | death | y range |
+|---|---|---|---|---|
+| normal | 6 | 54 | yes | 7842..7958 |
+| gate bypassed | 6 | 54 | yes | 7842..7958 |
+
+**Bit-identical.** The gate is therefore eliminated, and so is the section-34.5 reading that the
+problem is jump-specific state. Since the horizontal channel fails the same way and it has no gate,
+the fault is upstream of every individual control: in replay mode the plan is written and the body
+ignores it.
+
+### 35.3 What is established
+
+- The route **is** read: `replayFrame=0` at tick 240 with `plan.jump=True plan.horizontal=-1`,
+  matching the live run exactly.
+- The controls **are** written: the observed `controlLeft`/`controlJump` read back True after
+  `ApplyPlan` returns.
+- The body **does not move**: `velocity` is exactly `(0,0)` and `x` does not change, on a channel
+  (`horizontal`) that involves no gate.
+- `wingTime` stays at 130 in the replay, i.e. the flight budget is never spent, which is consistent
+  with a body that never leaves the ground.
+
+So the plugin's plan reaches the player and the player behaves as though it were not being driven.
+The next instrument is an A/B on the write itself: compare the player's control fields immediately
+after `ApplyPlan` returns against the fields at the top of the following `Player.Update`, which
+separates "the write did not persist" from "the write persisted and the native update ignored it".
+
+### 35.4 Standing evidence
+
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**; dense 1200-tick run: 1 hit.
+- The dense route harvests to 1200/1200 ticks with 0 neutral fillers and replays to **6 hits and a
+  death**, so the acceptance channel is still not a faithful replayer.
+- `standoff-dense`'s zero-hit artifact remains disqualified: older build, 18 damage over 4000 ticks.
+- **No native zero over a full fight on either loadout.**
