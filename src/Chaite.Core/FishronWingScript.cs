@@ -231,6 +231,7 @@ namespace Chaite.Core
         private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
         private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
         private const string DashDelayVariable = "CHAITE_DASH_DELAY";
+
         private const string NoChargeDashVariable = "CHAITE_NO_CHARGE_DASH";
 
         /// <summary>True when the charge's dash is withheld entirely. Kept only
@@ -659,7 +660,40 @@ namespace Chaite.Core
             // therefore suppressed only while the bar is empty and the player is
             // airborne: the descend branches are untouched, and a grounded player
             // is untouched so the takeoff that refills the bar still happens.
-            if (player.WingTime <= _refillGuardBudget && !player.OnGround && vertical < 0)
+            // REFILL ONLY BETWEEN CHARGES.
+            //
+            // MEASURED (game-probe-rg-strong, the committed default): the bar
+            // empties in stretches of 153-324 ticks, and the strong wing's first
+            // hit at t=3259 sits 28 ticks into the t=3231..3514 stretch -- a
+            // 284-tick window that is almost exactly the descent-to-landing time,
+            // since a full bar is 180 and drains at about 1 per tick. So the
+            // circuit flies the bar to empty and only then starts down.
+            //
+            // Scheduling the refill earlier WORKS on the target hits. Same
+            // circuit, only CHAITE_REFILL_GUARD changed:
+            //
+            //   guard  0 -> hits [3259, 4271]        the stamina hit and the rear-end
+            //   guard 60 -> hits [2256, 2484, 4564]  BOTH original hits GONE
+            //   guard 90 -> hits [896, 2949, 3314, 3514, 3554]
+            //
+            // But every nonzero guard also made the total worse, because the
+            // guard acts by converting a CLIMB into a DESCEND and the charges are
+            // where the climb is the escape. guard 60 introduced its own hits at
+            // 2256/2484, which are not near either original one.
+            //
+            // The two effects are NOT separable, which was the next hypothesis and
+            // is also refuted: withholding the refill descend from the charge
+            // states (CHAITE_NO_CHARGE_REFILL) made every threshold far worse,
+            //
+            //   guard 60, ungated -> 3 hits     guard 60, gated -> 9 hits
+            //   guard 90, ungated -> 5 hits     guard 90, gated -> 8 hits
+            //
+            // so the descend-to-land DURING a charge is itself load-bearing -- it
+            // is what actually gets the bar back. There is no window where the
+            // refill is free, and the committed default of 0 already sits at the
+            // optimum (2 hits, measured in §104.2).
+            if (player.WingTime <= _refillGuardBudget &&
+                !player.OnGround && vertical < 0)
             {
                 vertical = 1;
                 phase = "fishron-wing-refill";

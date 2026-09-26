@@ -7643,6 +7643,74 @@ so this is a real negative result and not an inert knob.
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2, weak records 3. The
   objective remains **active and incomplete**, and no native zero is claimed.
 
+## 105. Round 144: the refill window is not separable -- but the stamina hits ARE removable
+
+### 105.1 The bar drains to empty and only then starts down
+
+Measured on the committed default (`game-probe-rg-strong`), the refill events and the empty stretches:
+
+```
+refill events (wingTime jumps)     14 in 6000 ticks
+  618 708 | 1221 | 1777 1971 | 2449 | 2930 | 3515 3612 | 4205 | 4637 | 5102 5300 | 5814
+  gaps between refills: 513 556 194 478 481 585 97 593 432 465 198 514
+
+zero-bar runs (len >= 8)
+  t  535.. 617   83      t 2284..2448  165      t 3881..4204  324
+  t  945..1220  276      t 2701..2929  229      t 4551..4636   86
+  t 1455..1776  322      t 3231..3514  284      t 4949..5101  153
+                                               t 5621..5813  193
+```
+
+A full bar is 180 and drains at about 1 per tick, so a ~280-tick empty stretch is **the descent-to-landing
+time**. The circuit flies the bar to empty and only then begins descending, which is why `strong t=3259` -- the
+§103.2 stamina hit -- lands **28 ticks into** the `t=3231..3514` stretch.
+
+### 105.2 Scheduling the refill earlier REMOVES both original hits
+
+This is the first time in the session that a change has eliminated a target hit. Same circuit, only
+`CHAITE_REFILL_GUARD` changed, reading the actual hit ticks rather than the totals:
+
+```
+guard  0 (default) -> hits [3259, 4271]         the stamina hit and the rear-end
+guard 60           -> hits [2256, 2484, 4564]   BOTH original hits GONE
+guard 90           -> hits [896, 2949, 3314, 3514, 3554]
+guard 30           -> hits [1614, 1771, 3261, 3910, 5333, 5825]
+guard 120          -> hits [1627, 1870, 1910, 2433, 4431, 4471, 4707, 4924, 4964, 5504, 5912]
+```
+
+`guard 60` retires `t=3259` **and** `t=4271` outright -- neither a hit near 3259 nor near 4271 remains. So the
+stamina failure mode is genuinely fixable by refilling earlier. The problem is that every nonzero guard also
+**introduces its own hits** at unrelated ticks (2256/2484 for guard 60), which is why the totals in §104.2 were
+worse even though the target hits were gone.
+
+### 105.3 The two effects are NOT separable
+
+The obvious next move is to refill early for the stamina hits but only where descending is free, i.e. **outside
+the charge states (1/6/11)**, whose escape is the climb. That was implemented as `CHAITE_NO_CHARGE_REFILL` and it
+is **refuted**, decisively:
+
+```
+guard 60, ungated -> 3 hits      guard 60, gated -> 9 hits
+guard 90, ungated -> 5 hits      guard 90, gated -> 8 hits
+```
+
+Gating makes every threshold *far* worse. So the descend-to-land **during** a charge is itself load-bearing --
+it is what actually returns the bar -- and there is no window in which the refill is free. Reverted; the knob was
+deleted. The committed default of 0 remains the optimum, now for a *measured* reason rather than as an untested
+placeholder.
+
+### 105.4 Status
+
+- **Established:** the bar drains to empty in 153-324 tick stretches whose length is the descent-to-landing time,
+  and `strong t=3259` sits 28 ticks into one of them; raising the refill threshold **removes both** of the
+  committed circuit's hits (guard 60 retires t=3259 and t=4271).
+- **Refuted:** making that refill free by withholding it from the charge states -- gating 6-9x the hits at every
+  threshold, so the descend-during-charge is load-bearing and the two effects cannot be split.
+- **Reverted:** `CHAITE_NO_CHARGE_REFILL` removed; the default remains 0 and the committed behaviour is verified
+  identical (strong 6000/2/no death/4 contacts, weak 6000/3/no death/3 contacts).
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-six controlled interventions, one
+  improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
