@@ -2969,3 +2969,86 @@ also still holds, since `ResetControls` would erase a gate-free `controlLeft` in
   hits are run-length artefacts (Boss at full life).
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 38. Round 77: the staged-input path, and why the replay deadlocks on the ground
+
+### 38.1 How the plugin's controls actually reach the player
+
+The plugin does not rely on its `ApplyPlan` write surviving on its own. It uses a **staged** path, and
+the patcher shows exactly where each half sits (`GameProbePatcher.cs:38-53`):
+
+- `Player.Update` is prefixed with `MotionBeforePlayerUpdate`, and has `ApplyPendingInput` injected
+  after the native branch that copies raw controls (`:42-47`).
+- `WingMovement` is prefixed with `FlightBeforeWing` (`:52`) and suffixed with `FlightAfterWing`
+  (`:53`). **`Runtime.Tick` -- which is the only caller of the planner and of
+  `_game.ApplyPlan` -- is reached from this site**, so the whole circuit runs inside `WingMovement`.
+- `JumpMovement` gets `MotionBeforeJump`/`MotionAfterJump` (`:49-50`), and `DashMovement` gets
+  `BeforeShieldDash`/`AfterShieldDash` (`:55-56`).
+
+`Runtime.Tick`'s `finally` block then stages the frame (`Runtime.cs:579-591`): if the frame was
+applied and the encounter is controlling it calls
+
+```
+_game.CapturePendingInput(player);
+_pendingInput = true;
+```
+
+and `ApplyPendingInput` (`Runtime.cs:597-602`) replays it on a later frame, where the facade's
+`ApplyPendingInput` (`TerrariaFacade.cs:3627`) does exactly
+
+```
+foreach (var pair in _capturedControls) _controls[pair.Key](player, pair.Value);
+```
+
+That is a **deliberate second write of the same controls, placed inside `Player.Update` so it lands
+after `ResetControls`** -- which is precisely the requirement §37 derived independently. The design is
+already correct.
+
+### 38.2 Why the replay never gets off the ground
+
+`Runtime.Tick` living inside `WingMovement` means the circuit only runs on a frame where the native
+wing movement is invoked, and `WingMovement` is entered only when the player is already airborne with a
+wing and the jump held (`wingsLogic > 0 && controlJump && wingTime > 0 && jump == 0 &&
+velocity.Y != 0`). The staged replay then closes a cycle:
+
+1. `ResetControls` (`Player.cs:24975`) clears `controlJump` at the top of `Player.Update`.
+2. If the body is standing on the ground with `velocity.Y == 0`, `WingMovement` is not invoked, so
+   `Runtime.Tick` does not run, so nothing stages this frame.
+3. The buffered `_capturedControls` from the previous frame are re-applied -- but the buffered frame
+   was itself computed on a frame where the body was not flying, so the buffer holds a state that
+   cannot start the flight.
+
+In the live run the circuit is already being driven from the ground frame whose buffer contains the
+takeoff, and each frame's real flight keeps re-arming it; in the replay the first frames have no such
+armed buffer, so `controlJump` is cleared and never re-supplied, `WingMovement` never runs, and the
+body sits at the spawn point for the whole fight. That matches every measurement:
+
+- `applyCalls` advances identically in both modes (§37.2), because `Runtime.Tick` runs on the same
+  schedule in both;
+- `py` is frozen at `7958` and `velocity` exactly `(0,0)` in the replay (§37.2), i.e. the body never
+  becomes airborne;
+- `wingTime` stays at its full 130 (§35.1), because flight is never spent;
+- the **horizontal** channel fails identically (§35.1) even though it has no gate, because it is
+  cleared by the same `ResetControls` and only restored by the same stalled stage.
+
+### 38.3 What this changes about the fix
+
+§37 proposed repointing the replay to `MotionAfterInput`. 38.1 shows that hook fires **before**
+`ApplyPendingInput` in `Player.Update`, so it is the wrong side of the reset, and the correct anchor is
+the existing injected `ApplyPendingInput` call itself. The condition to break is the cycle in 38.2:
+the circuit must also run on a frame where `WingMovement` is **not** entered (a grounded frame), so
+that the takeoff can be staged from the ground. `JumpMovement` already carries `MotionBeforeJump` and
+runs whenever a jump is possible, which makes it the natural second driver -- it is entered from the
+ground, which is exactly the state the cycle cannot leave.
+
+### 38.4 Status
+
+- **Reverted:** the `STAGE` diagnostic in `Runtime.cs` (it referenced `plan` outside its scope, so the
+  plugin failed to build and one run was measured against a stale DLL -- that run's result is
+  discarded). The tree builds clean and is otherwise unmodified.
+- **Established:** `Runtime.Tick` is reached only from `WingMovement`; the plugin's own staged
+  `ApplyPendingInput` is designed to land after `ResetControls`, and the replay's failure is a
+  ground-state cycle in which `WingMovement` is never entered, so nothing is ever staged.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
