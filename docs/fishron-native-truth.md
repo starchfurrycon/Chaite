@@ -7595,6 +7595,54 @@ kind of single-axis knob §98-§102 measured to be a net loss (five of the last 
   3000-tick `ACCEPTED` is provisional only, per the objective's own terms. The objective remains **active and
   incomplete**, and no native zero is claimed.
 
+## 104. Round 143: refill scheduling is refuted on the current circuit -- guard 0 is the optimum
+
+### 104.1 The old sweep never covered this circuit, and the "hold" artifacts were empty
+
+§24.3 swept `CHAITE_REFILL_GUARD` at a 6000-tick cap and found every row ended in `FailedAfterDeath`, with guard
+0 dying at tick 5937. The **current** weak wing on guard 0 survives all 6000 ticks, so that sweep predates this
+session's changes. The four artifacts named `hold20/40/60/90-strong` look like a guard sweep but are
+**`ticks=240, validBattle=False`** -- the Boss spawns at tick 240, so those runs never fought. The threshold had
+therefore never been measured against the circuit as it now stands, which mattered because §103.2 identified
+`strong t=3259` as a genuine **stamina** hit (bar empty, `vy` pinned at +3.34), i.e. a case where more refill
+runway should help.
+
+### 104.2 Measured on the current circuit: every nonzero guard is worse
+
+Strong wing, 6000-tick cap, only `CHAITE_REFILL_GUARD` changed:
+
+```
+guard    0 (default)   2 hits   no death   boss damage 42   contacts 4   <- OPTIMUM
+        30             6 hits   no death   boss damage 54   contacts 6
+        60             3 hits   no death   boss damage 27   contacts 2
+        90             5 hits   no death   boss damage 48   contacts 4
+       120            11 hits   DEATH      boss damage 45   contacts 5
+```
+
+The trend is monotone-worse at the extremes and strictly worse everywhere: **2 -> 6 -> 3 -> 5 -> 11**, ending in
+the only death in the set. So §103.2's stamina finding is real, and scheduling the refill earlier is still not
+the fix -- the guard can only act by **converting a climb into a descend**, which spends the very vertical
+authority the charge escape needs. `CHAITE_REFILL_GUARD` stays at its default **0**, which this sweep confirms is
+the optimum rather than an untested placeholder.
+
+### 104.3 The lead set out in §103 is closed
+
+Round 142 proposed this as the strongest remaining lead because it was "mechanism located, only 3 ticks short".
+It is now measured and refuted on the current circuit. That makes **twenty-five controlled interventions, one
+improvement** (§97). Notably the sweep is *not* flat -- it discriminates cleanly, with guard 0 the unique best --
+so this is a real negative result and not an inert knob.
+
+### 104.4 Status
+
+- **Established:** on the current circuit, `CHAITE_REFILL_GUARD` at 0 is the optimum; every nonzero value is
+  worse and 120 produces a death. The four historical `hold*` artifacts are `validBattle=False` at 240 ticks and
+  are not measurements of anything.
+- **Refuted:** raising the refill threshold to give the circuit landing runway before the t=3259 stamina hit --
+  it spends the vertical authority the escape needs.
+- **Unchanged:** the default remains 0; no code change and the committed behaviour is identical.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2, weak records 3. The
+  objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
