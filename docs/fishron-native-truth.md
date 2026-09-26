@@ -3116,3 +3116,63 @@ used.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit, because the replay
   body still never leaves the ground.
 - **No native zero over a full fight on either loadout.**
+
+## 40. Round 79: correction -- `Runtime.Tick` runs at `Player.Update` entry
+
+### 40.1 The error in section 38 and what it invalidates
+
+Section 38.1 claimed that "`Runtime.Tick` -- which is the only caller of the planner and of
+`_game.ApplyPlan` -- is reached from `WingMovement`", and built the whole ground-state-cycle
+explanation in 38.2 on top of that claim. **That claim is wrong.** The probe's own comment records the
+actual site (`GameProbe.cs:4256`):
+
+```
+// Runtime.Tick runs at Player.Update entry and its live-scope check
+// rejects the session as soon as no active Boss root is left
+```
+
+and `NativeGrappleReader.cs:11` agrees: "called by `Runtime.Tick`'s hash-locked `Player.Update` entry
+hook".
+
+The mistake was reading the probe's own instrumentation as the production driver. The patcher lines
+cited in 38.1 (`WingMovement` -> `FlightBeforeWing`/`FlightAfterWing`,
+`JumpMovement` -> `MotionBeforeJump`/`MotionAfterJump`, `DashMovement` ->
+`BeforeShieldDash`/`AfterShieldDash`, and `MotionBeforePlayerUpdate`/`MotionAfterInput`) are
+**probe-only observers**; the probe deliberately keeps them as strict no-ops outside motion cases, and
+a tree-wide search for `Runtime.Tick` finds **no caller in the patcher at all**. The plugin installs
+its own hash-locked `Player.Update` entry hook to drive `Runtime.Tick`.
+
+### 40.2 What this changes
+
+- The 38.2 cycle ("the circuit only runs once already airborne, so a grounded frame never stages a
+  takeoff") **does not hold**, because the circuit runs at `Player.Update` entry on **every** frame,
+  airborne or grounded. Nothing about the replay's failure depends on `WingMovement` being entered.
+- The 39 round's `JumpMovement` driver was therefore solving a problem that does not exist. Its JIT
+  `InvalidProgramException` is still a real fact about patching that method, but the change was not
+  needed for the reason I gave, and reverting it cost nothing.
+- `ResetControls` (`Player.cs:24975`) is still the only unconditional local-player control reset, so
+  the requirement that the write land **after** it stands. What is now open again is simply where
+  `Runtime.Tick`'s write and `ApplyPendingInput`'s restore sit relative to it -- `Runtime.Tick` is at
+  *entry*, which is the same place `ResetControls` runs, so the ordering between those two is the
+  thing to pin down next, and it is a one-frame question rather than a state-machine question.
+
+### 40.3 Why this is recorded rather than quietly fixed
+
+Two consecutive rounds (38 and 39) reasoned from the wrong call site. The measurement trail was
+self-consistent enough to make the wrong story look confirmed -- `applyCalls` advancing identically in
+both modes, a frozen body, `wingTime` pinned at 130 -- because those observations are equally
+consistent with "the circuit runs but its write is discarded every frame". The call site came from a
+code comment, not from a measurement, and that is the specific discipline failure to avoid here: a
+structural claim about native control flow must be measured, not inferred from adjacent patch code.
+
+### 40.4 Status
+
+- **Corrected:** 38.1 and 38.2 are withdrawn; `Runtime.Tick` runs at `Player.Update` entry.
+- **Unaffected and still standing:** the capsule criterion (32), the per-lock clearance metric (33),
+  the three replay-channel fixes (34 -- starved snapshot, harvester key names, tick axis), and the
+  §37 `ResetControls` location and the §37.2 `applyCalls` A/B. Section 35's measurements (zero velocity,
+  frozen `py`, `wingTime` 130, horizontal failing identically) are measurements and remain valid; only
+  their explanation is reopened.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
