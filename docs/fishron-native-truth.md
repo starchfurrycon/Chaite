@@ -5347,3 +5347,91 @@ single local input decision.
   pin-hit correlation as unproven causality.
 - **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 70. Round 109: unconditional lift on the ascend beat is REVERTED -- fifth local intervention to lose
+
+### 70.1 The mechanism, confirmed
+
+§69's frames showed the late hits happening with `wingTime` at its 130 maximum, which is only possible if the
+wing is never *applied*. The gate is `controlJump`, and `Tick` publishes `output.Jump = vertical < 0`
+(`FishronWingScript.cs:526`). So a beat that commands `vertical = +1` does not merely descend -- it **gates the
+wing off entirely**.
+
+The frames around the ascend hits prove which arm runs:
+
+```
+guc   phase                        plan(h, up, drop, jump)   ctl(J,U,D)          vx      vy     wingTime
+3908  fishron-wing-charge-ascend   (-1, 0, 0, False)         (False,False,False)  0.00   +3.34   130
+3918  fishron-wing-charge-ascend   (-1, 0, 0, False)         (False,False,False)  0.00   -3.50   130  <- hit
+4145  fishron-wing-charge-ascend   (-1, 0, 0, False)         (False,False,False)  6.86   -3.47   130
+4151  fishron-wing-charge-ascend   (-1, 0, 0, False)         (False,False,False) -4.50   -3.50   130  <- hit
+```
+
+`script.Vertical = +1` (from `plan.Drop = script.Vertical > 0`), which per the old `case 1` at `:826-828`
+means `_chargeNormalVertical < 0` -- the normal pointed **down** while the beat was **ascend**, so the
+fallback took `vertical = +1`, `controlJump` stayed false, the wing never ran, and `vy` sat frozen at `+3.34`
+turning to `-3.50` only as the Boss overlapped. `vx = 0.00` throughout. **The wing was fully charged and
+never applied.**
+
+### 70.2 What was tried, and the measurement
+
+The ascend beat was changed to take lift unconditionally (`vertical = -1`), on the reasoning that the worst
+case is gaining altitude when the normal wanted to descend -- recoverable -- against a guaranteed loss of all
+vertical mobility, which is not.
+
+```
+                        §64 baseline (dense6k)   unconditional ascend lift
+ticks                          4598                     4488  (died 110 ticks EARLIER)
+HITS                              8                        9
+boss damage                      31                      123
+death                          TRUE                    TRUE
+npc contact                       3                       10
+shield rows                      48                       55
+dash-active ticks                45                       45
+```
+
+Again **worse on every axis** -- damage nearly quadrupled (31 -> 123) and npc contacts more than tripled
+(3 -> 10). Reverted.
+
+### 70.3 The accumulating negative result, and what it implies
+
+This is the **fifth** local movement intervention this session to measure neutral or worse:
+
+```
+§55   personal-space branch gated on !inBeat          6 hits / 99 damage
+§56.2 charge-normal deadband 0.2 -> exact zero        6 hits / 123 damage
+§57   flip the charge-normal tie-break                identical (no-op)
+§69   pinned-axis detector                            8 hits / 90 damage / death at 3760
+§70   unconditional lift on the ascend beat           9 hits / 123 damage / death at 4488
+                                                      baseline: 8 hits / 31 damage / death at 4598
+```
+
+Evaluated at the cap, **every single local change to the movement decision has made the outcome worse.** No
+local input rule is the binding constraint. That is now a strong, repeatedly measured conclusion, and it
+reframes the remaining work: the weak-wing failure is **structural** -- a timing/scheduling property of the
+whole W cycle against the Boss's attack clock -- not a per-tick choice. It is exactly what
+`FishronWingScript.cs:635-648` already warns about for the band edge ("removing the station desynchronises the
+W cycle from the Boss's attack clock and costs more than the pinned frames ever did"), and §70.1's wing-gate
+mechanism shows *why* the cost is so steep: any change to the beat schedule also changes when `controlJump`
+is true, and `controlJump` is simultaneously the wing gate and the escape's only vertical authority.
+
+### 70.4 Methodological consequence for acceptance
+
+**Even the best current build is not an accepted run**: the §64 baseline dies at 4598 at the 6000-tick cap.
+So under the acceptance rule this goal now carries ("survive to `-maxticks` without death"), **neither loadout
+has any accepted run at all**, at any length. The 3000-tick figure (2 hits / 9 damage / no death) is
+**provisional only** and must never be reported as acceptance.
+
+### 70.5 Status
+
+- **Edit reverted.** Tree clean apart from untracked `tmp/`; builds clean; the §64 velocity-normal fix
+  (`a46bca3`) is intact (`rateA >= rateB` at `:1198-1199`).
+- **Confirmed mechanism:** an ascend beat whose normal points down commands `vertical = +1`, which sets
+  `output.Jump = false`, which gates the wing off, producing the observed `wingTime 130` with `vy` frozen.
+- **Measured:** unconditional ascend lift gives `4488 / 9 / 123 / TRUE / 10` against the baseline's
+  `4598 / 8 / 31 / TRUE / 3`.
+- **Established by five independent measurements:** no local movement-rule change improves the weak-wing
+  fight. The binding constraint is **structural** (W-cycle timing vs. the Boss's attack clock), not per-tick.
+- **Still not achieved:** zero hits on either loadout over a full fight -- and no run currently *survives*
+  the cap, so there is no accepted run to speak of. The objective remains **active and incomplete**, and no
+  native zero is claimed.
