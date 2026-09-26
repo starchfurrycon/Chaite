@@ -1932,3 +1932,83 @@ environment is no longer reconstructible.
 - **Best current single-invocation baseline, weak wing, policy off, guard 0:** 4 hits, alive at
   3000 ticks, 66 boss damage.
 - **No native zero over a full fight on either loadout.**
+
+## 25. Round 64: a single-invocation sweep harness, and where the four hits sit
+
+Section 24 established that the session environment drifts between tool invocations, so no
+comparison taken across invocations is trustworthy. This round built the harness that removes
+that failure mode and used it to confirm the guard's default.
+
+### 25.1 `tools/sweep-native.ps1`
+
+Runs a list of parameter points for one environment variable, each arm launched from the same
+process, with the policy environment pinned off **one variable per statement** -- clearing them
+as one comma-separated `Remove-Item` list is the trap from section 23.3, because
+`CHAITE_POLICY_ROUTES` is normally unset and `Remove-Item` terminates on the first missing name.
+
+```
+.\tools\sweep-native.ps1 -FormulaRoute fishron-fairy-wing `
+    -Variable CHAITE_REFILL_GUARD -Values 0,25,60 -MaxTicks 3000
+```
+
+Confirmed on the weak wing at a 3000-tick cap, all three arms inside one invocation:
+
+| guard | hits | ticks | boss damage | death | `npc contact` |
+|---|---|---|---|---|---|
+| **0** | **4** | 3000 | 66 | False | 6 |
+| 25 | 6 | 3000 | 87 | False | 7 |
+| 60 | 5 | 3000 | 102 | False | 8 |
+
+Guard 0 is the best of the three, and the threshold is not monotone in either direction. This
+agrees with section 24.3's conclusion from the earlier sweep: the guard belongs at its default and
+the threshold is not the lever.
+
+### 25.2 The four hits, with the boss's own state
+
+The sampled trace for the guard-0 arm records 159 rows over ticks 240..3000, with 4 life drops.
+Absolute offsets at the sampled tick of each drop:
+
+```
+ tick   dmg  bossState   dx       dy      wingTime  phase
+  957    97      0     +308.3   -63.9       10     tornado-bait
+ 2149    76      0     +166.9   +17.4       56     personal-space
+ 2280    77      0     +156.6   -33.4        0     tornado-clear
+ 2675    98      0     -141.3   -22.4       25     personal-space
+```
+
+Two properties stand out:
+
+1. **`bossState` is 0 at every drop.** State 0 is a hover state, not a charge state. Sections 21
+   and 23 found the hits concentrated in charge states and in `personal-space`; on this build and
+   environment **not one hit is in a charge state**.
+2. **No hostile projectile is recorded within 140 px on any drop.** The sampled channel does not
+   carry a projectile list on these rows, so this is an absence of evidence rather than evidence
+   of absence, but it does rule out the "the bubbles are hitting us" reading for these four.
+
+The offsets of 140-310 px are far outside the ~85 px body-contact box, and at 17 px/tick a charge
+closes roughly 17 px between a sample and the tick it represents, so these offsets cannot be
+corrected into a body contact either. With `bossState` 0 and no projectiles recorded, the damage
+source for these four is **not yet identified**. That is the honest state of it, and it is the
+thing to measure next: a dense capture of the tick of each drop with the projectile channel
+present, so the source is read rather than inferred.
+
+### 25.3 What is established at this point
+
+- The empty-bar refill guard is a real fix (section 24.2, single invocation: death at 1692 without
+  it, alive at 3000 with it) and its default of 0 is optimal among the thresholds tried.
+- The weak-wing hand-written circuit, policy off, guard 0, currently reaches **4 hits and is
+  alive at 3000 ticks** with 66 boss damage.
+- The remaining hits are in boss hover state 0, not in charge states, and their source is
+  unidentified.
+- Baseline hit counts on this build range over 4-9 depending on the invocation's environment, so
+  only single-invocation comparisons carry weight.
+- **No native zero over a full fight on either loadout**, and no claim of one.
+
+### 25.4 Status
+
+- **Added:** `tools/sweep-native.ps1`, the single-invocation comparison harness.
+- **Kept:** the refill guard at default 0.
+- Unit suite: **750 passed, 8 failed** (all 8 the pre-existing missing
+  `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`).
+- Best single-invocation baseline, weak wing, policy off, guard 0: **4 hits, alive at 3000 ticks,
+  66 boss damage.**
