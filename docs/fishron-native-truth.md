@@ -6913,7 +6913,90 @@ in the other direction) and it costs a full investigation each time if not remem
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
 
+## 94. Round 133: §93 IS RETRACTED -- the player does land and the bar does refill
+
+### 94.1 The error, and its cause
+
+§93 claimed the player "never lands" and that "the bar is filled exactly once, at the start, and is then drained
+permanently". **Both claims are false, and §93.1's whole conclusion is withdrawn.**
+
+The mistake was treating the observation's `onGround` field as the ground truth for contact. The probe derives
+it (`TerrariaFacade.cs:986`):
+
+```csharp
+state.OnGround = Math.Abs(vy) < .01f && hasFooting;
+```
+
+That is an **alias**, not the engine's `Player.onGround`, and it additionally reads `None` in these rows. The
+authoritative evidence is the flight bar itself. Counting `wingTime` jumps of more than 20 over a full fight:
+
+```
+strong wing   12 refills      weak wing   20 refills
+altitude at refill: 6031.5 / 6991.5 / 7951.5   (the platform and ground surfaces)
+```
+
+12 to 20 refills in 6000 ticks is roughly one every 580 ticks, which is ample. The tick-level context is
+unambiguous -- the player descends onto a platform and the next tick is standing:
+
+```
+t=616  y=6038.0  vy= +8.13   wt=  0.0   cmd jump=False
+t=617  y=6038.0  vy= +0.00   wt=  0.0   <- contact; velocity zeroed by the floor
+t=618  y=6031.5  vy= -6.48   wt=180.0   <- full bar, via the `velocity.Y == 0` clause
+```
+
+So the native refill clause is broader than "landing":
+
+```csharp
+// Player.cs:26992
+if (((velocity.Y == 0f || sliding) && releaseJump) || (autoJump && justJumped))
+    wingTime = wingTimeMax;
+```
+
+It fires when the velocity is zero and the jump key is in its release transition -- and in the observed runs
+`releaseJump` is already true on the contact tick, so the standing case covers it. **No change is needed to the
+refill path; the circuit already lands and refills correctly.**
+
+### 94.2 Consequences
+
+- `CHAITE_LANDING_MARGIN`, added in §93.2 to *allow* a landing that was never being prevented, was **removed**.
+  It was solving a non-problem, and §93.2's measurements (weak contacts 5 -> 2, hits 4 -> 5) were measuring a
+  change made for a false reason. **Do not treat those numbers as evidence about landing.**
+- §89's regression is **no longer explained**; that explanation is withdrawn along with §93.1.
+- "The flight bar is running out" is **not** the cause of the residual hits.
+
+### 94.3 The surviving measured fact
+
+The native refill is reachable **in mid-air**: a frame with `velocity.Y == 0` and a jump-release restores the
+whole bar without touching the ground. `CHAITE_APEX_REFILL` arms the drained-bar refill to drop the jump command
+at the apex so that clause can fire. Measured:
+
+```
+                        apex refill off        apex refill armed
+strong   6000/2/FALSE/3 contacts          6000/4/FALSE/6 contacts
+weak     6000/4/FALSE/5 contacts          3237/7/TRUE (DEAD)/6 contacts
+```
+
+It **regresses both arms** -- the seventh trajectory-altering rule to do so. It is kept, **off by default**,
+because the reachability of the clause is a real engine fact worth having a switch for; it is not a fix.
+
+### 94.4 Status
+
+- **Retracted:** §93.1 in full (the player does land; the bar refills 12-20 times per fight). §93.2's numbers
+  are measuring a change made for a false reason.
+- **Removed:** `CHAITE_LANDING_MARGIN`, which was added on the retracted premise.
+- **Measured:** 12 refills (strong) / 20 (weak) per 6000 ticks, at the platform and ground surfaces.
+- **Measured:** apex refill regresses both arms (strong 2 -> 4, weak 4 -> death at 3237). Kept off by default.
+- **Verified:** with no `CHAITE_*` variables set, the strong wing still measures
+  `6000 / 2 hits / FALSE / 3 contacts`.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
+
 ## 93. Round 132: the player never lands, so the flight bar never refills
+
+> **RETRACTED by §94.** The premise is false: the player does land on the platforms and the bar refills 12-20
+> times per fight. `onGround` is a probe-derived alias (`|vy| < 0.01 && hasFooting`), not the engine's contact
+> flag, and the refill was being read from it. Kept only so the retraction has something to point at.
 
 ### 93.1 The measurement
 

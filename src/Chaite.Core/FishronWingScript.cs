@@ -228,8 +228,16 @@ namespace Chaite.Core
         /// the reviewed circuit exactly.</summary>
         private const string RefillGuardVariable = "CHAITE_REFILL_GUARD";
         private const string CoLocationRoutesVariable = "CHAITE_COLOCATION_ROUTES";
-        private const string LandingMarginVariable = "CHAITE_LANDING_MARGIN";
-        private const float LandingMarginBudget = 30f;
+        private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
+
+        /// <summary>Whether the drained-bar refill also drops the jump command at
+        /// the apex, so the native `velocity.Y == 0 && releaseJump` clause
+        /// (Player.cs:26992) can restore the flight bar in mid-air. Off unless
+        /// CHAITE_APEX_REFILL=1.</summary>
+        private static bool ApexRefillArmed
+        {
+            get { return Environment.GetEnvironmentVariable(ApexRefillVariable) == "1"; }
+        }
 
         /// <summary>Whether the co-location lift applies to this route. Read from
         /// CHAITE_COLOCATION_ROUTES (a comma-separated list of `strong` / `weak`)
@@ -552,6 +560,25 @@ namespace Chaite.Core
             {
                 vertical = 1;
                 phase = "fishron-wing-refill";
+                // The bar also refills at an APEX, not only on landing. Native:
+                //
+                //   Player.cs:26992
+                //   if (((velocity.Y == 0f || sliding) && releaseJump) ||
+                //       (autoJump && justJumped)) wingTime = wingTimeMax;
+                //
+                // so a frame with velocity.Y == 0 and the jump key released that
+                // frame restores the whole bar in mid-air. `releaseJump` is the
+                // release TRANSITION, so the key must be dropped and pressed
+                // again -- which is what the forced descend below already does to
+                // the command, but only if the release actually lands on an apex.
+                //
+                // MEASURED (game-probe-pin640-strong-6k): the player is airborne
+                // for 100% of 6000 ticks and wingTime is exactly 0 for 33.5% of
+                // them, so whatever refills it is not reliable. Arming the apex
+                // release while the bar is empty is the direct fix; whether it
+                // helps is what the run decides.
+                if (ApexRefillArmed && vertical > 0 && player.Velocity.Y > -0.6f)
+                    vertical = 0;
             }
             ApplyArena(player, ref horizontal, ref vertical);
             // Break the co-location, but ONLY for the strong wing.
@@ -1346,33 +1373,7 @@ namespace Chaite.Core
             if (atLeftWall && horizontal <= 0) horizontal = 1;
             else if (atRightWall && horizontal >= 0) horizontal = -1;
             if (y - player.Height * 0.5f <= _ceilingY) vertical = 1;
-            else if (y >= _floorY - LandingMargin(player) && vertical > 0) vertical = 0;
-        }
-
-        /// <summary>Vertical standoff kept above the floor support. Normally
-        /// FloorMargin, but once the flight bar is drained the standoff is
-        /// dropped so the player can actually LAND and refill.
-        ///
-        /// MEASURED (game-probe-pin640-strong-6k and -weak-6k): over 6000 ticks
-        /// the player is on the ground for 0.0% of them -- it never lands at all
-        /// -- while wingTime is exactly 0 for 33.5% (strong) and 24.8% (weak) of
-        /// the fight. The native refill at Player.cs:26992 only fires on the
-        /// landing tick, so those drained thirds are flown with no flight at all.
-        /// This is the most likely cause of the residual hits, and it is also why
-        /// §89's floor-clearance rule made things worse: that rule forbade the
-        /// very landing the bar needs.
-        ///
-        /// CHAITE_LANDING_MARGIN overrides the drained-bar standoff for
-        /// measurement; a negative value disables the mode entirely.</summary>
-        private static float LandingMargin(PlayerSnapshot player)
-        {
-            var raw = Environment.GetEnvironmentVariable(LandingMarginVariable);
-            float value;
-            if (string.IsNullOrEmpty(raw) ||
-                !float.TryParse(raw.Trim(), NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out value) || value < 0f)
-                return FloorMargin;
-            return player.WingTime <= LandingMarginBudget ? value : FloorMargin;
+            else if (y >= _floorY - FloorMargin && vertical > 0) vertical = 0;
         }
 
         /// <summary>Decomposes a separation vector into native input.
