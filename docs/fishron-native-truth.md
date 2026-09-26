@@ -6860,3 +6860,55 @@ cost more than it bought, and the one cycle-level lever cannot be driven through
 - **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 92. Round 131: the phase offset is confirmed untestable -- `Cancelled` is the plugin's own safety abort
+
+### 92.1 What `Cancelled` actually is
+
+§91 guessed the probe was abandoning the run. That is wrong. `Cancelled` is set by
+`EncounterController.Cancel()` (`src/Chaite.Core/EncounterController.cs:167`), and it is called from the
+plugin's runtime when a takeover cannot be certified safe -- for example at `Runtime.cs:766`, where
+`ActiveNativeMobilityHandoff.Advance` returns `Rejected`, and at `Runtime.cs:779`, where
+`PrepareForSupportedActiveEncounterDetailed` does not return `Ready`. The probe merely *reports* that terminal
+state (`tools/GameProbe.cs:4333`).
+
+So the phase offset was not being abandoned by the harness; it was being **vetoed by the production safety
+interlock**, which is a much stronger reason to stop. Two further variants were tried this round to rule out the
+harness:
+
+```
+h=0   dir=-1   6000 / 2 hits / FALSE   valid battle TRUE    (baseline, unchanged)
+h=40  dir=-1   240 ticks, valid battle FALSE, outcome Cancelled
+h=40  dir=+1   240 ticks, valid battle FALSE, outcome Cancelled
+```
+
+A **constant** direction (so the player genuinely translates rather than oscillating in place, which §91.2
+suspected was the cause) behaves exactly like the alternating one, and both directions behave the same. The
+`ticks 240` is the plugin's certification window closing, not a probe limit.
+
+**The startup phase offset is therefore closed as an avenue for this harness.** It cannot produce native
+evidence, and the interlock that blocks it is a safety contract rather than a tunable.
+
+### 92.2 A false alarm from the tooling, recorded so it is not chased again
+
+While reading `Runtime.cs` the Chinese diagnostic strings appeared as mojibake (`鏃犳硶瀹夊叏...` for `无法安全...`),
+which looked like repository-wide encoding corruption. **It is not.** `git grep -l -P "\x{E9}\x{8F}\x{83}"`
+over every tracked `.cs` returns nothing, so the bytes on disk are correct UTF-8. The cause is that Windows
+PowerShell 5.1 `Get-Content` decodes UTF-8 as ANSI, so the console rendering is wrong while the file is fine.
+
+**Use `git grep`, the `read` tool, or `[System.IO.File]::ReadAllText` for UTF-8 content; `Get-Content` without
+`-Encoding UTF8` is not authoritative.** This is the second encoding trap of the session (§87.2 was the first,
+in the other direction) and it costs a full investigation each time if not remembered.
+
+### 92.3 Status
+
+- **Reverted**; tree clean, valid UTF-8, DLL hash `D38B8A23E6162308`, byte-identical to the best state.
+- **Measured:** `h=0` gives `6000 / 2 / FALSE`; `h=40` gives `240 ticks / valid battle FALSE / Cancelled` for
+  **both** hold directions.
+- **Established:** `Cancelled` is `EncounterController.Cancel()` driving the plugin's safety abort, not a probe
+  policy; the phase offset is blocked by a production safety contract and cannot be measured natively.
+- **Established (tooling):** `Get-Content` without `-Encoding UTF8` mis-decodes UTF-8 as ANSI in PS 5.1; the
+  repository has no encoding corruption.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
