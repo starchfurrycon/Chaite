@@ -5692,3 +5692,70 @@ the cap and all of which lost. The remaining work is the cycle-level reschedulin
 - **Ruled out:** enrage and water physics as contributors.
 - **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
   incomplete**, and no native zero is claimed.
+
+## 74. Round 113: the charge aims at the player's centre, so the defect is the PRE-CHARGE position
+
+### 74.1 The measurement
+
+Vertical separation between the player's centre and the Boss's centre, on every charge tick (`ai[0] == 1`,
+1334 sampled):
+
+```
+|dy|  min 0   p25 75   median 128   p75 211   max 936
+
+charge ticks with |dy| <  71   (inside the vertical contact band)      313  (23%)
+charge ticks with |dy| < 114                                          561  (42%)
+
+closest approaches:
+  guc=1302  |dy|=0  dy=  -0   wingTime=119
+  guc=2195  |dy|=0  dy=  +0   wingTime=  0
+  guc=4145  |dy|=0  dy=  +0   wingTime=130
+  guc=3923  |dy|=1  dy=  +1   wingTime=130
+  guc=2064  |dy|=1  dy=  -1   wingTime= 76
+  guc=1659  |dy|=1  dy=  +1   wingTime= 94
+  guc=3259  |dy|=2  dy=  +2   wingTime= 96
+```
+
+**`|dy| = 0` on charge ticks is not a coincidence, it is the lock.** `AI_069_DukeFishron` sets the charge
+velocity to `Normalize(player.Center - center) * num7` (the NATIVE CHARGE LOCK), so at the lock the Boss's
+centre, the player's centre and the charge direction are **collinear**: the *perpendicular* offset is
+**exactly zero**, and the entire dodge is a pure race in which the player must manufacture 71 px of vertical
+(or 85 px of horizontal) clearance before a body closing at 12.8-17.0 px/tick arrives. With 23% of charge
+ticks sitting inside the 71 px vertical band, the player is regularly locked into a geometry where the escape
+must be created from zero.
+
+Player altitude profile (centre y): min 6129, p25 6775, median 7055, p75 7909, max 7979 against platforms at
+~7040 and ~6080 and ground at ~7958 -- so the player largely works the platform/ground layers rather than
+holding altitude.
+
+### 74.2 What this pins down
+
+Combined with §72.3 (six local interventions, all lost) and §73.2 (7 of 8 hits in the charge), the defect is
+now located **before** the charge rather than during it:
+
+- During a charge the player starts from **zero** perpendicular offset, so the escape needs the maximum rate
+  the airframe can give, immediately, in the correct direction.
+- The wing is gated on `controlJump` (944 of 1625 charge ticks, §72.1), and the direction command is the same
+  channel as the gate (§71.2), so the required maximum-rate escape is routinely unavailable exactly when the
+  race starts.
+- Therefore no *during-charge* rule can fix it -- which is precisely what the six failures show -- because the
+  race is already lost by the geometry at lock time.
+
+**The fix must act during the hover, before the lock**: hold a position from which the eventual charge line
+leaves the player already far enough off it, and already moving perpendicular to it. The Boss's pattern is
+fully deterministic (fixed AI, no randomness, §"fixed AI"), and the hover states place it at height
+`-300` (see the `ai` samples: `[0,-300,...]` before charges), so the safe pre-charge state is a known
+function of the attack sequence rather than something to be discovered online.
+
+### 74.3 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean; the
+  §64 velocity-normal fix (`a46bca3`) is intact.
+- **Measured:** on charge ticks `|dy|` is 0 at the closest approaches and below 71 on **313 of 1334 charge
+  ticks (23%)**; below 114 on 561 (42%). Median `|dy|` 128.
+- **Established:** the charge locks collinear with the player's centre, so the perpendicular escape starts
+  from zero by construction; the dodge is a race the player usually enters with a gated wing.
+- **Concluded:** the defect is in the **pre-charge (hover) positioning**, not in any during-charge rule --
+  consistent with all six local during-charge interventions failing.
+- **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
+  incomplete**, and no native zero is claimed.
