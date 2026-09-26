@@ -5435,3 +5435,76 @@ has any accepted run at all**, at any length. The 3000-tick figure (2 hits / 9 d
 - **Still not achieved:** zero hits on either loadout over a full fight -- and no run currently *survives*
   the cap, so there is no accepted run to speak of. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 71. Round 110: the wing is gated off for 58% of every charge -- the structural measurement
+
+### 71.1 The measurement
+
+§70.3 concluded the weak-wing failure is structural rather than a per-tick choice. This quantifies exactly
+how structural, over the whole 4599-tick dense baseline run:
+
+```
+total ticks                                 4599
+charge ticks (phase starts fishron-wing-charge)  1625
+  controlJump FALSE (= wing gated off)           944    58.1% of all charge ticks
+  of those, wingTime > 0                         721    wing CHARGED but never applied
+
+gated-off share, by charge beat:
+  charge-descend       591 ticks   gated off 408   (69%)
+  charge-horizontal    499 ticks   gated off 297   (60%)
+  charge-ascend        487 ticks   gated off 216   (44%)
+  charge-*-dash         48 ticks   gated off  23   (48%)
+
+total wing time charged but never spent:  86 544
+```
+
+(Note the labels: `charge-horizontal` in this dump is the asc/desc variant reached when
+`_chargeNormalVertical < 0`, which is why its count nearly matches `charge-ascend`.)
+
+### 71.2 What it means
+
+**The player's single most important defensive resource -- the wing -- is switched off for more than half of
+every charge, and 86 544 units of flight time are charged but never spent.** The mechanism is §70.1:
+`Tick` publishes
+
+```csharp
+output.Jump = vertical < 0;        // FishronWingScript.cs:526
+```
+
+and `Player.WingMovement` is gated on `controlJump`. So **`vertical = +1` does not mean "descend", it means
+"descend with no wing"** -- the script cannot dive while retaining vertical authority. Because the charge
+normal frequently points downward (it is selected from the player's own velocity at the lock, §64.2, and a
+descending player selects a downward normal), and because the descend beat forces `vertical = +1` by
+construction, the gate is shut through the longest charge phase (69%) and, of all things, through **44% of the
+ascend beat itself** -- the very beat whose purpose is to climb.
+
+This explains, in one fact, why **five independent local interventions all failed** (§70.3). Each of them
+edited *which* vertical value a beat commands, but the value is doubly constrained: it sets the escape
+direction **and** it is the wing's enable line. Any local edit therefore trades a correct escape direction for
+a dead wing, or a live wing for a wrong escape direction, and the measurements show the trade is always net
+negative. **The defect is that two independent concerns share one channel.**
+
+### 71.3 What a real fix requires (recorded, not attempted)
+
+The fix must **decouple the wing gate from the direction command** -- e.g. keep descent expressed through a
+dedicated fast-fall control while `output.Jump` remains available to the wing, instead of deriving
+`output.Jump` from the sign of `vertical` at `:526`. That is a change to the decision *encoding*, not to any
+beat's choice, so it is not another local intervention and it is not contradicted by the five failures above.
+It must still be validated live at the `-maxticks` cap; and `:635-648`'s warning stands, because changing when
+`controlJump` is true still changes the W cycle's interaction with the Boss's attack clock.
+
+### 71.4 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean; the
+  §64 velocity-normal fix (`a46bca3`) is intact.
+- **Measured:** the wing is gated off on **944 of 1625 charge ticks (58.1%)**, and on **721** of those the
+  wing was charged (`wingTime > 0`) -- 86 544 units of flight time charged and never spent. The gate is shut
+  on 69% of the descend beat and **44% of the ascend beat**.
+- **Root cause, stated structurally:** `output.Jump` is derived from the sign of `vertical` (`:526`), so the
+  direction command and the wing's enable line are the same channel. A downward escape choice necessarily
+  disables the wing.
+- **Explains:** all five failed local interventions (§70.3) -- each traded escape direction against wing
+  availability on a shared channel.
+- **Not attempted:** the decoupling, which is recorded at §71.3 as the next real step.
+- **Still not achieved:** zero hits on either loadout over a full fight; no run survives the cap. The
+  objective remains **active and incomplete**, and no native zero is claimed.
