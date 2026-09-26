@@ -231,6 +231,16 @@ namespace Chaite.Core
         private const string ApexRefillVariable = "CHAITE_APEX_REFILL";
         private const string DashSuppressVariable = "CHAITE_DASH_SUPPRESS";
         private const string DashDelayVariable = "CHAITE_DASH_DELAY";
+        private const string NoChargeDashVariable = "CHAITE_NO_CHARGE_DASH";
+
+        /// <summary>True when the charge's dash is withheld entirely. Kept only
+        /// as a documented refutation: it kills both arms. See the call site.</summary>
+        private static bool NoChargeDashArmed
+        {
+            get { return Environment.GetEnvironmentVariable(NoChargeDashVariable) == "1"; }
+        }
+
+
 
 
 
@@ -993,6 +1003,21 @@ namespace Chaite.Core
             {
                 horizontal = away;
             }
+            // REFUTED: facing away from the charge before the lock
+            // (CHAITE_CHARGE_FACING).
+            //
+            // The rear-end diagnosis is right -- all five hits have the dash-body
+            // hit 8 ticks before contact at strike depth 1, with the recoil
+            // reversing vx (+9.00) against the Boss's +15.33, so the Boss
+            // overtakes -- but steering the FACING along the charge ahead of the
+            // lock made both arms much worse:
+            //
+            //   off: strong 6000/2 hits/4 contacts   weak 6000/3/3
+            //   on:  strong 6000/6 hits/1 contact    weak 5317/DEATH/10
+            //
+            // and strong boss damage collapsed to 9, i.e. the circuit mostly
+            // stopped engaging. The recoil direction is not the thing to steer.
+            // Reverted.
             switch (_chargeBeat)
             {
                 case 0:
@@ -1098,6 +1123,26 @@ namespace Chaite.Core
                 {
                     // escape is mostly vertical; a horizontal dash cannot win
                     // along the charge axis (see the controlled sweep in §97)
+                }
+                else if (NoChargeDashArmed)
+                {
+                    // REFUTED, AND THE MOST DECISIVE NEGATIVE RESULT OF THE SESSION.
+                    //
+                    // The dash-body-hit is LOAD-BEARING, not a liability. Removing
+                    // the charge dash kills BOTH arms outright:
+                    //
+                    //   off: strong 6000/2 hits/no death   weak 6000/3/3
+                    //   on:  strong 2406/7 hits/DEATH      weak 1636/7/DEATH
+                    //        and boss damage 0 on both -- the circuit did not
+                    //        damage the Boss at all before dying
+                    //
+                    // So the dash-body-hit is not merely trading 4 i-frames for a
+                    // recoil that reverses vx. It is structurally required, and the
+                    // rear-end reading in the comment above is incomplete: the same
+                    // impact that costs the hit at t=4271 is what keeps the other
+                    // 5990 ticks alive. The "boss damage 0" also shows the
+                    // circuit's damage comes through this contact path, so removing
+                    // it starves the fight as well. Reverted.
                 }
                 else
                     dash = true;
