@@ -3562,3 +3562,82 @@ every natural `ret` inside the movement region** of `Player.Update`, plus whethe
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 46. Round 85: the gap is between `ApplyPlan` and the movement entry -- the frame is planned from the previous tick's controls
+
+### 46.1 The three measured points, in order
+
+Three observers now bracket the control's life inside one tick. Reading them together localises the loss
+to a single interval.
+
+```
+(a) right after ApplyPlan (observer injected at every ApplyPlan return)
+POSTWRITE t=240 guc=241 J=True  L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=241 guc=242 J=True  L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=245 guc=246 J=True  L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+
+(b) at the movement region (Player.Update entry prefix)
+GATE t=240 guc=241 J=False L=False frozen=False webbed=False stoned=False CCed=False pulley=False
+     grap=False mount=False itemAnim=0 isFilm=False vy=0.00 py=7958
+GATE t=241 guc=242 J=False L=False ... etc, identical on every tick
+```
+
+- **(a) is a route with a sustained jump** ("hold jump from tick 241 to 250"), so the plan genuinely asks
+  for the jump and `MovementActionGate.ResolveJump` genuinely returns `true` -- the post-write
+  `controlJump` is `True` on every tick. This finally closes §44's resolver question: the gate is not
+  dropping anything.
+- **(b) is the movement entry of the same run.** Every single native flag that makes
+  `HorizontalMovement` or the input conversion bail out without moving the body is **false**
+  (`frozen`, `webbed`, `stoned`, `CCed`, `pulley`, grap, mount, `itemAnim`, `isFilm`), so no state gate
+  explains the freeze either -- and yet `J` and `L` are `False` here.
+
+### 46.2 The interval that loses the value
+
+`(a)` is `True` and `(b)` is `False` **in the same tick, on the same body**. So the controls are correct
+when `ApplyPlan` writes them and are zero by the time the movement code reads them. The plugin's
+`AwayFromBossAxis`-style state gates, the resolver, the route and the plan are all excluded, because
+each was measured on the correct side of this line. The one mechanism that deliberately runs in exactly
+that interval is the plugin's staged restore: `Runtime.Tick`'s `finally` snapshots the frame via
+`_game.CapturePendingInput(player)` (setting `_pendingInput`), and `Runtime.ApplyPendingInput` -- injected
+into `Player.Update` immediately after the native input copy -- writes those captured controls back over
+the player's fields. In replay mode that snapshot is taken and re-applied every frame, and a stale or
+empty snapshot will overwrite the resolve-written `True` with `False` a few instructions later, which is
+precisely the observed `(a) True -> (b) False`.
+
+This also explains why the whole replay channel has been unusable while every component tested
+in isolation looked correct, and why **the live path is unaffected**: the live takeover reaches the same
+`ApplyPlan` but the staged restore is staged from a frame that already carries the live controls.
+
+### 46.3 Why this round closed without instrumenting that interval
+
+The natural observer -- a probe hook injected right after the production `Runtime.ApplyPendingInput`
+call -- collides with the runner's own IL validation, which asserts the exact instruction sequence
+around that call site and the `Player.Update` hook set (`prepare-game-probe.ps1:598`):
+
+```
+Motion control replay must immediately follow the production input replay.
+```
+
+Two placements were tried and both are rejected, because the validator requires `MotionAfterInput` to be
+`ApplyPendingInput`'s immediate next `ldarg.0`/`call` pair and then enumerates the remaining hooks
+strictly. Rather than weaken a validator that is protecting the probe's contract, this round records the
+localisation and parks the interval instrumentation. **The next attempt should log from
+`RouteReplay`/`Runtime`'s own side (e.g. `CapturePendingInput`'s snapshot contents) rather than adding
+instructions to `Player.Update`**, which avoids that contract entirely.
+
+### 46.4 Status
+
+- **Tree clean** apart from the untracked `tmp/`; every diagnostic from this round is reverted and the
+  solution builds clean.
+- **Established:** immediately after `ApplyPlan` the written `controlJump`/`controlLeft` are `True`
+  (resolver verified to return `true` under a sustained route jump); at the movement entry of the *same
+  tick* they are `False`; all native movement-suppressing flags are `False`. The loss is therefore inside
+  the interval between the write and the movement entry, where the plugin's staged
+  `CapturePendingInput`/`ApplyPendingInput` restore runs.
+- **Excluded:** the resolver/gate (§44 hypothesis, now measured `true`), the route alignment and plan
+  plumbing (§43/§45), and every native movement-suppression flag.
+- **Next:** read `_capturedControls` at `CapturePendingInput`/`ApplyPendingInput` from the plugin's own
+  side, without adding instructions to `Player.Update`.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
