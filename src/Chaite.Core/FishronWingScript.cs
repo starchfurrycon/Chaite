@@ -718,6 +718,30 @@ namespace Chaite.Core
                     vertical = 0;
             }
             ApplyArena(player, ref horizontal, ref vertical);
+            // REFUTED: holding the width open through the pre-charge window
+            // (CHAITE_WIDTH_HOLD).
+            //
+            // §110's threshold is real -- AI_069 commits the charge as
+            // `Normalize(player - boss) * 16f` (NPC.cs:35341-35343), so bvy =
+            // 16*sin(theta) and the vertical race is winnable only while
+            // dy/dx < 0.42. Measured over the whole fight that race is lost at
+            // 49 of 70 locks, and dx is the cheap axis: at the t=4249 lock dx is
+            // 410.2 against the 468 needed, with pvx only +4.40 while the wing
+            // cruises at ~13.9.
+            //
+            // Forcing `away` in the pre-charge window is nevertheless FATAL on
+            // both loadouts:
+            //
+            //   off: strong 6000/2 hits/no death   weak 6000/3/no death
+            //   on:  strong 3265/7 hits/DEATH      weak 3413/7 hits/DEATH
+            //
+            // Pinning the horizontal direction destroys the horizontal BEAT
+            // PATTERN, and the pattern is what desynchronises the circuit from
+            // AI_069's attack clock. This is the same lesson as §78 (the
+            // turnaround schedule must not be desynchronised to buy a local
+            // separation). A rule that overrides `horizontal` for a whole window
+            // is not affordable no matter what it buys at the lock, so the width
+            // axis is closed. Reverted.
             // Steer the VERTICAL GAP AT THE LOCK, not the escape.
             //
             // AI_069 commits the charge at the lock (NPC.cs:35341-35343):

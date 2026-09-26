@@ -8034,6 +8034,59 @@ pre-charge state, so `Cruise` is the branch that runs and `ChargeEscape` is neve
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Thirty-one controlled interventions, one
   improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 111. Round 147b: the 70-lock census, and the width axis is closed
+
+### 111.1 The §110 threshold, measured across every charge in the fight
+
+§110 derived the condition from a single lock. Detecting all 70 locks in the committed 6000-tick run (a lock is a
+frame where the Boss's speed jumps above 14 having been at or below 14) gives the full distribution:
+
+```
+locks detected: 70
+locks with |bvy| > 6.2 (the vertical race is LOST): 49 of 70
+dy/dx over all locks: min -2.223   max 7.239   threshold 0.42
+```
+
+So the vertical race is lost at **49 of 70 locks** while the circuit takes only **2 hits in 6000 ticks**. The race
+is therefore **necessary but not sufficient** for a hit -- the other 47 lost races are survived by the dash's
+i-frames, the beat pattern, and the co-location lift. That is an important bound on the theory: §110's threshold
+explains *why* a charge is dangerous, not *that* it will hit.
+
+Note the sign convention: `bvy` negative means the Boss charges **upward** at the player, which is the mirror case
+and is just as unwinnable (the wing descends at `maxFallSpeed 10.01`, so the asymmetry runs the other way but the
+race is still a race). The cleanest statement is on `|bvy|`.
+
+### 111.2 The affordable axis is dx, and overriding `horizontal` to hold it is fatal
+
+The natural repair is the one §110 pointed at: `dx` is the cheap axis, because raising it lowers `dy/dx` without
+spending wing time (whereas every vertical intervention, §100 and §83-ungated, has cost more than it bought). At
+the t=4249 lock `dx` is 410.2 against the 468 needed -- about 58 px -- and `pvx` is only **+4.40** while the wing
+cruises at roughly **13.9**, so the circuit is visibly braking into the lock.
+
+`CHAITE_WIDTH_HOLD` forced `horizontal = away` through the pre-charge window (range 720 px, charge states only,
+`vertical` deliberately untouched). It is **fatal on both loadouts**:
+
+```
+off: strong 6000 / 2 hits / no death     weak 6000 / 3 hits / no death
+on:  strong 3265 / 7 hits / DEATH        weak 3413 / 7 hits / DEATH
+```
+
+Pinning the horizontal direction destroys the horizontal **beat pattern**, and the pattern is what desynchronises
+the circuit from AI_069's attack clock. This is the same failure as §78: a rule that overrides `horizontal` for a
+whole window cannot be afforded no matter what it buys locally. **The width axis is closed.** Reverted and deleted.
+
+### 111.3 Status
+
+- **Established:** across all 70 locks in the committed run, the §110 vertical race is lost at **49 of 70**, yet
+  only 2 hits occur -- so the race is necessary but not sufficient, and the other 47 losses are absorbed by the
+  dash i-frames, the beat pattern and the co-location lift.
+- **Refuted and axis closed:** holding `dx` open through the pre-charge window (`CHAITE_WIDTH_HOLD`) -- fatal on
+  both arms (3265/7/DEATH and 3413/7/DEATH) because overriding `horizontal` desynchronises the beat pattern.
+  Reverted and deleted.
+- **Unchanged:** committed behaviour re-verified (strong 6000/2/no death/4 contacts, weak 6000/3/no death/3).
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Thirty-two controlled interventions, one
+  improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
