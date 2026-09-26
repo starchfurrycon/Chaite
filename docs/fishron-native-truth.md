@@ -6763,3 +6763,37 @@ commitment. The remaining 2 strong-wing hits are a dash toward a locked charge a
   surviving the cap.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 90. Round 129: dropping the lateral command is REVERTED -- the escape geometry is not the lever
+
+§88.1 measured that at the lock preceding hit 2487 the perpendicular escape is `(11.8, 60.7)` -- **97% vertical**
+-- while the script kept commanding `horizontal = -1` and burned a dash to `vx -14.50`. The natural inference
+is that the lateral command is wasted motion: the dash closes 154 px of horizontal gap in six ticks and lets the
+Boss's own `+17` px/tick close the remaining 88 px in the two frames the reversal costs.
+
+So the co-location lift was made purely vertical by zeroing `horizontal` with it. **It regresses:**
+
+```
+                              §88/section 89 best    + lateral drop
+strong  ticks/hits/death/contacts   6000/2/FALSE/3      6000/7/FALSE/8
+```
+
+Hits go from **2 to 7**. This is the **fifth** rule of this shape to fail (§70, §78, §86 margin 900, §89, this),
+and it settles the pattern: **in this fight every command that changes the player's trajectory during a charge
+redistributes the hits rather than removing them.** The lateral motion at the lock is not wasted -- it is part
+of the configuration that keeps the other eleven charges from connecting.
+
+A useful consequence for how to read §88: the trace shows the escape is *geometrically* misdirected, but that
+is a **local** observation. The configuration as a whole is better than any locally-corrected variant, because
+the fight is a single deterministic clock (§78) and a local correction resamples which charges land.
+
+### 90.1 Status
+
+- **Reverted**; tree clean, DLL hash `D38B8A23E6162308`, byte-identical to the best-measured state.
+- **Measured:** the lateral drop gives `6000 / 7 hits / FALSE / 8 contacts` against `6000 / 2 / FALSE / 3`.
+- **Established:** five trajectory-altering rules have now each cost more than they bought; local geometric
+  correctness is not a valid objective function for this fight.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`, both
+  surviving the 6000-tick cap.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
