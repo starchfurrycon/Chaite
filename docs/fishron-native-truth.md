@@ -663,3 +663,89 @@ hypothesis inside the reviewed circuit, where the state machine already knows th
 for instance, keeping the horizontal axis under the circuit's control across a phase
 transition rather than letting it fall to neutral, and measuring with the same continuity
 statistic plus the hit count. No native zero has been observed on either loadout.
+
+## 12. Round 51: two facade overrides tested, both refuted
+
+Rounds 50 and 51 tested the two most plausible input-level explanations of the 44-tick dead
+window. Both made the fight worse, and the pattern of results is itself the finding.
+
+### 12.1 Run-length structure
+
+Before testing, the input structure was measured over 8685 dense ticks:
+
+| metric | value |
+|---|---|
+| direction reversals while moving | **21** |
+| held runs | 93 |
+| runs of 1-3 ticks | 20 |
+| runs of 4-10 ticks | 19 |
+| runs of 11-30 ticks | 21 |
+| runs of 31-100 ticks | 13 |
+| runs of 100+ ticks | 20 |
+| ticks with \|vx\| < 0.5 | 1128 (13%) |
+
+So the input is **not** chattering: only 21 reversals in the whole fight, and 33 runs are
+longer than 30 ticks. The problem is not that the circuit flip-flops. It is that **39 of 93
+runs are 10 ticks or shorter**, and 1128 ticks end up near stationary.
+
+### 12.2 Down is the dominant control
+
+| group | ticks | median \|vx\| | \|vx\| < 0.5 | median vy |
+|---|---|---|---|---|
+| `Down` held | 7144 | 6.70 | 12% | -0.21 |
+| `Down` released | 1541 | 4.50 | 19% | 2.75 |
+
+`Down` is held on **82%** of the fight, and **28% of those ticks (1995) carry no horizontal
+input at all**. The window before the first contact is exactly that state for 44 ticks.
+
+### 12.3 Override A - hold the horizontal axis (round 50)
+
+Enforced in `TerrariaFacade.ApplyPlan`, after the normal left/right writes, so no upstream
+layer could undo it. Direction was the perpendicular to the charge line, corrected to the
+sign that opens the gap to the boss. Also requested a dash when the native dash was ready.
+
+| run | input held | \|vx\| < 0.5 | ticks | hits | damage |
+|---|---|---|---|---|---|
+| baseline | 67% | 1128 (13%) | 8684 | **8** | 37 |
+| raw perpendicular sign | 78% | 822 (10%) | 8242 | 12 | 153 |
+| perpendicular away from boss | -- | -- | 7564 | 11 | 105 |
+
+Continuity improved exactly as designed and the fight still got worse. **Reverted.**
+
+### 12.4 Override B - release `Down` during a charge (round 51)
+
+Narrower: keep the circuit's own horizontal direction, and only stop feeding the descend
+while a charge is live, on the reasoning that the charge is escaped on the horizontal axis
+and a descend only walks the player towards the floor where no speed can be built.
+
+| run | ticks | hits | damage | npc contact |
+|---|---|---|---|---|
+| baseline | 8684 | 8 | 37 | 0 |
+| `Down` released during charge | **4229** | 8 | **90** | **4** |
+
+Death arrives at **half the tick count**, damage more than doubles, and body contact goes
+from 0 to 4. **Reverted.**
+
+### 12.5 What this establishes
+
+Both overrides replaced one of the circuit's own decisions with a locally reasonable rule,
+and both lost. Taken with round 50 that is a consistent picture:
+
+1. **The circuit's per-tick input is not the defect.** Its decisions are already better
+   than the local rules tested at the facade, in both the horizontal axis and the vertical.
+2. **The 13% of ticks at `|vx| < 0.5` are a symptom, not the cause.** Making them continuous
+   by overriding direction, or removing the paired descend, both made the outcome worse.
+3. Therefore the eight remaining body hits come from the circuit's **own choice of position
+   and timing**, and the fix has to change what the state machine decides -- not enforce a
+   property on its output.
+
+This closes the line of work opened in round 49. No further facade-level input guard should
+be attempted without a measured reason to believe the circuit's own decision is wrong at a
+specific, identified tick.
+
+### 12.6 Where the effort should go
+
+The objective needs the strong-wing loadout measured natively at all, which has never been
+done, and needs the state machine to be delivered through `CHAITE_ROUTE_FILE` rather than
+only through the formula route. Both are concrete and unblocked, and both are prerequisites
+for the acceptance the objective asks for regardless of how the weak-wing hits are reduced.
