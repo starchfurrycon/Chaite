@@ -6593,3 +6593,64 @@ both cases the escape is **directionally right and rate-limited**, not mis-aimed
   at `6000 / 2 hits / death FALSE`.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 87. Round 126: the margin optimum is sharp and narrow, and a source-encoding repair
+
+### 87.1 Parameter sweeps: the optimum is a knife edge, so stop tuning
+
+`PinnedWallMargin` was swept one variable at a time from the promising `640`:
+
+```
+margin   strong (ticks/hits/death/contacts)   weak (ticks/hits/death/contacts)
+ 540     6000 / 9 / FALSE / 5                 2696 / 8 / TRUE / 9
+ 640     6000 / 2 / FALSE / 3                 6000 / 4 / FALSE / 5     <- best
+ 740     3670 / 8 / TRUE  / 7                 (not run)
+ 900     6000 / 8 / FALSE / 9                 (not run)
+```
+
+`CoLocationBand` was swept the same way with the margin held at 640:
+
+```
+band     strong
+ 24      6000 / 2 / FALSE / 3     <- best
+ 80      6000 / 8 / FALSE / 4
+```
+
+**Both optima are sharp local maxima, not plateaus.** A 100 px change in the margin, or a 56 px change in the
+band, costs 6-7 hits and can cost the run its survival. This is the same phenomenon §78 recorded: the fight is
+a deterministic clock, so any parameter that moves the W cycle shifts *which* charges connect rather than
+removing them. **The parameters are therefore not to be tuned further** -- the search would be fitting the
+particular sampled cycle, not improving the machine. `640f` and `24f` are kept as measured, and any future
+change must be justified by a mechanism, not by a sweep.
+
+### 87.2 A source-encoding defect, found and repaired
+
+The sweeps were applied with PowerShell `Set-Content -Encoding UTF8`, which re-encoded the file and turned the
+three `§` characters in comments into mojibake (`鎼?`). The damage was **comments only** -- the DLL hash was
+unchanged from the good build -- but it was committed, so the file is repaired against `HEAD~1`, which still
+held the correct text. All three lines are restored:
+
+```
+/// still leaving a 4920 px corridor (§78 requires the W-cycle timing
+// THE MECHANISM IS VALIDATED. §81.2 showed every strong-wing body
+// half as far in. That is the §79 pattern again: spending wing time
+```
+
+`git grep -c` for the mojibake range now returns nothing, the file starts `75 73 69 6E` (no BOM), and the
+rebuilt DLL is again `D38B8A23E6162308` -- the exact binary that produced the 2-hit strong wing. **Use the
+`edit` tool for source changes; `Set-Content` rewrites whole files in the console's encoding.**
+
+### 87.3 Status
+
+- **KEPT and repaired** in `src/Chaite.Core/FishronWingScript.cs`: `PinnedWallMargin = 640f`,
+  `CoLocationBand = 24f`, no mojibake, valid UTF-8, builds clean, DLL hash `D38B8A23E6162308`.
+- **Measured:** the margin sweep is `540 -> 9 hits`, `640 -> 2`, `740 -> 8 + death`, `900 -> 8`; the band sweep
+  is `24 -> 2`, `80 -> 8`. Both optima are sharp.
+- **Established:** parameters that move the W cycle redistribute hits rather than removing them (§78), so
+  further sweeping is overfitting and is stopped.
+- **Verified by hash:** the committed binary is byte-identical to the one that measured
+  `6000 / 2 hits / death FALSE` (strong) and `6000 / 4 hits / death FALSE` (weak).
+- **Twelve interventions attempted; two (§83, §86) improve the fight.** The best achieved is the strong wing at
+  `6000 / 2 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.

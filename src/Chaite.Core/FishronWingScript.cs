@@ -67,7 +67,7 @@ namespace Chaite.Core
         /// MEASURED (game-probe-gated-strong-6k): min player x over the fight is
         /// exactly 640.0 against a max of 6085.3. Turning 640 px inside the band
         /// edge places the turnaround at x = 916, comfortably clear of 640 while
-        /// still leaving a 4920 px corridor (鎼?8 requires the W-cycle timing
+        /// still leaving a 4920 px corridor (§78 requires the W-cycle timing
         /// elsewhere to be preserved, so the margin is kept well inside the
         /// arena rather than at its centre).</summary>
         private const float PinnedWallMargin = 640f;
@@ -538,7 +538,7 @@ namespace Chaite.Core
             ApplyArena(player, ref horizontal, ref vertical);
             // Break the co-location, but ONLY for the strong wing.
             //
-            // THE MECHANISM IS VALIDATED. 鎼?1.2 showed every strong-wing body
+            // THE MECHANISM IS VALIDATED. §81.2 showed every strong-wing body
             // contact happens as the Boss's centre crosses the player's, and this
             // rule removes those contacts: measured at the cap, the four body
             // hits at ticks 2963, 3439, 4745 and 5396 are ALL ELIMINATED, the
@@ -550,7 +550,7 @@ namespace Chaite.Core
             //   weak wing     ticks 4598 -> 2224, hits 8 -> 7, death TRUE
             //
             // The weak wing fires the rule 76 times in a 1986-tick life and dies
-            // half as far in. That is the 鎼?9 pattern again: spending wing time
+            // half as far in. That is the §79 pattern again: spending wing time
             // on vertical commitment costs the Fairy wings more than the
             // separation buys, because their budget is 130 ticks against the
             // Fishron wing's 180. The latched-normal clause that was tried first
