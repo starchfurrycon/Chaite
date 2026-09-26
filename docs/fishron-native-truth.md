@@ -6286,3 +6286,56 @@ near maximum rate.
 - **Achieved:** the strong wing survives the 6000-tick cap without death.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 82. Round 121: the co-location lift is REVERTED -- the ninth failure, and a rule that never fired
+
+### 82.1 The hypothesis and the change
+
+§81.2 established that every strong-wing body contact happens at the instant the Boss's centre crosses the
+player's, with the two centres 3.6-4.5 px apart. The pre-hit traces then showed the crossing is **slow and
+spendable**: `|dy|` sits under 12 px for 8-12 ticks before each contact while the charge is in flight for ~28,
+and the measured escape rate through that window is only 0.4-2.4 px/tick against a wing that climbs at ~9.9.
+So a rule was added to `Tick` after `ApplyArena`: **while charging, airborne, with `|dy| < 24` and the bar able
+to pay, command a climb** (`CoLocationBand = 24f`).
+
+### 82.2 It never fired -- and the counter proves it
+
+The rule was built and the DLL hash was **verified to match the tested run**
+(`EAE7B19A9FDF20E0` in both `artifacts/game-probe-coloc-strong-6k/Chaite.Core.dll` and the build output), so
+the tested binary really contained the rule. The result was nevertheless **bit-identical to the baseline**:
+
+```
+                          baseline (§81)   co-location lift
+ticks                          6000              6000
+HITS                             11                11
+boss damage                      72                72
+death                         FALSE             FALSE
+npc contact                       8                 8
+```
+
+A diagnostic counter (`DiagnosticCoLocationLiftCount`) was then added and read back, because the phase name
+`fishron-wing-colocation-lift` never appears anywhere in the 5761 recorded plans (16 distinct phases, none of
+them this one). The counter reads **0**, confirming the branch is **dead in practice**, even though a
+post-hoc count over the same stream showed 67 charge ticks where the conditions appeared to hold
+(`|dy| < 24` on 148, plus `wingTime > 20` on 124, plus `plan vertical >= 0` on 85).
+
+The discrepancy is a **pre-update versus post-update sampling artefact**: the rule evaluates against the
+snapshot the engine hands the planner *before* the frame's player update, while the probe's
+`boss-observations.jsonl` records state *after* that update. At the separations in question (a few pixels) that
+difference is larger than the band being tested. **Any future rule targeting near-contact geometry must be
+validated with an in-script counter, not with a post-hoc recomputation over the probe stream** -- this round
+spent most of its budget learning that.
+
+### 82.3 Status
+
+- **Edit reverted.** Tree clean apart from untracked `tmp/`; source valid UTF-8 (`75 73 69 6E`); builds clean;
+  the committed velocity projection is restored (`normalAX * player.Velocity.X` at `:1210`).
+- **Measured:** the co-location lift produced `6000 / 11 / FALSE / 8 contacts`, identical to the baseline, and
+  its diagnostic counter read **0** -- the branch never executed.
+- **Established (tooling):** post-hoc recomputation over `boss-observations.jsonl` samples state **after** the
+  player update, whereas the script sees it **before**; near-contact conditions cannot be validated that way.
+- **Nine interventions attempted; none improves the fight.** Six reverted outright, plus §76/§80 (reverted for
+  the strong-wing regression) and this one.
+- **Achieved:** the strong wing survives the 6000-tick cap without death.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
