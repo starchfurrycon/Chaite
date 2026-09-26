@@ -4577,3 +4577,71 @@ validated at 3000 ticks against the committed baseline, not at 1200.
   6 npc contacts**. Live weak-wing route replay is tick-identical to its source over 1199 common ticks.
 - **Not achieved:** zero hits on either loadout over a full fight.
 - **No native zero over a full fight on either loadout.**
+
+## 59. Round 98: the latched normal is already near-optimal -- the shortfall is along-line, not perpendicular
+
+### 59.1 The measurement
+
+§58 reasoned that the escape's *magnitude* was the problem and proposed committing the perpendicular input
+harder. Reconstructing `LatchChargeNormal` exactly (including its `>=` tie-break) and evaluating the
+perpendicular it produces at each lock frame against the player's actual velocity gives the decisive
+answer:
+
+```
+seq  lockTick   dx       dy     dotA     dotB     picksA  normal              h  v   clearance rate
+ 1     928    -329.4   168.6   0.0e+00  0.0e+00   True   (-0.456,-0.890)    -1 -1      +5.63
+ 2    2120    -526.4   108.3   1.4e-14 -1.4e-14   True   (-0.202,-0.979)    -1 -1      +4.17
+ 3    2236     301.1   179.9   0.0e+00  0.0e+00   True   (-0.513,+0.858)    -1 +1      -5.92
+ 4    2646     395.8  -130.3   0.0e+00  0.0e+00   True   (+0.313,+0.950)    +1 +1      +2.18
+```
+
+("clearance rate" is the projection of the player's velocity onto the latched normal: how fast the
+perpendicular separation is actually growing.)
+
+Three things follow, and they close off the last two hypotheses:
+
+1. **The perpendicular escape is not the shortfall.** The latched normal already yields **+5.63, +4.17 and
+   +2.18 px/tick** of clearance on sequences 1, 2 and 4 -- comfortably at or above the ~4.25 px/tick §58
+   estimated was needed for the race. The player *is* leaving the locked line fast enough.
+2. **The tie-break picks the better perpendicular in 3 of the 4 cases.** Only sequence 3 gets the worse
+   side (-5.92 against a possible +5.92). So the floating-point tie-break from §56 is not the systemic
+   cause either, which is consistent with §57's finding that flipping it changed nothing measurable.
+3. **The two contacts with the best clearance rates (1 and 2: +5.63, +4.17) still connect.** If leaving the
+   line quickly were sufficient, those would be the survivors. They are not. So the failure is in the
+   **along-line** component: the charge closes the along-line distance at 17.0 px/tick while the player's
+   own velocity has a large component *along* the line (e.g. sequence 1: player velocity `(-6.8, -2.9)`
+   projected onto the charge direction `(-0.890, 0.456)` is `+6.05 - 1.32 = +4.7` along the line), so the
+   body arrives while the player is still translating down the corridor.
+
+### 59.2 Where the remaining weak-wing work actually is
+
+Every geometric hypothesis about the *direction* or *rate* of the perpendicular escape is now excluded by
+measurement, as are the flight-budget hypothesis (§58) and the tie-break hypothesis (§56/§57). What is left
+is the **along-line** term: to survive, the player must not merely leave the line, it must also **not travel
+down it** toward the incoming body. That is a different control problem from the one the
+`charge-horizontal` beat solves, and it explains why three separate attempts aimed at the perpendicular
+(§55 prioritising the beat, §56.2/B removing the deadband, §57 flipping the sign) each failed to help or
+made things worse: none of them touched the along-line component.
+
+This is the state of knowledge at the point the session's round budget is nearly exhausted, and it is
+recorded as the concrete next target rather than as a claim: **the along-line component of the player's
+velocity during a locked charge must be driven toward zero (or reversed to match the charge) while the
+perpendicular escape runs**, and that change must be validated by a fresh **live** 3000-tick run against
+the committed baseline, because a live-route replay reproduces the recorded controls and cannot judge a
+state-machine change (§55).
+
+### 59.3 Status
+
+- **Tree clean** apart from untracked `tmp/`; builds clean; no experiment left in the tree.
+- **Established by measurement:** the latched perpendicular gives +5.63 / +4.17 / +2.18 px/tick clearance on
+  three of the four remaining contacts, and the tie-break selects the better perpendicular in 3 of 4 cases.
+- **Ruled out:** perpendicular escape direction (§56/§57), perpendicular escape magnitude (§59.1 item 1),
+  flight budget (§58.2), and the arbitrary tie-break (§57) as causes of the four remaining weak-wing
+  contacts.
+- **Now indicated:** the **along-line** component -- the player still translates down the charge corridor
+  while the body closes at 17.0 px/tick.
+- **Baselines:** committed state machine, live weak wing, 3000 ticks: **4 hits / 66 damage / no death /
+  6 npc contacts**; hits at ticks 950, 2146, 2278, 2668. Live weak-wing route replay is tick-identical to
+  its source over all 1199 common ticks.
+- **Not achieved:** zero hits on either loadout over a full fight.
+- **No native zero over a full fight on either loadout.**
