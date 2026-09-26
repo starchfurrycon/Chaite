@@ -2486,3 +2486,80 @@ a wall on the player's rows.
   `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
 - **No native zero over a full fight on either loadout.**
+
+## 32. Round 71: the charge-capsule criterion explains every recorded hit
+
+### 32.1 The criterion
+
+`AI_069` locks once (`ai[0]=1; ai[1]=0; ai[2]=0; velocity = Normalize(player.Center - center) * num7`)
+and then travels a **fixed 476 px** along that locked line at 17 px/tick (expert). Contact needs the
+centres within roughly `|dx| < 85` and `|dy| < 71`, so the threat is a **capsule**: the segment of
+length 476 from the lock centre along the locked aim, inflated by 85 px laterally. A player is hit
+exactly when its centre is inside that capsule.
+
+**This explains all five recorded hit windows, with no exceptions:**
+
+```
+ hit  aim             lock dist   ticks inside the capsule
+  1   (-0.90,+0.43)     490.8      0    (never inside)
+  2   (-0.17,-0.99)     646.9      0    (never inside)
+  3   (-0.74,+0.67)     254.8     19
+  4   (+0.91,+0.41)     364.4     20
+  5   (-0.94,+0.33)     303.3     18
+```
+
+Hits 1 and 2 never put the player inside the capsule at all, and they are the two that land on the
+**pinned episodes** of section 30 -- a body frozen at `vx = 0` with no lateral motion cannot leave
+the line, so it is caught by whatever arrives. Hits 3, 4 and 5 are the tunnel cases: the player sits
+inside the capsule for 18-20 consecutive ticks with a small perpendicular offset (perp 0.0/0.0/3.4
+at entry, still only 11.4/33.9/41.7 at impact) while the charge runs down the line straight into it.
+
+The perpendicular distance is the whole story. At the moment of impact the players of hits 3-5 are
+still **within 85 px of the line** -- they never got out of the tunnel. This is exactly the owner's
+rule: the locked charge cannot be outrun along the line (17 px/tick against `maxRunSpeed` 4.71 and
+`accRunSpeed` 6.75), so the escape must be along the **normal**, and it must exceed 85 px before the
+charge arrives.
+
+A counter-check confirms that raw separation is *not* the criterion: on every one of the five locks
+the player's distance exceeded `CONTACT + dist * |pvel| / CHARGE`, the naive "does the player outrun
+the tip" test, so a speed-based reading would have called all five safe. Distance from the lock
+point says nothing; distance from the line says everything.
+
+### 32.2 What this makes the target
+
+The circuit already computes the correct escape axis: `LatchChargeNormal` returns the unit
+perpendicular to the locked aim and is arithmetically verified (section 27). What it does not do is
+**get far enough along that axis in time**. The requirement is concrete and checkable:
+
+> during a charge, the player's perpendicular distance from the locked line must reach **85 px
+> before the charge reaches the player's along-track position**, or the player must already be
+> outside the 476 px range.
+
+That is a two-number target rather than a heuristic, and it is measurable per charge from the same
+`prehit`/dense streams. The next step is to instrument per-charge minimum perpendicular distance and
+raise the vertical share of the escape until it clears 85, which is what sections 19 and 22 could
+not quantify.
+
+### 32.3 The stall is not the hit source
+
+A stall breaker was built (detect `horizontal != 0` with `|vx| < 0.05` for 8 ticks while airborne,
+then force `vertical = -1` and spend the dash) and swept in one invocation:
+
+| `CHAITE_STALL_BREAK` | hits | ticks | boss damage | death |
+|---|---|---|---|---|
+| 0 (off) | **4** | 3000 | 66 | no |
+| 1 (on) | **7** | 2818 | 86 | **yes** |
+
+It is **clearly harmful** and is reverted. So although the stall is real (section 31), breaking it
+makes the fight worse, and it is not where the hits come from. One plausible reading is that the
+frozen frames are being spent near the arena floor where staying put happens to be safe for the
+charges that occur there, and the forced jump moves the body into worse positions.
+
+### 32.4 Status
+
+- **Reverted:** the stall breaker and `CHAITE_STALL_BREAK`.
+- **Kept:** one pixel of spawn clearance (section 31); the refill guard.
+- **New criterion:** the charge capsule, which explains all five recorded hits and refutes the
+  speed-based reading.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks.**
+- **No native zero over a full fight on either loadout.**
