@@ -3711,3 +3711,83 @@ has a re-supply point the replay lacks, and that point is the thing the replay m
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 48. Round 87: live and replay have identical control state -- the divergence is inside the tick
+
+### 48.1 The live trace
+
+§47 predicted that live would show `D_ENTRY J=True` where replay shows `False`, i.e. that live has a
+re-supply point the replay lacks. **That prediction is wrong.** The same four-point trace on a **live**
+run (formula route, `fishron-fairy-wing`) gives:
+
+```
+D_ENTRY   t=241 myPlayer=0 film=False J=False L=False
+C_RESTORE t=241 myPlayer=0 film=False J=True  L=True
+D_ENTRY   t=242 myPlayer=0 film=False J=False L=False
+C_RESTORE t=242 myPlayer=0 film=False J=False L=True
+D_ENTRY   t=243 myPlayer=0 film=False J=False L=False
+C_RESTORE t=243 myPlayer=0 film=False J=False L=True
+D_ENTRY   t=244 myPlayer=0 film=False J=False L=False
+C_RESTORE t=244 myPlayer=0 film=False J=False L=True
+```
+
+and the replay trace from §47:
+
+```
+D_ENTRY   t=241 inJ=False inL=False
+C_RESTORE t=241 wroteJ=True wroteL=True postJ=True postL=True
+D_ENTRY   t=242 inJ=False inL=False
+C_RESTORE t=242 wroteJ=True wroteL=True postJ=True postL=True
+```
+
+**The two modes are the same on every logged field.** Entry is `J=False L=False` in both; the restore
+leaves `J=True L=True` in both; `myPlayer=0` and `isControlledByFilm=False` in both. §47's "the clear is
+between ticks and live survives it" is therefore also withdrawn: **live is cleared between ticks exactly
+the same way.** The controls are re-established *inside* the tick by the plugin's staged restore, in both
+modes, and that is by design.
+
+### 48.2 The defect, now stated as a single sentence
+
+Live and replay present the engine with the **same control values at the same points in the tick**, and
+only live produces movement. So nothing about the controls, the resolver, the plan, the route, the
+staging, the identity, the film flag, or the entry/exit clear distinguishes them. The divergence is
+**after the restore and inside the same tick**: live's body acts on the restored controls and replay's
+does not, while both have `controlJump=True` on the player's fields at that moment (measured from the
+plugin's side, `C_RESTORE postJ=True`, and independently from the probe's side, `POSTWRITE J=True`).
+
+That collapses the problem to one question, and it is not about input at all: **why does the native
+movement code not act on a control value that is set on the player it is reading?** Two answers remain,
+and they are cheaply separable:
+
+1. the movement code is not invoked in replay (a different or reduced update path), or
+2. the movement code is invoked but reads its input from somewhere other than the player's control
+   fields (a cached input structure that live refreshes and replay does not).
+
+Answer 2 is the more likely one and matches the owner's mechanic note that horizontal speed must be built
+by *sustained* input: if the movement code consults a cached/edge-tracked input rather than the field, a
+single-frame field write would never build speed, and the body would sit still exactly as observed while
+`velocity` stays exactly `(0,0)`.
+
+### 48.3 The measurement that separates them
+
+`JumpMovement` and `WingMovement` already carry probe observers (`MotionBeforeJump`/`MotionAfterJump`,
+`FlightBeforeWing`/`FlightAfterWing`) that are strict no-ops outside motion cases. Adding a counter to
+those two hooks -- **no new instructions in `Player.Update`, so the IL validator is untouched** -- records
+whether the movement methods are reached in a replay frame. If `JumpMovement` is reached with
+`controlJump=True` and `velocity` still does not change, answer 2 is confirmed and the fix is to write the
+input where the movement code actually reads it; if it is never reached, answer 1 is confirmed and the
+replay's world-update path is the target.
+
+### 48.4 Status
+
+- **Tree clean** apart from the untracked `tmp/`; all instrumentation reverted, solution builds clean.
+- **Established (measured on both modes):** live and replay are identical on entry controls, restored
+  controls, `myPlayer` and `isControlledByFilm`; the entry clear happens in both.
+- **Corrections this round:** §47's "live survives the between-tick clear" is withdrawn -- live is cleared
+  identically and re-established inside the tick by the staged restore, in both modes. §47's prediction
+  that live would show `D_ENTRY J=True` is refuted.
+- **Next:** count `JumpMovement`/`WingMovement` invocations in a replay frame via their existing probe
+  observers, to separate "movement code not reached" from "movement code reads a cached input".
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
