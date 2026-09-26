@@ -3487,3 +3487,78 @@ snapshot, not in the staging.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 45. Round 84: a minimal jump-only route rules out the resolver and the route alignment
+
+### 45.1 The two measurements
+
+**Post-write state.** The probe's `ObserveApplyPlanAfter` observer is injected at every `ApplyPlan`
+return, so it reads the player *after* all the plan's writes and therefore exposes the resolver's
+verdict. Replaying the harvested route:
+
+```
+POSTWRITE t=240 guc=241 J=True  L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=241 guc=242 J=False L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=242 guc=243 J=False L=True D=False Dash=False jumpField=0 onGroundZero=True py=7958 vy=0.00
+```
+
+`guc` is `Game.GameUpdateCount` and is consistently `ticks + 1`, so the replay's `CurrentGameTick()`
+and the probe's counter are offset by one throughout.
+
+**The minimal route.** The harvested route's jump is a single tick (`241,-1,1,0,0` followed by
+`-1,0` rows), and the replay showed `J=True` only at `t=240`. That admits exactly two explanations -- the
+resolver dropping the jump, or the route being consumed at the wrong rate. A synthetic route whose only
+content is "hold jump from tick 241 to 250" decides between them:
+
+```
+POSTWRITE t=240 guc=241 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=241 guc=242 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=242 guc=243 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=243 guc=244 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=244 guc=245 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=245 guc=246 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+POSTWRITE t=246 guc=247 J=True L=True ... onGroundZero=True py=7958 vy=0.00
+```
+
+### 45.2 What this rules out, and what it leaves
+
+Both candidate explanations from §44 are now dead:
+
+- **Not the resolver.** With a sustained jump request the post-write `controlJump` is `True` on every
+  single tick, so `MovementActionGate.ResolveJump` is returning `true` and the gate is not dropping
+  anything.
+- **Not the route alignment.** A sustained request is delivered as a sustained request, so the route is
+  not being consumed one tick per N frames or otherwise rate-mismatched. (§44's single-tick jump reading
+  was an artefact of the harvested route itself containing only one jump tick, not of the replay.)
+
+**And the body still does not move.** Through all seven logged ticks: `py=7958` unchanged **and**
+`vy=0.00` unchanged, with `onGroundZero=True` -- while `controlJump` is genuinely `True` on the
+player's own field at the end of `ApplyPlan`. Combined with §43 (the body does not move inside
+`Player.Update`, entry and exit positions identical) this is conclusive: **in replay mode the native
+movement code in `Player.Update` is not being reached at all.** The controls are correct on the object
+the engine sees; nothing consumes them.
+
+### 45.3 The consequence for every earlier "fix"
+
+This explains why the last several rounds of work moved nothing. §43's plan/route hypothesis and §44's
+resolver hypothesis were both aimed at the *input* side, and the input side is now measured to be
+correct end to end. The defect is on the *update* side, in whatever differs between the live path and
+the replay path about how the player's own per-frame simulation is driven. That is a single, bounded
+question -- and it is where the next measurement goes: log `velocity`/`position` at the entry **and at
+every natural `ret` inside the movement region** of `Player.Update`, plus whether the enclosing
+`Main.DoUpdateInWorld`-equivalent runs at all in replay, so "movement code skipped" is separated from
+"movement code runs and is then reverted".
+
+### 45.4 Status
+
+- **Diagnostics reverted**, tree builds clean, `git status` shows only the untracked `tmp/`.
+- **Established:** with a sustained route jump the post-write `controlJump` is `True` every tick, so the
+  resolver is not gating and the route is not rate-mismatched. The body is nonetheless frozen
+  (`py`/`vy` unchanged, `onGroundZero=True`), so the native movement code is not reached in replay mode.
+- **Correction:** §44's "the resolver or the staging drops the jump" is withdrawn; both the resolver and
+  the plan/route plumbing deliver a correct, sustained jump.
+- **Next:** instrument the movement region of `Player.Update` in replay mode to separate "skipped" from
+  "run then reverted".
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
