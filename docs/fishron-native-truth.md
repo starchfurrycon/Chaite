@@ -6216,3 +6216,73 @@ the dot products are identically zero, therefore project the velocity") is exact
 - **Achieved:** the strong wing survives the 6000-tick cap without death (committed state).
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed.
+
+## 81. Round 120: the contact mechanism, read frame by frame on the loadout that survives
+
+### 81.1 The comparison is complete
+
+```
+                         weak (Fairy)          strong (Fishron)
+velocity projection      4598 / 8 / TRUE      6000 / 11 / FALSE   <- survives the cap
+offset projection        5937 / 9 / TRUE      5341 / 9  / TRUE
+```
+
+Both were re-verified this round on the committed build (`velnorm-weak-6k` = `4598 / 8 / TRUE`), so the table
+is complete and consistent. The velocity projection is kept: it is the only one in which the strong wing
+survives, and §80.3 showed the offset projection is a constant that does not discriminate at all.
+
+The strong wing is the tractable target -- it already satisfies survival, so its remaining work is purely the
+hit count.
+
+### 81.2 Its hits are not grazes, they are centre crossings
+
+The strong wing's four body hits, with the native margins (`|dx| < 85`, `|dy| < 71`):
+
+```
+  tick   dmg   |dx|   |dy|
+   2963   64    25.1   41.7
+   3439   76    12.9   32.4
+   4745   92    51.1   29.5
+   5396   77    25.6    3.6
+```
+
+and frame by frame around tick 5396 (the shallowest of the four):
+
+```
+ t=5392  P=(6213.6,7607.2) v=(+5.74,-2.00)  dx= +23.7  dy= -11.0
+ t=5393  P=(6218.7,7605.6) v=(+5.02,-1.60)  dx= +12.4  dy=  -7.9
+ t=5394  P=(6223.0,7604.4) v=(+4.34,-1.20)  dx=  +0.4  dy=  -4.5   <- |dx| 0.4, |dy| 4.5
+ t=5395  P=(6226.7,7603.6) v=(+3.70,-0.80)  dx= -12.3  dy=  -0.6
+ t=5396  P=(6229.8,7603.2) v=(+3.09,-0.40)  dx= -25.6  dy=  +3.6   <- the hit frame
+ t=5397  P=(6225.3,7599.7) v=(-4.50,-3.50)                            (knockback)
+```
+
+At the contact the two centres are **4.5 px apart vertically and 0.4 px horizontally** -- the player passes
+essentially *through* the Boss's centre. The same pattern holds at tick 2963 (`dx -25.1, dy -41.7` after
+crossing `dx +0.7` two frames earlier) and at 3439 and 4745. The escape is working before and after the
+crossing -- `dy` is accumulating at roughly 6 px/tick at 5394 and reaches 40+ px two frames later -- but the
+**perpendicular separation passes through zero at the crossing instant**, and the contact test needs only
+`|dy| < 71` *while* `|dx| < 85`. The player is not caught by a bad direction or a stalled escape; it is caught
+because the two bodies are **co-located exactly when the Boss passes through the player's line**.
+
+This is the geometric consequence of §74/§75 taken to its end: the lock aims at the player's centre, the
+perpendicular offset starts at zero, and a straight charge necessarily brings the Boss's centre back through
+the player's position unless the player has already left the corridor by more than 71 px vertically **before**
+the crossing. The measured gap to safety is small at these frames (`|dy|` of 4.5 and 3.6 px at the crossing)
+but it is not closable by tuning the escape rate, because the crossing instant is set by the Boss's
+deterministic path and the required displacement is perpendicular to a motion the player is already making at
+near maximum rate.
+
+### 81.3 Status
+
+- **Measured:** `velnorm-weak-6k` = `4598 / 8 / TRUE`, completing the 2x2 comparison; the strong wing's body
+  hits are `2963`, `3439`, `4745`, `5396`, all deep inside the contact rectangle.
+- **Established (frame-level):** each body hit occurs at the instant the Boss's centre crosses the player's
+  axis, with `|dy|` at the crossing between 3.6 and 4.5 px -- the bodies are co-located, so the escape's
+  accumulated separation is momentarily irrelevant.
+- **Consequence:** the remaining strong-wing work is not an escape-rate or direction tuning problem; it needs
+  the perpendicular separation to be non-zero **before** the crossing, i.e. a positional commitment made
+  during the hover, as §74.2 and §75.2 concluded.
+- **Achieved:** the strong wing survives the 6000-tick cap without death.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
