@@ -6013,3 +6013,71 @@ baseline never met.** It remains the best available weak-wing configuration and 
 - **Confirmed deterministic:** the dense offset re-run reproduced the sparse run exactly (`5937 / 9 / 126`).
 - **Not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and incomplete**,
   and no native zero is claimed.
+
+## 78. Round 117: the shark band is REVERTED -- the eighth failure, and the ratchet is the whole problem
+
+### 78.1 The shark finding, made precise
+
+The two type-384 hits were taken at player **centres (3115.1, 7289.1)** (moving right) and
+**(3309.0, 7273.3)** (moving left) -- both at platform altitude, in the same stretch of arena. The Boss was in
+`ai[0] == 1` (charging) on **both** ticks, not in the Sharknado state, so these are **lingering static hazards
+left behind by the `ai[0] == 3` phase** (which occupies 540 ticks of the run). The earlier `(3130, 7247)` and
+`(3159, 7287)` figures were projectile origins I had inferred rather than verified: the stream carries no
+projectile data, and those origins do not in fact agree with the contact frames. **The band was therefore
+rebuilt from the measured player centres**, x 3020-3410 and y 7180-7400, and the rule was: while airborne
+inside that band, climb out of the top (the arena floor is ~680 px further down, so climbing needs far less
+room than dropping; the refill guard takes precedence because an empty bar cannot climb).
+
+### 78.2 The measurement -- it worked exactly as designed, and it still lost
+
+```
+                     offset normal (§76)   + shark band (§78)
+ticks                      5937                 5543
+HITS                          9                   10
+body hits (npc 370)           7                    6
+projectile hits (384)         2                    4
+death                      TRUE                 TRUE
+npc contact                  12                   14
+dash-active ticks            63                   59
+
+projectile hits, offset normal : ticks 4137 (58 HP), 4197 (51 HP)   = 109 HP
+projectile hits, + shark band  : ticks 4883 (47), 5043 (58), 5145 (36), 5185 (38) = 179 HP
+```
+
+**The rule did precisely what it was built to do: the two original shark hits at 4137 and 4197 are gone, and
+no hit occurs anywhere near that corridor.** But **four new shark hits appeared at 4883-5185**, costing more
+than the two it removed (179 vs 109 HP), and body contacts rose 12 -> 14. Reverted.
+
+**This is the eighth consecutive local intervention to lose**, and the mechanism is now unmistakable.
+
+### 78.3 The ratchet, stated plainly
+
+```
+                                              HITS   damage   death tick
+§64 baseline (velocity normal)                   8       31       4598
+§55   personal-space gated on !inBeat            6       99         --
+§56.2 charge-normal deadband 0.2 -> zero         6      123         --
+§57   flip charge-normal tie-break               8       31       4598   (bit-identical no-op)
+§69   pinned-axis detector                       8       90       3760
+§70   unconditional lift on ascend beat          9      123       4488
+§71   keep the wing on charge beats              7      137       3646
+§76   offset-based charge normal (KEPT)          9      694*      5937   (*player HP, not boss)
+§78   shark-band avoidance                      10        ?       5543
+```
+
+Every intervention displaces the failure rather than removing it. Moving the escape timing moves *which*
+charge connects; avoiding the shark corridor moves *where* the sharks connect; forcing the wing open changes
+*grazes into lethal connections* (§72.3). The trajectory has roughly a fixed budget of exposure, and a local
+rule can only re-spend it. That is the signature of a system whose failure is **scheduled**, not
+**positional** -- exactly the conclusion §72.4 reached, now confirmed by eight measurements instead of one.
+
+### 78.4 Status
+
+- **Edit reverted.** Tree clean apart from untracked `tmp/`; builds clean; the kept §76 offset normal is
+  intact (`normalAX * dx` at `:1210`).
+- **Measured:** the shark band removed the two original type-384 hits and introduced four new ones
+  (179 HP vs 109 HP), with body contacts 12 -> 14 and total hits 9 -> 10.
+- **Established by eight live cap-length measurements:** no local movement rule improves the weak-wing fight;
+  each displaces the failure instead of eliminating it.
+- **Still not achieved:** `hits == 0` on either loadout at the cap. The objective remains **active and
+  incomplete**, and no native zero is claimed.
