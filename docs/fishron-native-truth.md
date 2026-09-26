@@ -4348,3 +4348,96 @@ the charge normal alone does not.
 - **Not achieved:** zero hits. Neither loadout has a native zero-hit full fight, and per §55.2 a short-run
   zero cannot be used as acceptance.
 - **No native zero over a full fight on either loadout.**
+
+## 56. Round 95: the charge-normal sign is decided by floating-point noise on an exact tie
+
+### 56.1 The defect
+
+`LatchChargeNormal` (`FishronWingScript.cs:1165-1178`) tries to choose which of the two perpendiculars to
+the locked aim takes the player further off the locked line by comparing two dot products:
+
+```csharp
+var aimX = dx / lockDistance;          // dx = player.Center.X - boss.Center.X
+var aimY = dy / lockDistance;
+var normalAX = -aimY; var normalAY =  aimX;
+var normalBX =  aimY; var normalBY = -aimX;
+var dotA = normalAX * dx + normalAY * dy;
+var dotB = normalBX * dx + normalBY * dy;
+var normalX = dotA >= dotB ? normalAX : normalBX;
+```
+
+But `(aimX, aimY)` is by construction **parallel** to `(dx, dy)`, so both perpendiculars are perpendicular
+to `(dx, dy)` and **both dot products are identically zero**. Measured for the actual lock geometries:
+
+```
+dx= -339.0 dy= -179.0  dotA=0.000000000000 dotB=-0.000000000000  -> picks A
+dx=  339.0 dy= -179.0  dotA=-0.000000000000 dotB=0.000000000000  -> picks B
+dx=  156.0 dy= -113.0  dotA=0.000000000000 dotB=-0.000000000000  -> picks A
+dx=   47.0 dy=  -84.0  dotA=0.000000000000 dotB=0.000000000000  -> picks A
+```
+
+So the sign is decided by **floating-point noise on an exact tie**. For the tick-928 lock of the tk 950
+contact (`dx = 339, dy = -179`) the tie broke to **B**, giving a normal of `(0.219, -0.976)`; the
+charge-horizontal branch then drives `vertical = -1` -- **upward**, toward a Boss that is above and
+charging down. The player needs to go **down** there (normal A, `(-0.219, 0.976)`). The observed trace
+confirms the consequence: on approach the player descends at only `vy` +2.9, and gravity takes it to about
++9.8 only after the lock, by which time the Boss's 15.1 px/tick charge has closed a 75 px perpendicular
+offset that needed 85 px.
+
+### 56.2 Two experiments, both regressions, both reverted
+
+Building on §55's method -- measure at 3000 ticks, not 1200 -- two candidate changes were tried and both
+were strictly worse than the committed baseline:
+
+```
+baseline (committed state machine), live weak wing, 3000 ticks:
+    HITS 4   boss damage 66   death False   dash-active 32   npc contact 6
+
+(A) personal-space branch gated on !inBeat  (round 94, §55):
+    HITS 6   boss damage 99   death False   dash-active 33   npc contact 9
+
+(B) charge-normal deadband removed (0.2 -> exact zero):
+    HITS 6   boss damage 123  death False   dash-active 31   npc contact 9
+```
+
+Both are reverted; `src/Chaite.Core/FishronWingScript.cs` is back to its committed state and the solution
+builds clean. Note that (B) is **not** evidence that the deadband is load-bearing: it exposed the broken
+sign from §56.1 more often, which is exactly why it made things worse. The two defects are coupled and must
+be fixed together.
+
+### 56.3 The correct rule
+
+The perpendicular to select is the one that **increases the perpendicular clearance** while the Boss
+closes, which is a relative-velocity question, not a position question:
+
+```
+choose n in {(normalAX,normalAY), (normalBX,normalBY)} maximising
+    (n.x - chargeDir.x) * n.x + (n.y - chargeDir.y) * n.y
+```
+
+equivalently `1 - (n . chargeDir)`, i.e. maximise the component of the player's escape that is
+anti-parallel to the locked charge. At the hover tick the Boss's charge velocity is not yet known, so this
+cannot be evaluated at latch time; the honest options are to latch the *aim* at the lock tick and choose
+the sign on the first tick where the Boss's charge velocity is observable, or to keep the
+position-perpendicular but break the tie with the sign of the normal that points away from the Boss's own
+future motion. Either way the discarded `0.2` deadband (see the note in (B)) should be revisited **only
+after** the sign is correct.
+
+This is directly testable with the instrument the round just validated: harvest a live route, apply the
+change, and replay -- any change that helps will show up as fewer hits in a tick-perfect replay of the same
+route. But note the important caveat §55 established: a live-route replay reproduces the *recorded*
+controls, so a state-machine change can only be evaluated by a fresh **live** run, with the replay used to
+inspect the failing frames.
+
+### 56.4 Status
+
+- **Reverted:** both round-94 and round-95 experiments. Tree clean apart from untracked `tmp/`; builds clean.
+- **Defect established by algebra plus measurement:** `LatchChargeNormal`'s perpendicular choice is an
+  exact tie broken by floating-point noise, and for the tk 950 lock it points the escape **into** the
+  Boss's charge.
+- **Measured baselines (live, weak wing, 3000 ticks):** committed state machine **4 hits / 66 damage /
+  no death / 6 npc contacts**.
+- **Also measured this round:** the replay of a live weak-wing route is tick-identical to its source over
+  all 1199 common ticks.
+- **Not achieved:** zero hits on either loadout over a full fight.
+- **No native zero over a full fight on either loadout.**
