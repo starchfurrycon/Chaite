@@ -8152,6 +8152,72 @@ the tool itself rather than left to prose.
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3
   through **both** channels. The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 113. Round 149: both vulnerabilities are BOUNDED windows -- and the weak wing's deficit is 3x the strong's
+
+### 113.1 The two arms fail in disjoint time windows
+
+Reading the hit ticks against the tick cap rather than the totals shows something the totals hid:
+
+```
+strong wing: hits [3259, 4271]        ZERO hits in the first 3258 ticks
+weak   wing: hits [1425, 1605, 1782]  ZERO hits after 1782
+
+weak wing boss damage: 48 at -maxticks 2000, 3000, 4000 AND 6000  -> literally nothing after 1782
+```
+
+So neither arm degrades with time. Each has **one bounded vulnerable window** -- the strong wing's is the
+mid-fight (3259-4271), the weak wing's is the opening 1800 ticks -- and is hit-free outside it. That is a stronger
+and more useful statement than "2 hits" and "3 hits", and it means the remaining work is narrow in both cases.
+
+### 113.2 The weak wing's three hits are one mechanism, and its climb ceiling is the cause
+
+All three have an identical anatomy. Taking `t=1425`:
+
+```
+  tick      dy      dx     pvy     bvy    pvx  wing eocD eocH  phase
+  1415   +58.3  +107.7  -7.41  +8.06  -11.19  122   15   -1   charge-ascend
+  1417   +30.6   +76.5  -4.10  +8.06   +9.00  120    9    0   <- dash-body-hit
+  1420    -6.5   +58.0  -4.40  +8.06   +8.70  117    6    0
+  1421   -19.0   +51.7  -4.50  +8.06   +8.60  116    5    0   <- i-frames END
+  1425   -70.3   +23.3  -4.90  +8.06   +6.98  112    1    0   <- HIT
+```
+
+The same shape at `t=1605` (dash 1597, arm 1601) and `t=1782` (dash 1774, arm 1778). In every one:
+
+- `bvy +8.06` against a weak-wing climb ceiling of **`pvy −4.90`** -- a **3.16/tick deficit**;
+- the dash's **4** collision i-frames are spent immediately, so they expire **4 ticks before** the boxes can meet;
+- `dx` collapses 76 -> 23 over the same eight ticks, so the dodge is running out of horizontal room as well.
+
+The weak wing's deficit is **three times the strong wing's** (`§110`: bvy 7.34 against `pvy −6.2`, ~1.1/tick). That
+is the quantitative form of the owner's own point that the two loadouts have different vertical mobility and
+therefore need two state machines: the strong wing escapes by about 22 px per charge and the weak wing by about
+**−13 px**, i.e. it loses ground on every single charge and only survives because the i-frames and the boss's own
+hover timing absorb the losses.
+
+### 113.3 Consequence: the failure is structural to the i-frame budget
+
+On all three weak-wing hits the dash-body-hit happens at `dy` between +30 and +39, which is **already inside the
+71 the boxes need**. So the dash does not prevent a contact -- it is a re-collision on an already-true overlap, and
+its only product is 4 i-frames that then expire 4 ticks before the boxes meet. Since the dash-body-hit fires at the
+moment the boxes are already touching, and contact damage resolves 8 ticks later, **no choice of dash timing can
+place 4 i-frames over a contact that resolves 8 ticks out**. This is the same conclusion §110 reached
+geometrically, now confirmed on the second loadout by direct measurement, and it is why §98's `CHAITE_DASH_DELAY`
+was strictly worse at every nonzero value.
+
+### 113.4 Status
+
+- **Established:** both arms have a **single bounded vulnerable window** and are hit-free outside it -- strong
+  3259-4271 with zero hits before 3258, weak 1425-1782 with zero hits after 1782 and boss damage flat at 48 across
+  every cap from 2000 to 6000.
+- **Established:** the weak wing's three hits are one mechanism: the dash-body-hit lands at `dy +30..+39` (already
+  inside the 71 the boxes need), its 4 i-frames expire 4 ticks before contact, and the closing rate is
+  `bvy +8.06` against a weak-wing ceiling of `pvy −4.90` -- a **3.16/tick deficit, about 3x the strong wing's**.
+- **Established:** no dash timing can cover a contact resolving 8 ticks after a dash-body-hit that grants 4
+  i-frames, on either loadout.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3
+  through both the script and route channels. The objective remains **active and incomplete**, and no native zero
+  is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
