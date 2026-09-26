@@ -5159,3 +5159,111 @@ recorded as a body contact while the other is not counted as an `npc contact` ev
   **active** so a following session can continue from §66.4's reproduction commands; it is **not** marked
   complete, because marking it complete would assert a native zero that was never measured.
 - Tree clean apart from untracked `tmp/`; local HEAD == `origin/main` == `1b4e255`.
+
+## 68. Round 107: the fatal late hits follow a PIN at the native world-border clamp
+
+### 68.1 The measurement
+
+One dense live weak-wing run at the cap (`CHAITE_PROBE_DENSE_FRAMES=1`, `-maxticks 6000`,
+`game-probe-dense6k-weak`) reproduced the §65.1 result **exactly** -- `ticks 4598`, `HITS 8`,
+`boss damage 31`, `death True`, `outcome FailedAfterDeath`, `npc contact 3`, `shield rows 48`,
+`dash-active 45` -- so the failure is deterministic and its per-tick data is available.
+
+Locating every hurt tick by the drop in `player.life`:
+
+```
+tick   lifeDelta  phase                              wingTime  controlJump  controlDown
+ 905       69     fishron-wing-refill                    0        False        True
+2433       89     fishron-wing-charge-horizontal         95        True         False
+3264       73     fishron-wing-charge-horizontal         91        True         False
+3792       83     fishron-wing-charge-descend           120        True         False
+3918       99     fishron-wing-charge-ascend            130        False        False
+4096       92     fishron-wing-charge-horizontal        130        False        False
+4151       86     fishron-wing-charge-ascend            130        False        False
+4209       41     fishron-wing-charge-descend           130        False        False
+```
+
+The last four hits are a **cluster**, and they share a signature: `wingTime` at maximum (130) -- the wing
+is **fully charged** -- while `controlJump` is **False**, so the wing is *available but not applied*
+(`Player.WingMovement` is gated on `controlJump`), and `vy` is frozen at `3.34` while `vx` is `0.00`.
+
+### 68.2 The pin
+
+Tracing the frames immediately before that cluster:
+
+```
+guc   pos x        pos y      plan.h  cL cR cU cD   vx      vy     wingTime
+4060  640.0000     7867.55      -1    1  0  0  1   0.00    2.72      130
+4064  640.0000     7882.44      -1    1  0  0  1   0.00    4.32      130
+4068  640.0000     7898.96      -1    1  0  0  1   0.00    3.34      130
+4072  640.0000     7912.31      -1    1  0  0  1   0.00    3.34      130
+4076  640.0000     7925.65      -1    1  0  0  1   0.00    3.34      130   (charge-horizontal-dash)
+4080  640.0000     7938.99      -1    1  0  0  0   0.00    2.32      130   (charge-horizontal)
+```
+
+**`x` is exactly `640.0000` and does not move for 30+ ticks while `plan.horizontal = -1` and
+`controlLeft = True`** -- the plan is pressing *into* the boundary, so the engine pins the position and
+zeroes the axis velocity. Across the whole 4599-tick run the player's `x` range is
+**`640.0000 .. 5978.2360`**, and `min x` is exactly `640.0000`, which is precisely
+`leftWorld + 640` -- the value `Player.BordersMovement` clamps to, exactly as documented at
+`FishronWingScript.cs:620-624`: *"the engine does NOT turn the player around at that clamp: it pins the
+position and zeroes that axis of the velocity, while the circuit goes on holding the outward input."*
+
+Two further pins of the same shape were located earlier in the fight by a grounded-segment scan
+(`wingTime == 0` and `vy >= 9.9` for >= 8 ticks): **ticks 3007..3065 (59 ticks)** and **ticks 3414..3489
+(76 ticks)**. §"the hit at tick 3019" already records the x=640 pin, and §65.1 now shows the same pin
+preceding the lethal cluster.
+
+### 68.3 The open question, stated precisely
+
+`ApplyArena` is supposed to prevent exactly this:
+
+```csharp
+var atLeftWall  = x <= _bandLeft;                              // :1257
+var atRightWall = x >= _bandRight;                             // :1258
+if (atLeftWall && horizontal <= 0) horizontal = 1;             // :1259
+else if (atRightWall && horizontal >= 0) horizontal = -1;      // :1260
+```
+
+It is called unconditionally at `:515`, and it is the **last** writer before `output.Horizontal = horizontal`
+at `:524` (only `DecideMovement` at `:535` runs after, and it does not move the axis when no policy is
+configured). So at `x = 640` with `horizontal = -1` it **should** have produced `horizontal = +1` -- yet the
+observed `plan.horizontal` is `-1`.
+
+Therefore one of these is false, and it is testable:
+
+1. `_bandLeft` is **not** 640. Its value is `worldLeft + BandEdgeMargin` with `worldLeft = 16f`
+   (`TerrariaFacade.cs:989`) and `BandEdgeMargin = 260f`, which gives **276** -- so `atLeftWall` would be
+   `640 <= 276` = **false**, and the guard never fires. That is the leading hypothesis and it is exactly the
+   case the comment at `:1230-1235` claims is handled ("`_bandLeft` is `worldLeft + BandEdgeMargin` = 640"),
+   i.e. **a stale constant in a comment that the code no longer satisfies**.
+2. Or `PlayerSnapshot.Position.X` is not the same quantity as the clamped native `position.X`.
+
+Note the band logic at `:651-665`: with `leftDistance <= rightDistance` it takes
+`_bandLeft = worldLeft + 260`, and the `< 400f` fallback at `:661` can additionally reset the band to the
+full `worldLeft..worldRight`. Either way `_bandLeft` sits far from 640, which is consistent with hypothesis 1.
+
+### 68.4 Next step, and why no edit was made
+
+The next step is a **single dense run that records `_bandLeft`/`_bandRight`** (or an equivalent
+`FishronWingScript` diagnostic) alongside `player.Position.X`, so the guard's actual arithmetic is observed
+rather than inferred. If hypothesis 1 is confirmed, the fix is to compare against the **native clamp**
+(`worldLeft + 640`) rather than `worldLeft + BandEdgeMargin` -- but that must be **measured**, because
+`FishronWingScript.cs:635-648` records that moving this edge inward was tried twice and both attempts scored
+**far worse** (0 wins in 20 against a 10-in-20 baseline; hit rate raised from ~1 per 470 to ~1 per 380
+ticks, shortening runs from 4000 to 3100), with the stated reason that removing the station desynchronises
+the W cycle from the Boss's attack clock. **No edit was made this round**, so the tree is clean.
+
+### 68.5 Status
+
+- Tree clean apart from untracked `tmp/`; the `docs/` update in this entry is committed; builds clean. The
+  §64 velocity-normal fix (`a46bca3`) is untouched.
+- **Measured:** 8 hits / 31 damage / death at 4598, bit-identical to §65.1; the last four hits cluster with
+  `wingTime 130` (wing charged) and `controlJump False` (wing not applied); and `x` is pinned at exactly
+  `640.0000` -- `leftWorld + 640`, the native border clamp -- for 30+ ticks before that cluster while the
+  plan commands outward (`horizontal = -1`, `controlLeft = True`). `min x` over the run is `640.0000`.
+- **Leading hypothesis (not yet confirmed):** `ApplyArena`'s `atLeftWall` test uses
+  `_bandLeft = worldLeft + BandEdgeMargin = 276`, so it never fires at the 640 clamp, and the comment at
+  `:1230-1235` asserting `= 640` is stale.
+- **Still not achieved:** zero hits on either loadout over a full fight. The objective remains **active and
+  incomplete**, and no native zero is claimed.
