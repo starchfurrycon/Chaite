@@ -7887,6 +7887,73 @@ plausible levers. The measured position is therefore:
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-eight controlled interventions, one
   improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 109. Round 146b: the `CHAITE_ROUTE_FILE` acceptance channel is now real, and both loadouts round-trip
+
+### 109.1 The objective's named criterion had no artifact behind it
+
+The objective names native tick-by-tick replay through `CHAITE_ROUTE_FILE` as the **sole acceptance channel**.
+Every route-replay artifact in the tree predates this session's circuit and is weak:
+
+```
+fixedroute     1200 / 6 hits / DEATH
+replay1..3     1200 / 6 hits / DEATH
+identreplay     600 / 3 hits          ord2replay 600 / 3    ordreplay 600 / 3    postreplay 600 / 3
+route-right    3000 / 5 hits
+```
+
+Meanwhile the script route reached 6000/2 and 6000/3. So the channel named as the criterion had **never carried
+the circuit that actually performs**, and the two strongest results existed only as live script runs. That gap is
+now closed: the committed circuit was harvested with `tools/harvest-native-route.py` into per-tick routes, and both
+were replayed natively.
+
+### 109.2 Both routes reproduce the script run exactly
+
+The harvester reads `plan` (not the facade output; its docstring records that `actualAtApplyReturn` does not
+round-trip because `MovementActionGate.ResolveJump` is not idempotent). `plan` coverage in the dense stream is
+5761/6000 rows with full density from tick 500 onward, so no neutral fillers were needed (`0 neutral fillers`).
+
+```
+route                      ticks  hits  death  valid  dmg  contacts   vs. live script run
+routes/strong-fishron-wings 6000   2     False  True   42   4          IDENTICAL (6000/2/False/42/4)
+routes/fairy-wings          6000   3     False  True   48   3          IDENTICAL (6000/3/False/48/3)
+```
+
+Both replayed routes ran the full `-maxticks 6000` cap, stayed alive, and returned `validBattle == True`. Both
+route files are committed (5999 tick-keyed rows each). **The acceptance channel the objective asks for now carries
+the delivered circuit**, and a reviewer can reproduce either result with:
+
+```
+tools/run-native-acceptance.ps1 -RunName <fresh> -Phase monitor -MaxTicks 6000 `
+  -RouteFile routes/strong-fishron-wings.csv -FormulaRoute fishron-strong-wing
+```
+
+### 109.3 A route is only half the configuration, and that is measurable
+
+The first replay was launched with `-RouteFile` but **without** `-FormulaRoute`. It silently ran the default
+(fairy/weak) loadout, and the same input stream then produced a completely different fight:
+
+```
+same route, strong-wing loadout : 6000 / 2 hits / no death / 42 dmg / 4 contacts
+same route, NO -FormulaRoute    : 2032 / 6 hits / DEATH    / 99 dmg / 8 contacts   (fairy-wing)
+```
+
+This is the objective's own point -- 弱翼与强翼竖直机动性不同，理应写两套 -- expressed as a measurement: per-tick
+directional input is **not** sufficient to specify the fight, because the wing decides how that input becomes
+motion. A route file therefore has to be paired with its loadout, and the pair is what round-trips. Any future
+acceptance run must pass both.
+
+### 109.4 Status
+
+- **Established:** the `CHAITE_ROUTE_FILE` channel, named by the objective as the sole acceptance criterion, now
+  exists for the committed circuit; both loadouts round-trip **exactly** to their live script results at the
+  6000-tick cap, alive, with `validBattle == True`; both route files are committed.
+- **Established:** a route alone does not determine the fight -- the same 5999-tick input stream gives
+  6000/2/no-death on the strong wing and 2032/6/DEATH on the weak wing -- so route and loadout must be passed
+  together.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout -- strong records 2 and weak records 3
+  through **both** channels. Thirty controlled interventions, one improvement (§97). The objective remains
+  **active and incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
