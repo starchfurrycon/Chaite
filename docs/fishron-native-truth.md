@@ -3791,3 +3791,87 @@ replay's world-update path is the target.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 49. Round 88: the movement code IS reached -- with `controlJump=False` while the plugin had just written it True
+
+### 49.1 The two measurements
+
+**(1) The movement methods are reached, and `JumpMovement` is the decisive one.** Adding a trace inside
+the already-installed `MotionBeforeJump`/`FlightBeforeWing` observers (no new instructions in
+`Player.Update`, so the IL validator is untouched), the same tick window, both modes:
+
+```
+REPLAY
+JUMP_ENTER t=239 guc=240 J=False jump=0  vy=0.00  py=7958
+JUMP_ENTER t=240 guc=241 J=False jump=0  vy=0.00  py=7958
+JUMP_ENTER t=241 guc=242 J=False jump=0  vy=0.00  py=7958
+JUMP_ENTER t=242 guc=243 J=False jump=0  vy=0.00  py=7958
+... identical through t=246, and no WING_ENTER line at all
+
+LIVE
+JUMP_ENTER t=239 guc=240 J=False jump=0  vy=0.00  py=7958
+JUMP_ENTER t=240 guc=241 J=True  jump=0  vy=0.00  py=7958   <-- reaches the movement code with the jump held
+JUMP_ENTER t=241 guc=242 J=False jump=15 vy=-6.48 py=7952   <-- airborne now
+JUMP_ENTER t=242 guc=243 J=False jump=0  vy=-6.34 py=7945
+```
+
+So §48's "different update path" answer is excluded: **`JumpMovement` runs every tick in replay too.**
+What differs is the value it sees. Live hands it `controlJump=True` and the body jumps (`jump=15`,
+`vy=-6.48`); replay hands it `controlJump=False` and the body never leaves the ground.
+
+**(2) The order inside one live tick, and that the staged restore is not the cause.** Observing the
+plugin's own `Runtime.Tick` call site (`TICK_OUT`) gives the order:
+
+```
+TICK_OUT   t=240 J=True  L=True  jump=0     <-- Runtime.Tick / ApplyPlan has written the controls
+JUMP_ENTER t=240 guc=241 J=True  jump=0     <-- movement code still sees True here
+TICK_OUT   t=241 J=False L=True  jump=15
+JUMP_ENTER t=241 guc=242 J=False jump=15
+```
+
+Note the two observers use different counters: `TICK_OUT t=N` and `JUMP_ENTER ... guc=N+1` are the
+**same frame**. So in live, the resolve-written `J=True` is still present when `JumpMovement` runs, and
+the jump fires. §48's conclusion that the staged restore overwrites the fresh write was this round's
+working hypothesis, so it was tested directly by disabling the restore body in
+`Runtime.ApplyPendingInput` and re-running the replay:
+
+```
+REPLAY with the staged restore disabled
+   guc=241 pos={'x': 640, 'y': 7958} vel={'x': 0, 'y': 0} ctlJump=False planJump=True
+LIVE (formula route) for comparison
+   guc=241 pos={'x': 640, 'y': 7951.52344} vel={'x': 0, 'y': -6.476667} ctlJump=True planJump=True
+```
+
+**Disabling the restore changes nothing** -- replay still measures `controlJump=False` at the movement
+code, the plan still asks for `planJump=True`, and `pos`/`vel` are still exactly frozen. The restore is
+not the overwriter, and that hypothesis is withdrawn.
+
+### 49.2 Where the defect now sits
+
+Reading (1) and (2) together, in replay mode the plan **is** resolved (`planJump=True`), the plugin's
+`ApplyPlan` **does** write `controlJump` (`§47 C_RESTORE postJ=True`), and `JumpMovement` **is** reached
+-- but it is reached with `controlJump=False`. So in replay the write is undone **between `ApplyPlan`
+returning and the movement code reading it, inside the same `Player.Update`**, and the only actors in
+that window are the engine's own control handling and the plugin's `ValidatePendingMobility` hook. The
+engine's entry-time `ResetControls` runs *before* `ApplyPlan` (which is why `D_ENTRY` is False in both
+modes), so what remains is a clear that happens after the plan's write and before `JumpMovement`.
+Locating it is a bounded, one-frame question and is the next measurement: log the control value at the
+existing `MotionAfterInput` site (immediately after the production `ApplyPendingInput` and therefore
+after the plan write) in replay and compare it with `JUMP_ENTER` of the same frame. If it is already
+`False` there, the clear is between `ApplyPlan` and that point.
+
+### 49.3 Status
+
+- **Tree clean** apart from the untracked `tmp/`; all diagnostics and the restore experiment reverted,
+  solution builds clean.
+- **Established:** `JumpMovement` is reached every tick in replay (with `controlJump=False`) and in live
+  (with `controlJump=True` on the frame that jumps); the plan asks for the jump in replay
+  (`planJump=True`); disabling the staged restore does not change replay at all.
+- **Corrected:** §48's candidate "the movement code is not invoked in replay" is refuted, and this
+  round's own "the staged restore overwrites the fresh write" hypothesis is refuted by the restore-off
+  experiment.
+- **Next:** read the control value at `MotionAfterInput` (after the plan write, same frame) in replay, to
+  bound the clear between `ApplyPlan` and the movement code.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit.
+- **No native zero over a full fight on either loadout.**
