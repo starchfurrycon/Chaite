@@ -202,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             # the whole point of the tick-keyed form.
             controls = NEUTRAL
             gaps += 1
-        lines.append("{},{},{},{},{}".format(tick, *controls))
+        lines.append("{},{},{},{},{},{}".format(tick, *controls))
 
     output = args.output
     if not output:

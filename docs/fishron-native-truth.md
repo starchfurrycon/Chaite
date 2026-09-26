@@ -3956,3 +3956,82 @@ and compare its post-state with `JUMP_ENTER` of the same frame.
 - Weak wing, policy off, guard 0: **4 hits at 3000 ticks**.
 - The dense route replays to **6 hits and a death** against the recorded 1 hit.
 - **No native zero over a full fight on either loadout.**
+
+## 51. Round 90: the harvest writer dropped the dash channel -- the replay body now moves
+
+### 51.1 The bug that froze every replay
+
+The route writer built each row with **five** format placeholders for **six** controls
+(`tools/harvest-native-route.py:205`):
+
+```
+lines.append("{},{},{},{},{}".format(tick, *controls))
+```
+
+`controls` is `(direction, jump, up, down, dash)`
+(`harvest-native-route.py:78-82`), so `.format(tick, *controls)` supplied six arguments to five slots and
+**the trailing `dash` value was silently discarded from every harvested route**. The documented format is
+`tick,direction,jump,up,down,dash` (`:17`), and the dash count was even computed and printed by the
+harvester (`controls ... dash=11`) -- while never being written. Measured: the old
+`tmp/route-tickaxis.txt` has **5 columns and no dash field at all**.
+
+That is why no replay ever moved. In the plugin, `plan.Dash` feeds
+`_validatePendingDash` (`TerrariaFacade.cs:3744-3756`), and when a dash candidate cannot be certified
+`ValidatePendingMobility` rejects and calls `ResolveRejectedPendingMobility` -> `NeutralizePendingInput`
+(`TerrariaFacade.cs:3939-3949`), which **zeroes every control and every captured control**:
+
+```
+E_VALIDATE_IN  t=241 J=True  L=True
+F_VALIDATE_OUT t=241 J=False L=False
+```
+
+That single clear, inside the interval §50 bounded, is what §49 measured as
+`MotionAfterInput J=True` -> `MotionBeforeJump J=False`, and it is why the body sat at `(640, 7958)` with
+`velocity` exactly `(0,0)` in every replay while the live run flew.
+
+### 51.2 The fix and its measured effect
+
+With the sixth placeholder restored:
+
+```
+controls        : left=271 right=636 jump=432 dash=11
+route file      : tmp\route-fixed.txt   (6 columns, 11 nonzero dash rows)
+```
+
+Replaying that route (1200 ticks, weak wing):
+
+```
+ticks     : 1200
+HITS      : 6
+death     : True
+player x range 640 .. 2666.11     (was frozen at 640)
+player y range 7841.96 .. 7958    (was frozen at 7958)
+```
+
+**The replay body moves for the first time.** The frozen-body defect -- open since §35 and investigated
+through §36, §37, §41, §43, §45, §47, §49 and §50 -- is explained and removed. The validator no longer
+neutralizes after the first frame (`E_VALIDATE_IN t=242 J=False L=True` -> `F_VALIDATE_OUT t=242 J=False
+L=True`, controls preserved), whereas with the old 5-column route it neutralized on every tick.
+
+### 51.3 What remains
+
+The replay is now *a* moving replay, not yet the *recorded* one: the source live run recorded **1 hit**
+and this replay of its own route gives **6 hits and a death**. So the acceptance channel still diverges
+from the recorded fight. The next step is the one §34 planned and never completed: re-harvest from a
+fresh dense live run **with the fixed writer** and compare the replay against the live run tick by tick
+(positions, controls, dash episodes) to find what differs now that the body actually moves. The dash
+channel is the prime suspect, because the recorded run had 11 dash ticks and the dash interacts with the
+same validator that was previously zeroing everything.
+
+### 51.4 Status
+
+- **Fixed and kept:** `tools/harvest-native-route.py:205` (sixth placeholder). All plugin diagnostics from
+  this round are reverted; solution builds clean; `git status` shows only the harvest fix and untracked
+  `tmp/`.
+- **Established:** the harvested route format was missing the dash channel, which armed the plugin's
+  pending-dash validation in replay, which in turn neutralized every control and captured control on
+  every tick. With the dash channel restored the replay body moves.
+- **Not yet achieved:** the replay does not yet reproduce the recorded fight (1 hit live vs 6 hits and a
+  death replayed). Weak wing, policy off, guard 0 still measures **4 hits at 3000 ticks**.
+- **Next:** re-harvest from a fresh dense live run with the fixed writer and diff replay vs live per tick.
+- **No native zero over a full fight on either loadout.**
