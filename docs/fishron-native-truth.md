@@ -2817,3 +2817,74 @@ separates "the write did not persist" from "the write persisted and the native u
   death**, so the acceptance channel is still not a faithful replayer.
 - `standoff-dense`'s zero-hit artifact remains disqualified: older build, 18 damage over 4000 ticks.
 - **No native zero over a full fight on either loadout.**
+
+## 36. Round 75: in replay mode the controls are cleared before `Player.Update`
+
+### 36.1 The A/B §35 asked for
+
+Section 35 left two possibilities: the plan write does not persist, or it persists and the native
+update ignores it. A one-shot log at the **tick entry** (inside `BeforeUpdate`, which runs after the
+previous tick's `Player.Update` returned and before this tick's native update) settles it. Same route,
+same tick, two runs:
+
+```
+t=241 LIVE    L=True R=False J=True D=False Dash=False vx=0.00 vy=-6.48 px=640 py=7952
+              lastWrite L=True J=True replayFrame=-1 hasReturn=True
+              whoAmI=0 active=True dead=False CCed=False frozen=False webbed=False stoned=False
+              gravDir=1 wingTime=130 wingsLogic=6 jump=15 releaseJump=False mapFull=False gameMenu=False
+              velocity={X:0 Y:-6.476667} sameRef=True
+
+t=241 REPLAY  L=False R=False J=False D=False Dash=False vx=0.00 vy=0.00 px=640 py=7958
+              lastWrite L=True J=True replayFrame=0 hasReturn=True
+              whoAmI=0 active=True dead=False CCed=False frozen=False webbed=False stoned=False
+              gravDir=1 wingTime=130 wingsLogic=6 jump=0 releaseJump=True mapFull=False gameMenu=False
+              velocity={X:0 Y:0} sameRef=True
+```
+
+Every state flag that could explain a refusal to move is **identical**: the same player object
+(`sameRef=True`, `whoAmI=0`), `active=True`, and `dead`/`CCed`/`frozen`/`webbed`/`stoned` all false,
+with the same `gravDir`, `wingTime` and `wingsLogic`, and `mapFullscreen`/`gameMenu` false. The one
+difference that matters is at the top: **`lastWrite J=True` but the tick entry reads `J=False`**. In
+the replay the control the plugin just wrote is **gone** by the time the tick begins, whereas in the
+live run it survives and produces `vy=-6.48`.
+
+The native jump state confirms which run actually executed the jump: live has `jump=15` (mid-jump,
+`releaseJump=False`) while the replay has `jump=0` (`releaseJump=True`), i.e. **the replay never
+entered the jump at all**.
+
+### 36.2 What this rules out and what it establishes
+
+- It is **not** the write: `lastWrite` is true in both runs, and §35 already showed the write reaches
+  the player's own fields after `ApplyPlan` returns.
+- It is **not** the jump gate: §35 bypassed `MovementActionGate.ResolveJump` bit-identically, and the
+  same clearing would remove a gate-free `controlLeft` too.
+- It is **not** a movement-state lock: every refusal flag is identical between the runs.
+- It is **not** a terrain or embedding effect: the body is at the same `py` with `vy=0` in both.
+
+**It is the persistence of the control fields across the native update.** In replay mode something
+between the plugin's write and the next tick's `Player.Update` clears the controls, so the body is
+never driven; the live path keeps them and the body moves. This also explains the §35 observation
+that horizontal motion fails identically (`vx=0.00`, `x` frozen at 640 while live reached 845) and
+that `wingTime` stays pinned at its full 130 -- a body that is never driven never spends flight.
+
+### 36.3 The candidate
+
+`RouteReplay` does not write player fields at all; it only rewrites the *plan*, which the facade then
+applies exactly as in the live run. The difference in mode is therefore not the write path but the
+per-frame input path that runs between frames. `Player.Update` contains a control-reset block
+(`Player.cs:25446`) but it is gated on `CCed`, which is false in both runs, so it is not this. The
+live run's control survives to the tick entry while the replay's does not, so the next step is to log
+the controls at three points inside one replay frame -- immediately after `ApplyPlan` returns, at the
+top of `Player.Update`, and immediately after it -- to name the exact instruction that clears them.
+
+### 36.4 Status
+
+- **Diagnostics reverted**; the §34 fixes (`actualAtApplyReturn` on every row, `fresh`, and
+  `gameUpdateCount`) are intact and the tree is clean.
+- **Established:** in replay mode the written controls do not survive into `Player.Update`, on a
+  channel with no gate and with every refusal flag identical to the live run.
+- Weak wing, policy off, guard 0: **4 hits at 3000 ticks**; the same configuration at 600 ticks
+  reports 0 hits with the Boss at full life, which is a run-length artefact and not a solution.
+- The dense route replays to **6 hits and a death** against the recorded 1 hit, so the acceptance
+  channel is still not a faithful replayer.
+- **No native zero over a full fight on either loadout.**
