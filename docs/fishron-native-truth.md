@@ -4290,3 +4290,61 @@ tick-perfect, any such change can be validated by a single replay without re-run
 - **Not achieved:** zero hits -- weak wing still takes exactly 1 contact in 1200 ticks, the Boss is not
   killed, and the strong wing has no equivalent verified full fight.
 - **No native zero over a full fight on either loadout.**
+
+## 55. Round 94: a 1200-tick zero that did not hold -- the charge-beat priority was a regression
+
+### 55.1 The hypothesis
+
+§54 localized the single remaining weak-wing contact to **tick 950**, and the prehit trace showed why the
+perpendicular dodge did not save it. At the lock (about tick 928) the player was 370 px out with 329 px of
+that horizontal, so the escape rule correctly classified it as "far enough to run flat". The
+personal-space branch then took over at tick 934 (separation 193 < `PersonalSpace` 200) and latched its own
+escape, and the horizontal gap collapsed 329 -> 45 px by tick 944 -- far inside the 85 px contact
+threshold. So the hypothesis was: **a locked charge must keep its perpendicular dodge, and the
+personal-space latch must not override it.**
+
+The change gated the personal-space branch on `!inBeat`, where `inBeat` is
+`state == 1 || state == 6 || state == 11 || _chargeNormalSequence >= 0`
+(`FishronWingScript.cs:885-900`).
+
+### 55.2 The measurement, and the trap it exposed
+
+```
+1200 ticks, live, weak wing, fishron-fairy-wing, WITH the change:
+   HITS 0   boss damage 0   death False   shield rows 11   dash-active 11   npc contact 0
+   "ACCEPTED: zero hits in the native engine."
+
+3000 ticks, live, weak wing, fishron-fairy-wing, WITH the change:
+   HITS 6   boss damage 99  death False   shield rows 42   dash-active 33   npc contact 9
+
+3000 ticks, live, weak wing, fishron-fairy-wing, change REVERTED (baseline):
+   HITS 4   boss damage 66  death False   shield rows 38   dash-active 32   npc contact 6
+```
+
+Two conclusions, both important:
+
+1. **The 1200-tick zero was a window artefact, not a solution.** The run was genuinely engaged (11 dash
+   starts, 0 npc contacts, `validBattle=True`, `boss seen=True`) and would have been reported as
+   `ACCEPTED` by `run-native-acceptance.ps1`, which is exactly the hazard the project's own warning about
+   short runs describes. A zero is only evidence once it survives a full fight; a 1200-tick zero followed
+   by 6 hits at 3000 ticks is evidence of a quiet window.
+2. **The change is a regression and has been reverted.** At the comparable 3000-tick length it is strictly
+   worse than the baseline (`HITS 6 / damage 99` against `HITS 4 / damage 66`), and it also costs more
+   contacts (9 against 6). Giving the charge beat priority over the personal-space escape removes a
+   defence that was doing real work in the frames where the body is genuinely on top of the player.
+
+So §54's reading of tick 950 was correct about *that* contact but wrong about the remedy: the
+personal-space latch is not simply fighting the charge normal, it is the fallback that catches the cases
+the charge normal alone does not.
+
+### 55.3 Status
+
+- **Reverted:** the `inBeat` gate. `git status` shows no tracked modification; `src/Chaite.Core/FishronWingScript.cs`
+  is back to its committed state.
+- **Measured baselines (live, weak wing, 3000 ticks):** **4 hits / 66 damage / no death / 6 npc contacts**
+  with the committed state machine; 6 hits / 99 damage / 9 contacts with the reverted experiment.
+- **Measured:** replay of a live weak-wing route is tick-identical to its source run over all 1199 common
+  ticks, and the live weak-wing formula route records 1 hit in 1200 ticks.
+- **Not achieved:** zero hits. Neither loadout has a native zero-hit full fight, and per §55.2 a short-run
+  zero cannot be used as acceptance.
+- **No native zero over a full fight on either loadout.**
