@@ -2555,7 +2555,49 @@ makes the fight worse, and it is not where the hits come from. One plausible rea
 frozen frames are being spent near the arena floor where staying put happens to be safe for the
 charges that occur there, and the forced jump moves the body into worse positions.
 
-### 32.4 Status
+### 32.5 Correction: measured against the Boss's actual path
+
+The 32.1 figures used a nominal 476 px charge range and the aim vector sampled at the lock, and two
+of the five hits came out marginally outside that nominal capsule. Re-running the test with **no
+assumed range** -- projecting each player position onto the segment the Boss actually flew, from its
+position at the lock to its position at the hit -- removes the discrepancy and makes the picture
+sharper:
+
+```
+ hit  boss travelled   min centre distance   min perp distance to the flown path
+  1      425.0 px            82.0                    60.9
+  2      563.5 px            56.7                    53.8
+  3      306.0 px            40.0                     0.0
+  4      323.0 px            27.0                     0.6
+  5      289.0 px            35.2                     1.2
+```
+
+Two corrections to 32.1 fall out of this:
+
+- The charge **does not travel a fixed 476 px** in practice: the recorded flights are 289-563 px,
+  because the Boss's own speed and the player's displacement both change the geometry. The 476 px
+  figure is the nominal travel at the locked speed and must not be used as a hard range.
+- The **lateral clearance needed is about 85 px**, and it is a measured data-derived threshold taken
+  from hitbox overlap rather than a derivation of the capsule: `boss 150x100` against
+  `player 20x42` gives exactly `|dx| < (150+20)/2 = 85.0` and `|dy| < (100+42)/2 = 71.0`, and every
+  one of the five hit frames satisfies both. Minimum centre distance at closest approach is 27-82 px,
+  inside the contact box in every case.
+
+**The criterion is the perpendicular distance to the flight path, and the circuit has never achieved
+even 61 px of it.** `personal-space` fires at `separation < PersonalSpace` (about 200 px) and escapes
+on `AwayFromBossAxis(gap)` -- a purely **horizontal** exit -- and the measured lateral result is
+60.9 and 53.8 px on the two hits that used it, and essentially zero on the three that did not. A
+purely horizontal exit from a charge that is itself aimed nearly horizontally is parallel to the
+threat, not perpendicular to it, which is precisely the failure the owner's rule warns about: the
+escape must be the **normal** to the locked aim, and for a near-horizontal charge the normal is
+near-vertical.
+
+This is the quantified target for the next round: the escape must be the perpendicular to the locked
+aim (which `LatchChargeNormal` already computes correctly), and it must reach **>= 85 px of lateral
+clearance** before the charge arrives, which requires a vertical share that the horizontal-only
+`personal-space` exit cannot supply.
+
+### 32.5 Status
 
 - **Reverted:** the stall breaker and `CHAITE_STALL_BREAK`.
 - **Kept:** one pixel of spawn clearance (section 31); the refill guard.
