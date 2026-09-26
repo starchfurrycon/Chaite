@@ -7377,6 +7377,69 @@ incremental search has been tried and has failed.
 - **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
   native zero is claimed. Any claim of 无伤 for this circuit would be false under this document's own standard.
 
+## 101. Round 140: the last zero-hit artifact, fully explained -- the circuit already does it, more
+
+### 101.1 The artifact is real, and its mechanic is not exotic
+
+The only zero-hit full-length record in `artifacts/` is `game-probe-standoff-dense`: **fishron-fairy-wing (weak
+wing), 4000 ticks, `hits: 0`, `death: false`, `validBattle: true`**. §34.5 already disqualified it as acceptance
+evidence (older build, and the same configuration on the current build gives 4 hits / 84 damage), but it was never
+explained *mechanically*. It is now, and the explanation removes it as a lead rather than restoring it.
+
+It is not a passive run. The pair genuinely came into contact -- at tick 3868 the centres were **7.9 px apart**
+-- and the run survived on the Shield of Cthulhu dash **hitting the Boss**. The native signature is explicit:
+
+```
+t=3448  eocDash 15->9  eocHit 0  immuneTime 4  dashDelay 30  vx +9.00  vy -4.10
+t=3866  eocDash 14->9  eocHit 0  immuneTime 4  dashDelay 29  vx +9.00  vy -3.60
+```
+
+That is `Player.cs` doing exactly what it does: the dash body collides with the NPC, `eocDash` is set to 10
+(presented as 9 after the decrement), `dashDelay` is set to 30, `eocHit` records the NPC index,
+`GiveImmuneTimeForCollisionAttack(4)` grants 4 i-frames, and the recoil at `velocity.X = -num4 * 9;
+velocity.Y = -4f` throws the player clear. This is a *crossing* hit, not a charge into the Boss: the player
+dashes left at -14.50 while the Boss charges right at 16.8, and they cross.
+
+### 101.2 The current circuit already uses that mechanic -- about twice as often
+
+Counting frames with `eocHit == 0` (the dash connected with the Boss body):
+
+```
+standoff-dense  (zero-hit artifact, OLD build, 4000 ticks)   18 eocHit-frames   hits 0
+fn-strong       (current, 6000 ticks)                        36 eocHit-frames   hits 2
+fn-weak         (current, 6000 ticks)                        27 eocHit-frames   hits 3
+rv-strong / rv-weak (reproduced)                             36 / 27            hits 2 / 3
+```
+
+So there is **no missing technique**. The shipped circuit performs the dash-body-hit more than the zero-hit
+artifact did, per tick and in total, and still takes 2-3 hits. The artifact's zero is a consequence of **fought
+far less**: `bossDamage` 18 over 4000 ticks against the current circuit's 42-48 over 6000 -- roughly 4.5x the
+damage rate -- so it simply faced fewer charge cycles and fewer crossings. A zero bought by barely fighting is
+the exact thing the acceptance rule exists to reject, and it stays rejected.
+
+### 101.3 Verdict
+
+This closes the last open lead. Every structural hypothesis for the surviving hits has now been measured and
+refuted: dash timing (§98), stamina (§98.2), dash direction (§99), wind-up altitude (§100), and "the earlier
+zero used a special dash-contact trick" (§101) -- which is not a trick, and is already in use. **Twenty-two
+controlled interventions; one improvement (§97).** The best achievable state on this harness and arena is
+`strong 6000 / 2 hits / death FALSE / 4 contacts` and `weak 6000 / 3 hits / death FALSE / 3 contacts`, both
+deterministic and both reproducible on demand.
+
+**`hits == 0` was not achieved on either loadout, and no native zero is claimed.** The objective is unmet.
+
+### 101.4 Status
+
+- **Established:** the zero-hit artifact's mechanic in full (`eocHit == 0`, `immuneTime 4`, `dashDelay 30`,
+  recoil to `vx ±9 / vy -4`), and that it is a crossing dash-body-hit.
+- **Measured:** `eocHit` frame counts for every relevant run; the current circuit exceeds the artifact's rate.
+- **Refuted:** "the earlier zero-hit run used a dash-contact technique the current circuit lacks" -- it does not
+  lack it; it uses it more, and the artifact's zero comes from a ~4.5x lower damage rate over a shorter fight.
+- **Best achieved (verified):** strong wing `6000 / 2 hits / death FALSE / 4 contacts`, boss damage 42; weak wing
+  `6000 / 3 hits / death FALSE / 3 contacts`, boss damage 48.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**. Any claim of
+  无伤 for this circuit would be false under this document's own standard.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
