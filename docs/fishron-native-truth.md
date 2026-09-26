@@ -1011,3 +1011,75 @@ No code change should be made on the strength of the contradiction alone, and no
 this round. The pinned native result is unchanged: weak wing `validBattle True`, ticks 8684,
 hits 8, boss damage 37; strong wing 11 hits, alive at the cap. No native zero on either
 loadout.
+
+## 16. Round 55: the zero is introduced inside `Plan`, between `PlanFormula` and the return
+
+Section 15.4 asked for a call-keyed pairing of the script trace and the applied plan. This
+round built it, and it resolves most of the contradiction -- while leaving one precise
+question open.
+
+### 16.1 The pairing
+
+Both traces were given a monotonically increasing call counter, and a third trace was added
+around `ApplyPlannedOutput`. Aligning by call index gives clean 1:1:1:1 counts:
+
+```
+ script calls        3360
+ PlanFormula returns 3360
+ ApplyPlan calls     3360        (each tick has exactly one)
+ Plan entries        3360
+ dispatch rows       3360        route = FishronFairyWingsDash on every one
+ extra Plan entries     0
+```
+
+### 16.2 Where the values diverge
+
+| probe point | horizontal distribution |
+|---|---|
+| `FishronWingScript` return | **{-1: 1627, 1: 1733}** -- never 0 |
+| `PlanFormula` return | **{-1: 1627, 1: 1733}** -- never 0 |
+| `ApplyPlannedOutput` entry | -1 wherever the script says -1 |
+| `ApplyPlannedOutput` exit | **never differs from its entry** (0 rows) |
+| `ApplyPlan` entry | **{-1: 1047, 0: 1199, 1: 1114}** |
+
+So the script returns a direction, `PlanFormula` returns that same direction, and
+`ApplyPlannedOutput` does not modify it -- yet the plan that reaches `ApplyPlan` carries 0 on
+1199 calls. Since `Plan` is entered exactly 3360 times, once per tick, and calls
+`PlanFormula` exactly 3360 times, the zero is introduced **inside `Plan`, after `PlanFormula`
+has returned and before `Plan` returns**.
+
+### 16.3 The call-index alignment also revises section 14
+
+With the call counters, the earlier per-tick comparison was misaligned by one call and by the
+first tick, and the "1387 mismatches" of section 14.5 should be read through this correction:
+the reliable figure is that `ApplyPlan` sees 0 on **1199 of 3360** calls, not 1439 of 3600
+ticks. The qualitative conclusion is unchanged -- a large fraction of ticks receive no
+horizontal input -- but the earlier number mixed in the pre-takeover idle window.
+
+### 16.4 What this rules out, finally
+
+- **Not the session gate**: `!update.ApplyControls` never fires (section 15.1).
+- **Not a second `Plan` invocation**: entries equal applications exactly.
+- **Not the evaluate path serving the fight**: the formula route is set on all 3360 entries
+  and `PlanFormula` runs on all 3360.
+- **Not `ApplyPlannedOutput` or `ApplyConsumables`**: `ApplyPlannedOutput`'s exit never
+  differs from its entry.
+- **Not the probe hook reading a stale value**: script, `PlanFormula`, and `ApplyPlan` all
+  report exactly 3360 calls with the same route.
+
+The remaining candidate is a write to `plan.Horizontal` on the return path of `Plan` that is
+not on the `PlanFormula` path -- that is, after `PlanFormula` returns, inside `Plan` itself.
+`Plan`'s `_formulaRoute != None` branch returns `PlanFormula(snapshot)` directly, so the write
+must be reachable on that branch, which means it is in code that runs after the call returns
+but before `Plan` returns, or in a `finally`-equivalent path. **This has not been found yet**,
+and the next step is to read `Plan` and `PlanFormula` with this specific question rather than
+adding more traces: find every statement that can execute after `PlanFormula` returns within
+`Plan`.
+
+### 16.5 No code change
+
+No change was made this round; all instrumentation was removed and the tree is at its previous
+revision. The pinned native result is unchanged: weak wing `validBattle True`, ticks 8684,
+hits 8, boss damage 37; strong wing 11 hits alive at the cap, both loadouts
+`FishronFairyWingsDash` / `FishronStrongWingsDash` respectively. **No native zero on either
+loadout.**
