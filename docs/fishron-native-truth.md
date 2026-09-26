@@ -7759,6 +7759,50 @@ circuit, because the refill descend and the charge escape are the same mechanism
 - **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. Twenty-seven controlled interventions, one
   improvement (§97). The objective remains **active and incomplete**, and no native zero is claimed.
 
+## 107. Round 145b: the two remaining knobs are inert, not unexplored
+
+An inventory of every `CHAITE_*` knob `FishronWingScript.cs` reads leaves exactly two that this session had not
+swept: `CHAITE_LOOP_LEG_CHARGES` and `CHAITE_LOOP_BEAT_PATTERN`. Both look like the "formulaic play" the objective
+asks for, so they were the last plausible new axis. **Neither can act on the current circuit**, which is why no
+run was spent on them.
+
+- **`CHAITE_LOOP_LEG_CHARGES`** defaults to **0** (`ReadLegCharges` returns 0 for empty or `< 1`) and its branch,
+  `else if (_legCharges > 0 && _legDirection != 0)`, sits **below** `else if (_chargeNormalSequence >= 0)` in
+  `ChargeEscape`. On a locked charge the perpendicular latched normal wins and the last two branch bodies agree,
+  so the leg schedule never reaches the output. Contrast the refill guard in §104, which *was* live at its default
+  of 0 -- being a default is not the same as being inert, and the two had to be checked separately.
+- **`CHAITE_LOOP_BEAT_PATTERN`** does run (`_patternActive` branch, line 995), but it is **shadowed twice**: first
+  by the anti-stall floor at line 962 (`OnGround || |vx| < EscapeSpeedFloor` forces `away`), and then by the
+  same `_chargeNormalSequence` branch. The floor is not incidental -- it is the fix the owner's own speed mandate
+  required ("横向的速度需要一直保持 ... 几乎是静止状态"), and its interaction with a neutral beat is already
+  measured in place: the comment at line 968 records the hit at **t=3019** where a neutral pattern charge left
+  `horizontal = 0` for a whole approach while the Boss descended, and the player sat at `plX 640` with `vx 0.00`.
+
+So the beat pattern *was* explored on this circuit and is documented as failing; the leg schedule is structurally
+unreachable. **There is no un-swept axis left.** The search space this session has covered:
+
+```
+horizontal geometry   pin 640 (measured optimum; 2400 is not a wall)      §78
+dash suppression      route-dependent 90/50, sharp optimum                §97  KEPT
+dash timing           every nonzero delay worse                           §98
+stamina scheduling    guard 0 unique optimum; grid chaotic; gated worse   §104-106
+escape direction      facing-along post-lock and pre-lock both worse      §99, §102
+dash presence         removing it kills both arms, boss damage 0          §102.3
+altitude              hold/lift/min-altitude all refuted                  §83 ungated, §100, §55-57
+co-location lift      strong-wing only; ungated kills the weak wing       §83  KEPT
+beat pattern          shadowed; neutral beat measured to fail (t=3019)     line 968
+leg schedule          _legCharges 0, branch shadowed                       §107
+```
+
+### 107.1 Status
+
+- **Established:** the last two un-swept knobs cannot affect the current circuit -- one is disabled and branch-
+  shadowed, the other is shadowed by the anti-stall floor and by the latched charge normal, with its failure
+  already measured at t=3019.
+- **Unchanged:** no code change; committed behaviour identical.
+- **Not achieved:** `hits == 0` at the 6000-tick cap on either loadout. The objective remains **active and
+  incomplete**, and no native zero is claimed.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
