@@ -1725,3 +1725,122 @@ disabled, when the script's own output actually reaches the engine.
 - Weak wing, script only: **6 hits, death at 2466 ticks.** Weak wing, policy: 8684 ticks / 8 hits
   / death. Strong wing, policy: 11000 / 11 / alive. **No native zero over a full fight on either
   loadout.**
+
+## 23. Round 62: the kill mechanism, a refill guard, and an environment trap
+
+This round found the actual mechanism that ends the script-only fight, fixed it, and in the
+process found why several of this session's measurements disagreed with each other.
+
+### 23.1 The kill mechanism: airborne with an empty bar, never landing
+
+Trace of the hit at tick 533, script only, around the moment the charge locks (the boss enters
+state 1 at tick 518 with `ai[1]=0, ai[2]=0`, which is the native lock of section 17.1):
+
+```
+ tick  st  ai2  dy      pvx      pvy    wingTime  phase
+  517   0   29  -74.3   +6.71   +0.22      0      precharge-jump
+  518   1    0  -67.1   +6.76   +0.35      0      precharge-jump
+  519   1    1  -59.8  -14.50   +0.48      0      charge-horizontal
+  523   1    5  -29.2  -13.26   +1.02      0      charge-horizontal
+  533   1   15   +5.5   -4.50   -3.50      0      charge-horizontal   <- hit
+```
+
+Two things are visible and they are the whole failure:
+
+1. **`wingTime` is 0 on every row**, from tick 508 through 533. The player is airborne
+   (`sliding` false) the entire time, so it never lands and never refills.
+2. **`pvy` is essentially zero** (-0.98 to +1.02 while climbing, then gravity). With an empty bar
+   the player has no vertical authority at all, so the latched normal -- which wanted to climb --
+   could not be executed. `dy` drifts from -74 to +5 under gravity alone while the boss closes.
+
+The player is not being out-positioned; it is **out of fuel and unable to refuel**. Holding
+`controlJump` with an empty bar keeps `vy` near zero (the wings stay deployed), so it hovers
+instead of falling to a platform that would restore the bar.
+
+### 23.2 The refill guard
+
+Added at the end of `Tick`, after the branch has chosen its vertical:
+
+```csharp
+if (player.WingTime <= 0f && !player.OnGround && vertical < 0)
+{
+    vertical = 1;
+    phase = "fishron-wing-refill";
+}
+```
+
+Climbing is suppressed only while the bar is empty and the player is airborne. The descend
+branches are untouched, and a grounded player is untouched, so the takeoff that raises
+`output.Jump` and the landing that refills the bar both still happen. Releasing jump is what lets
+the fall occur; `Player.cs:26992` restores `wingTime` on the landing tick.
+
+Measured effect, dense, policy explicitly off, same 4000-tick cap:
+
+| | rows | `wingTime==0` | refill rows | `jump&down` ticks |
+|---|---|---|---|---|
+| before | 2228 (died at 2466) | 18.3% | 0 | 0 |
+| after | 3761 (alive at 4000) | **15.3%** | **277** | 0 |
+
+Zero `jump&down` confirms the guard did not introduce the held-jump-while-descending drain, and
+the guard firing 277 times confirms it is actually reached. Survival improved from a death at
+2466 to a live 4000, life drops fell from 6 to 4, and boss damage rose from 108 to 84 (lower is
+better here because the player survived longer and kept hitting).
+
+### 23.3 The environment trap that corrupted this session's measurements
+
+`CHAITE_POLICY_FILE` and `CHAITE_POLICY_FORMAT` were set in this session's environment. Worse,
+several attempts to clear them used:
+
+```powershell
+Remove-Item Env:\CHAITE_POLICY_FILE,Env:\CHAITE_POLICY_ROUTES,Env:\CHAITE_POLICY_FORMAT -ErrorAction SilentlyContinue
+```
+
+`CHAITE_POLICY_ROUTES` is **never set**, and `Remove-Item` on a missing item is a terminating
+error for the whole command even with `-ErrorAction SilentlyContinue` on the cmdlet, so the
+remaining names were often **not** removed and the policy stayed active. That is why
+`refillguard-weak` reported the policy-on signature (8684 ticks, 8 hits, `npc contact` 0) while
+`scriptonly-dense` (policy genuinely off) reported 2466 ticks, 6 hits, `npc contact` 7 -- two
+runs of the same build disagreeing completely.
+
+**Every acceptance run from here must set the policy environment explicitly, one variable per
+statement**, and the probe should be run with `CHAITE_POLICY_ROUTES` set explicitly when a policy
+is intended. A missing `CHAITE_POLICY_ROUTES` with `CHAITE_POLICY_FILE` set makes
+`LearnedPolicy.EnsureConfigured` throw *after* assigning `_file` and `_configured`, so the file
+stays set for the process.
+
+### 23.4 Reliable A/B, policy on versus off (weak wing, dense, 4000 ticks)
+
+| | hits | boss damage | `npc contact` |
+|---|---|---|---|
+| policy admitted for `fishron-fairy-wing` | **2** | 1 | 0 |
+| policy fully off | **4** | 84 | 8 |
+
+So the policy genuinely helps the weak route and was not a no-op. It is not, however, the
+deliverable: the objective asks for a hand-written formulaic state machine per loadout.
+
+### 23.5 The four remaining hits are mostly not body contact
+
+Under the guard, 4 life drops totalling 351 damage:
+
+```
+ tick  state  dmg   dy      dx      wingTime  phase
+   950    1    98   +2.5  +169.0      10      charge-horizontal
+  2146    1    77  +35.3  +103.3      57      charge-descend
+  2278    0    77  -36.0  +146.4       0      tornado-clear
+  2668    1    99  -32.9    +5.0      32      charge-ascend
+```
+
+Body contact needs roughly `|dx| < 85`, so only tick 2668 (`dx +5.0`) is unambiguously the boss
+body; the other three at `dx` 103, 146 and 169 are something else -- bubbles, shark projectiles or
+the sharknado. The probe reports `npc contact 8` for this run, so the npc-contact counter is not
+the same quantity as the life-drop count and should not be quoted as if it were.
+
+### 23.6 Status
+
+- **Kept:** the empty-bar refill guard (`FishronWingScript.cs`), verified by a clean A/B.
+- Unit suite: **750 passed, 8 failed** (all 8 the pre-existing missing
+  `tests/Chaite.Tests/fixtures/observation-conformance.jsonl`).
+- Clean-environment baselines, policy off: **weak 4000 ticks / 4 hits / death not reached**;
+  **strong 5341 ticks / 9 hits / death / `npc contact` 9**. With the policy on, weak is 8684 / 8 /
+  death and strong 11000 / 11 / alive, but those are policy results, not the state machine's.
+- **No native zero over a full fight on either loadout.**

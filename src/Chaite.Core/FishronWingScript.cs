@@ -456,6 +456,30 @@ namespace Chaite.Core
                     input.NativeTimer, out horizontal, out vertical,
                     out phase);
             }
+
+            // Budget guard: with an empty bar and both feet off the ground the
+            // player cannot move on the vertical axis at all, so every charge
+            // that arrives in that state is unavoidable.
+            //
+            // MEASURED (dense native trace, script only, hit at tick 533): from
+            // tick 508 to 533 the player was airborne with wingTime 0 on every
+            // single row, vy between -0.98 and +1.02, i.e. hovering, and
+            // sliding false throughout -- it never landed and never refilled.
+            // The charge that killed it locked at tick 518 and the player
+            // drifted from dy -74 to dy +5 under gravity alone while the normal
+            // wanted to climb.
+            //
+            // Releasing jump is what lets the fall happen (holding it keeps the
+            // wings deployed and holds vy near zero), and the native refill at
+            // Player.cs:26992 restores wingTime on the landing tick. Climbing is
+            // therefore suppressed only while the bar is empty and the player is
+            // airborne: the descend branches are untouched, and a grounded player
+            // is untouched so the takeoff that refills the bar still happens.
+            if (player.WingTime <= 0f && !player.OnGround && vertical < 0)
+            {
+                vertical = 1;
+                phase = "fishron-wing-refill";
+            }
             ApplyArena(player, ref horizontal, ref vertical);
             _patrol = horizontal == 0 ? _patrol : horizontal;
             // A latched escape lives only as long as the episode that set it,
