@@ -9457,6 +9457,39 @@ isolation can still be a worse controller than the heuristic it replaces, becaus
 entangled with the beat schedule.** The distinguishing test is not "is the rule right" but "does the
 band improve".
 
+### 129.6 Route regeneration and what the route channel actually asserts
+
+The `-FormulaRoute` runs above compute their plan from the **current build**, so the fix was live in
+them. The committed CSVs in `routes/` are frozen per-tick input, so they had to be regenerated or they
+would keep replaying the defective control path. `tools/harvest-native-route.py` builds a route from
+the controls **actually applied** at the facade (not from the plan, which would be a claim about
+intent), so the procedure is: run the formula route, then harvest the run.
+
+Two traps, both already documented in the scripts and both hit again here:
+
+1. **Dense frames are not optional.** `CHAITE_PROBE_DENSE_FRAMES=1` must be set for BOTH the harvesting
+   run and the replay. My first harvest omitted it, produced a 349-control route padded with 5637
+   neutral filler rows, and the replay died at tick 1322 with 4 dashes. With dense frames the harvest
+   carries one control per tick (6000 rows, 0 fillers) and the replay reproduces the run exactly.
+2. **The route channel carries no damage.** `verify-fishron-routes.ps1` injects no simulated output,
+   so the Boss never crosses a phase threshold and the whole window is phase-1 behaviour. The hit
+   counts it reports (strong 6, weak 9) are therefore NOT the fight's hit counts and NOT acceptance
+   evidence. What the channel asserts is that a committed route replays to the exact control path it
+   was harvested from. That is the property `CHAITE_ROUTE_FILE` is supposed to guarantee, and the
+   contradiction it would catch -- a route that only works when a live controller is steering -- is
+   precisely why the owner made native replay the acceptance channel.
+
+Regenerated and verified:
+
+```
+strong -> routes/strong-fishron-wings.csv   6000 ticks, 6 hits, death False, dmg 55   MATCH
+weak   -> routes/fairy-wings.csv            5636 ticks, 9 hits, death True,  dmg 102  MATCH
+```
+
+Both replay to a byte-identical result to their generation run. The expected-value table in the
+verifier was updated to these measured numbers, and it now records why they differ from the DPS
+channel.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading

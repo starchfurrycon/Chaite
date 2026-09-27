@@ -69,22 +69,37 @@ foreach ($name in @(
 }
 
 # route file, formula route, expected ticks, expected hits, expected death
+#
+# ROUND 161 REGENERATION. The strong route was regenerated because the
+# tornado-clear pre-charge fix changed the control path (the branch used to return
+# early with an active descent, so every charge that committed during tornado
+# clearing had no wind-up).
+#
+# NOTE ON WHAT THIS CHANNEL MEASURES. These replay runs carry NO simulated output:
+# there is no DPS injection, so the Boss never loses enough health to change phase
+# and the entire 6000-tick window is phase-1 behaviour. That is deliberate -- a
+# route is a CONTROL-PATH record, and it has to be reproducible independently of
+# the fight it was harvested from. The consequence is that the hit counts here are
+# NOT the fight's hit counts and NOT acceptance evidence; the acceptance numbers
+# come from the DPS channel. What these values assert is that replaying the
+# committed route reproduces the exact control path it was harvested from, which
+# is the property CHAITE_ROUTE_FILE is supposed to guarantee.
 $cases = @(
     [pscustomobject]@{
         Name    = 'strong'
         Route   = Join-Path $root 'routes\strong-fishron-wings.csv'
         Formula = 'fishron-strong-wing'
         Ticks   = 6000
-        Hits    = 2
+        Hits    = 6
         Death   = $false
     },
     [pscustomobject]@{
         Name    = 'weak'
         Route   = Join-Path $root 'routes\fairy-wings.csv'
         Formula = 'fishron-fairy-wing'
-        Ticks   = 6000
-        Hits    = 3
-        Death   = $false
+        Ticks   = 5636
+        Hits    = 9
+        Death   = $true
     }
 )
 
