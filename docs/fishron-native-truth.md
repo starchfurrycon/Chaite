@@ -9295,6 +9295,38 @@ and the closing speed varies with the lock geometry.
 into the reviewed circuit, and the delivered points are unchanged: strong 1200 -> 2 hits / kill, strong 1500 -> 1 /
 kill, weak 1500 -> 4 / kill.
 
+### 128.5 The counter-dash must STEER AT the Boss, and it produces the best low-DPS runs yet
+
+The first version kept the escape branch's `AwayFromBossAxis` direction and therefore spent the dash running *away*,
+which never touches. The measured trajectory says the dash can reach: of the 20 baseline dash frames, **9 already
+move toward the Boss**. Steering the dash AT the Boss on the counter-dash frame changes the outcome:
+
+```
+strong 800  baseline                : 5364 ticks, 4 hits, boss 13596, dash started 48, npc contact 5
+            counter, away, 110 px   : 5364 ticks, 4 hits, boss 13596   (no change at all)
+            counter, away, ttc 2-10 : 5364 ticks, 4 hits, boss 13596   (no change at all)
+            counter, AT BOSS, ttc 2 : 5364 ticks, 4 hits, boss 13596   (no change)
+            counter, AT BOSS, ttc 6 : 6104 ticks, 5 hits, boss  3641   <-- BEST EVER at this DPS
+            counter, AT BOSS, ttc 10: 6101 ticks, 5 hits, boss  3715
+strong 600  baseline                : 4218 ticks, 6 hits, boss 41203
+            counter, AT BOSS, ttc 6 : 4474 ticks, 7 hits, boss 38583
+```
+
+At strong 800 the Boss reached **3641 HP** instead of 13596 -- roughly four times closer to dead than any previous
+configuration, against a 78000 pool. The hit count moves 4 -> 5, so this is not yet a survival improvement; it is the
+first evidence that the counter-dash is the right family of mechanic and that the timing (ttc 6-10) matters more
+than the distance gate.
+
+### 128.6 What is needed next
+
+The remaining problem is now specific and testable: the counter-dash has to be **live at the body** and its recoil
+has to put the player clear of the *next* charge. `eocDash` runs 15 ticks and is cut to 10 by the touch itself, and
+the dash is only available every `dashDelay = 30` ticks, so a single charge can consume the whole resource. The
+next arms to try are (a) holding the escape direction AFTER the counter-dash so the recoil is not immediately
+cancelled by the escape branch's next command, and (b) refusing the counter-dash when a second charge is already
+committed inside the 30-tick delay, which is where the extra hit at strong 800 and the two extra at strong 600
+probably come from.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading

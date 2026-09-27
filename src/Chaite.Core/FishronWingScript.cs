@@ -298,9 +298,11 @@ namespace Chaite.Core
             get { return Environment.GetEnvironmentVariable(CounterDashVariable) == "1"; }
         }
 
-        /// <summary>Closing distance at which the counter-dash is issued. Paired
-        /// with CounterDashVariable.</summary>
-        private static float CounterDashPixels
+        /// <summary>Ticks-to-contact at which the counter-dash is issued. Paired
+        /// with CounterDashVariable. The dash's immunity runs 15 ticks (eocDash)
+        /// and is cut to 10 on the touch, so the useful window is a few ticks
+        /// either side of arrival.</summary>
+        private static float CounterDashGap
         {
             get
             {
@@ -309,7 +311,7 @@ namespace Chaite.Core
                 if (string.IsNullOrEmpty(raw) ||
                     !float.TryParse(raw.Trim(), NumberStyles.Float,
                         CultureInfo.InvariantCulture, out value) || value < 0f)
-                    return 120f;
+                    return 4f;
                 return value;
             }
         }
@@ -1421,11 +1423,30 @@ namespace Chaite.Core
                 {
                     var cbx = boss.Center.X - player.Center.X;
                     var cby = boss.Center.Y - player.Center.Y;
-                    if (cbx * cbx + cby * cby <= CounterDashPixels * CounterDashPixels)
+                    var cd = (float)Math.Sqrt(cbx * cbx + cby * cby);
+                    // The gate is TICKS TO CONTACT, not distance. The dash's
+                    // immunity is a 15-tick resource (eocDash) that ALSO gets cut to
+                    // 10 the moment it touches, so what matters is issuing it
+                    // CounterDashTicks before the body arrives. A distance gate was
+                    // measured first and does nothing (128.3) because the closing
+                    // speed varies with the lock geometry.
+                    var closing = (float)Math.Sqrt(
+                        boss.Velocity.X * boss.Velocity.X +
+                        boss.Velocity.Y * boss.Velocity.Y);
+                    var ticksToContact = closing > 0.01f ? cd / closing : 9999f;
+                    if (ticksToContact <= CounterDashGap)
                     {
                         counterDash = true;
                         _counterDashSpent = true;
-                        horizontal = AwayFromBossAxis(cbx);
+                        // Steer AT the Boss, not away from it. The whole point of
+                        // the counter-dash is to make contact while `eocDash` is
+                        // live: Player.cs:31602 grants contact immunity to the NPC
+                        // the dash touched, and Player.cs:21288 recoils the player
+                        // clear. MEASURED: of the 20 baseline dash frames, 9
+                        // already move toward the Boss, but the escape branch's
+                        // `AwayFromBossAxis` direction means the dash is spent
+                        // running away and never touches.
+                        horizontal = cbx > 0f ? 1 : (cbx < 0f ? -1 : 0);
                     }
                 }
                 if (counterDash)
