@@ -8669,6 +8669,97 @@ direction and facing, stamina scheduling, escape direction, altitude, pre-lock g
 pattern, leg schedule, apex refill, and hazard retirement -- which is the strongest available evidence that the
 remaining gap is not a knob but a missing qualitative behaviour.
 
+## 120. Round 155: the low-tolerance armour set, and what it exposes
+
+### 120.1 Why the set changed
+
+OWNER RULING 2026-09-26: Shroomite is **high-end armour**, and its defense flatters the durability result -- the
+route may be surviving on its armour rather than on its movement. The owner named the **Obsidian set** (黑曜石套)
+to model lower fault tolerance.
+
+`CHAITE_ARMOR_TIER=obsidian` switches armour slots 0/1/2 only. Everything that defines the two loadouts -- wings,
+Amphibian Boots, Shield of Cthulhu, featherfall, the weapon -- is untouched, which is precisely what makes the two
+armour tiers comparable. Ids come from the engine's `ItemID` table, not memory:
+
+```
+ObsidianHelm  3266   ObsidianShirt  3267   ObsidianPants  3268
+ShroomiteMask 1547   Breastplate    1549   Leggings       1550
+```
+
+There is **no "Obsidian Outlaw Hat"** in Terraria; the other Obsidian-family items are the summoner gear. The named
+set is the Obsidian one above.
+
+### 120.2 The measured defense gap, and it is large
+
+Read from the battle `FRAME` log, not from a static report:
+
+```
+shroomite (default)  defense = 63
+obsidian             defense = 27
+```
+
+Under Terraria's damage formula that is roughly **2x the incoming damage**. Because the probe's `maxLife` is 400
+and Greater Healing restores to 480, this cuts the absorbable hit count from about 6 to about 3.
+
+### 120.3 The full Obsidian band
+
+```
+loadout   DPS    ticks   hits  result
+strong    600    6063      6   DEATH, boss at 22748
+strong    800    4658      7   DEATH, boss at 23061
+strong   1000    5215      5   MUTUAL KILL (SuccessAfterDeath) -- rejected
+strong   1200    4441      2   KILL, survived
+strong   1500    3661      0   KILL, survived, ZERO HITS
+strong   2000    2881      0   KILL, survived, ZERO HITS
+strong   2400    2491      2   KILL, survived
+
+weak     1000    3298      6   DEATH, boss at 31906
+weak     1500    3659      3   KILL, survived
+weak     1600    3336      5   DEATH, boss at 3443
+weak     2000    2881      2   KILL, survived
+weak     2400    2490      2   KILL, survived
+```
+
+Compare the Shroomite results from §117.3 and §118:
+
+```
+strong 600   shroomite KILL 3 hits     ->  obsidian DEATH 6 hits
+strong 800   shroomite KILL 2 hits     ->  obsidian DEATH 7 hits
+strong 1000  shroomite KILL 2 hits     ->  obsidian MUTUAL KILL
+weak   1600  shroomite KILL 3 hits     ->  obsidian DEATH 5 hits
+weak   1200  shroomite KILL 5 hits     ->  obsidian (1200 not run; 1000 DEATH, 1500 KILL)
+```
+
+### 120.4 What this means
+
+1. **The owner's suspicion was correct: a large part of the Shroomite result was armour, not movement.** Every
+   entry that survives on Shroomite at 600-1000 DPS dies on Obsidian. The route's true tolerance is materially
+   lower than the Shroomite numbers suggested, and any earlier claim that read as "the circuit is comfortable"
+   was reading the armour.
+
+2. **The higher end is not armour-dependent.** Obsidian at 1500 and 2000 DPS still produces **zero-hit kills** on
+   the strong wing. When the fight is short enough, the route never gets touched, which is the strongest evidence
+   so far that the movement itself is sound and the failure mode is *endurance*, not accuracy.
+
+3. **The failure is still endurance, now measured against a smaller budget.** The Obsidian band's lower edge is
+   where the fight outlasts the health pool, exactly as §117.4 described, now compressed from ~10000 ticks to
+   roughly 4500-6000. This is consistent rather than new: fewer absorbable hits means a higher DPS is needed to
+   finish first.
+
+4. **The non-monotonicity is reproducible and now has a second instance.** Strong at 1000 is a mutual kill while
+   1200 and above survive; weak at 1600 dies while 1500 and 2000 survive. The cause remains the one identified in
+   §117.4 -- *which phase* the incoming hits land in -- and it is not a measurement artefact, because it appears
+   independently under two different armour tiers.
+
+### 120.5 Status
+
+- **Still met (Shroomite):** strong from 600 DPS, weak from 1200 DPS, zero-hit kill at 2000.
+- **Met (Obsidian, the strict criterion):** strong from 1200 DPS, weak from 1500 DPS, zero-hit kills at 1500 and
+  2000 on the strong wing.
+- **Not met at either tier:** the 300 DPS floor.
+- **Corrected:** the Obsidian tier is the honest one to quote, because Shroomite's 63 defense was carrying results
+  that the movement alone does not earn. **No no-hit claim is made below 1500 DPS.**
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

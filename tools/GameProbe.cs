@@ -3013,6 +3013,32 @@ public static class ChaiteGameProbe
             player.armor[0].SetDefaults(ItemID.ShroomiteMask);
             player.armor[1].SetDefaults(ItemID.ShroomiteBreastplate);
             player.armor[2].SetDefaults(ItemID.ShroomiteLeggings);
+            // OWNER RULING 2026-09-26: Shroomite is HIGH-END armour and its high
+            // defense flatters the durability result, so a lower-tolerance armour
+            // set is needed to see whether the route really survives or is merely
+            // being carried by its defence. The owner named the Obsidian set
+            // (黑曜石套) for that role.
+            //
+            // The Obsidian set is Obsidian Helm / Shirt / Pants, ids 3266/3267/
+            // 3268, read out of the engine's own ItemID table rather than from
+            // memory. Note there is no "Obsidian Outlaw Hat" in Terraria: the
+            // other Obsidian-family items are the summoner gear, and the Outlaw
+            // Hat does not exist by that name, so the named set is the one that
+            // does. Only armour slots 0/1/2 change -- the wings, boots, dash and
+            // featherfall are the loadout identity and are identical on both,
+            // which is what makes the two armour tiers comparable.
+            //
+            // Unset leaves the historical Shroomite set untouched, so no earlier
+            // measurement moves.
+            var armourTier=Environment.GetEnvironmentVariable("CHAITE_ARMOR_TIER");
+            if(string.Equals(armourTier,"obsidian",StringComparison.OrdinalIgnoreCase))
+            {
+                player.armor[0].SetDefaults(ItemID.ObsidianHelm);
+                player.armor[1].SetDefaults(ItemID.ObsidianShirt);
+                player.armor[2].SetDefaults(ItemID.ObsidianPants);
+                armorTierName="obsidian";
+            }
+            else armorTierName="shroomite";
             // Reuse the hash-reviewed Demon-Wings/Lightning-Boots movement
             // implementation. Hoverboard and Master Ninja Gear are stronger
             // items, but do not yet have this probe's exact production closure.
@@ -4012,6 +4038,9 @@ public static class ChaiteGameProbe
     static int simulatedRetiredProjectiles;
     static int wingEconomyTicks, wingEconomyEmptyTicks, wingEconomyLowTicks;
     static float wingEconomyMin=float.MaxValue;
+    /// <summary>Which armour slots 0/1/2 were last applied, for the verdict line.
+    /// See the post-plantera block for why the tier is switchable.</summary>
+    static string armorTierName="shroomite";
     static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
 
     /// <summary>The fraction of the simulated output the player produces at the
