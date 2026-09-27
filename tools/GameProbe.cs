@@ -2614,11 +2614,28 @@ public static class ChaiteGameProbe
             // possibility.
             if (scenario.Ocean && IsMonitorFixture)
             {
-                arenaPlatformRows = new int[]
+                // Platform rows. The owner has said twice that only ONE flat layer
+                // is needed ("actually only a single layer of flat ground is
+                // required") and the technique sources agree that the fight is
+                // won with vertical jinks off a floor, not by hopping between
+                // rows. The rows are therefore switchable so the claim can be
+                // measured rather than assumed: `CHAITE_ARENA_PLATFORM_ROWS`
+                // takes the number of rows to build, and every earlier
+                // measurement used the default of 2.
+                int platformRows = 2;
                 {
-                    arenaGroundY - PlatformRowSpacingTiles,
-                    arenaGroundY - 2 * PlatformRowSpacingTiles
-                };
+                    var rawRows = Environment.GetEnvironmentVariable("CHAITE_ARENA_PLATFORM_ROWS");
+                    int parsedRows;
+                    if (!string.IsNullOrEmpty(rawRows) &&
+                        int.TryParse(rawRows.Trim(), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out parsedRows) &&
+                        parsedRows >= 0 && parsedRows <= 2)
+                        platformRows = parsedRows;
+                }
+                var rows = new int[platformRows];
+                for (int r = 0; r < platformRows; r++)
+                    rows[r] = arenaGroundY - (r + 1) * PlatformRowSpacingTiles;
+                arenaPlatformRows = rows;
                 for (int r = 0; r < arenaPlatformRows.Length; r++)
                 for (int x = groundLeft; x < groundRight; x++)
                 {

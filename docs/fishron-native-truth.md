@@ -9490,6 +9490,52 @@ Both replay to a byte-identical result to their generation run. The expected-val
 verifier was updated to these measured numbers, and it now records why they differ from the DPS
 channel.
 
+### 129.7 The arena's platform rows: zero rows helps the low end and hurts the high end
+
+The owner has said twice that only one flat layer is needed, and the technique sources agree the fight is
+won with vertical jinks off a floor rather than by hopping between rows. So the row count was made
+switchable (`CHAITE_ARENA_PLATFORM_ROWS`, default 2 = every earlier measurement) and measured.
+
+```
+                       2 rows (default)          1 row                0 rows
+strong  300            8812 / 8 / 36546          3371 / 6 / death     9747 / 9 / 31907
+strong  600            6744 / 6 / 15937          3371 / 6 / death     8336 / 6 / KILL
+strong  800            5057 / 4 / 17755          -                    4816 / 7 / 20959
+strong 1000            4573 / 3 / 10777          -                    4903 / 6 /  5245
+strong 1200            4437 / 1 / KILL           2939 / 5 / death     4022 / 6 /  8339
+strong 1500            3661 / 1 / KILL           -                    3341 / 6 /  7959
+strong 2000            2881 / 0 / ZERO-HIT KILL  -                    2880 / 1 / KILL
+weak    300            -                        -                    4174 / 7 / 59781
+weak    600            4741 / 6 / 35818          -                    4174 / 7 / 41616
+weak    800            6380 / 5 / KILL           5406 / 6 / death     4274 / 5 / 28172
+weak   1000            5214 / 4 / KILL           -                    4648 / 5 /  9518
+weak   1500            3656 / 4 / KILL           -                    3659 / 2 / KILL   (better)
+weak   2000            2881 / 1 / KILL           -                    2571 / 4 / death  (worse)
+```
+
+Three separate findings, and none of them is the simple "one layer suffices":
+
+1. **ONE row is strictly the worst of the three.** It hides the floor without giving a second landing
+   option: the player is trapped at one altitude, the wing budget drains with nothing to land on at the
+   right height, and every strong-arm DPS measured dies at 3371 -- including 1200, which kills with two
+   rows and with none. This is the one option that can be rejected outright.
+2. **ZERO rows is clearly better at the low end.** At strong 600 it turns a death into a KILL
+   (8336 / 6), at strong 300 it extends the fight from 8812 to 9747 ticks with the Boss further down
+   (31907 vs 36546), and at weak 1500 it halves the hits (4 -> 2).
+3. **ZERO rows is worse in the middle and at the top.** strong 800 goes 4 hits -> 7, strong 1000
+   3 -> 6 and dies, strong 1500 loses its kill, weak 800 loses its kill, and weak 2000 goes from a
+   1-hit KILL to a 4-hit death.
+
+The pattern is not monotonic in either direction, which rules out a single explanation like "height
+freedom helps" or "refills matter". What the measurements do support is that the row count is a genuine
+tradeoff, so **the default stays at 2**, the only setting with no unacceptable point in the band. With
+no platforms the wing budget can only be refilled on the floor, so a short fight may never reach a
+refill, while a long one has time and the extra altitude wins.
+
+This is the §122/§128 lesson yet again in a new costume: an owner statement that is correct about the
+*fight* ("you only need one flat layer") is not automatically the best *parameter value* for this
+circuit, and the only way to tell is to measure the band.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
