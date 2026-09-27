@@ -1671,6 +1671,17 @@ public static class ChaiteGameProbe
             simulatedRetireProjectileType=parsedRetire;
         // Phase-transition hold, see SimulatedPhaseTransitionHold.
         simulatedPhaseHold=Environment.GetEnvironmentVariable("CHAITE_SIM_PHASE_HOLD")=="1";
+        // Edge-seeking half of the hold, from the technique documentation. Its own
+        // switch so the original hold can still be measured on its own.
+        simulatedPhaseHoldEdge=Environment.GetEnvironmentVariable("CHAITE_SIM_PHASE_HOLD_EDGE")=="1";
+        {
+            var rawEdge=Environment.GetEnvironmentVariable("CHAITE_SIM_PHASE_HOLD_EDGE_PX");
+            float parsedEdge;
+            if(!string.IsNullOrEmpty(rawEdge) &&
+                float.TryParse(rawEdge.Trim(),NumberStyles.Float,
+                    CultureInfo.InvariantCulture,out parsedEdge) && parsedEdge>0f)
+                simulatedPhaseHoldEdgePixels=parsedEdge;
+        }
         // The distance falloff band for the simulated output, in tiles (1 tile =
         // 16 px). CHAITE_SIM_DPS still pins the FULL-range DPS; these two move
         // only the range at which that DPS is delivered. Read once, here, for the
@@ -4069,6 +4080,11 @@ public static class ChaiteGameProbe
     const int SimulatedPhaseHoldMaxTicks=1800;
     static bool simulatedPhaseHold;
     static int simulatedHoldTicks;
+    /// <summary>Edge-seeking half of the phase hold: also wait for the Boss to be
+    /// within simulatedPhaseHoldEdgePixels of either end of the arena before
+    /// letting the crossing land. From the technique documentation.</summary>
+    static bool simulatedPhaseHoldEdge;
+    static float simulatedPhaseHoldEdgePixels=900f;
     static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
 
     /// <summary>The fraction of the simulated output the player produces at the
@@ -4421,8 +4437,36 @@ public static class ChaiteGameProbe
                 if(proj.type==CthulhunadoProjectileType || proj.type==SharkronProjectileType)
                 { hazardAlive=true; break; }
             }
-            if(!hazardAlive) continue;
+            if(!hazardAlive && !simulatedPhaseHoldEdge) continue;
             if(simulatedHoldTicks>=SimulatedPhaseHoldMaxTicks) return false;
+            // EDGE-SEEKING HOLD (added from the technique documentation).
+            //
+            // The technique source is explicit that the thresholds are a CHOICE,
+            // not an accident: "watch the health bar (50% and 15%) and stop firing
+            // in time, let the Boss change phase at the ARENA EDGE, so you keep
+            // enough room for error", and separately "get the Sharknado released at
+            // the two ENDS of the arena rather than in the middle", with the
+            // observed rule that a nado released at the sea edge is followed by
+            // another at the same edge.
+            //
+            // The hazard test above only waits for an in-flight hazard. This adds
+            // the positional half: when armed, a crossing with no hazard in flight
+            // is ALSO held until the Boss is within the configured distance of
+            // either end of the arena, so the phase flip and the nado that comes
+            // with it happen at an end. That is the player-side control over WHICH
+            // attack cycle occurs, which section 124 wrongly concluded did not
+            // exist.
+            if(!hazardAlive && simulatedPhaseHoldEdge)
+            {
+                // Arena ends in PIXELS, taken from the same tile constants the
+                // arena builder uses, so the hold and the ground cannot drift apart.
+                float arenaLeftPx=ArenaGroundLeft*16f;
+                float arenaRightPx=ArenaGroundRightExclusive*16f;
+                bool atEdge=
+                    npc.Center.X < arenaLeftPx+simulatedPhaseHoldEdgePixels ||
+                    npc.Center.X > arenaRightPx-simulatedPhaseHoldEdgePixels;
+                if(!atEdge) return false;
+            }
             // Health gate. Extending a fight is not free -- the measured failure
             // at weak/1600 with the hold ON is that the run lasted longer, took
             // the same number of hits, and ran out of health with the Boss still
