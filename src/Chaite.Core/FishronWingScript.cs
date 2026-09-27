@@ -200,11 +200,18 @@ namespace Chaite.Core
         /// plus a full escape.</summary>
         private const float TornadoClearance = 760f;
         /// <summary>Half-extents of the Cthulhunado column, in px. MEASURED from the
-        /// live projectile at full growth (scale 1.5): width 225 -> half 112, height
-        /// 63 -> half 31, plus the player's own 10 x 21 half-box, rounded out to
-        /// 190 x 110 for margin.</summary>
-        private const float TornadoHalfWidth = 190f;
-        private const float TornadoHalfHeight = 110f;
+        /// decompiled setup and confirmed by the live trace histogram: `width = 150 *
+        /// scale`, `height = 42 * scale`, scale capped at 1.5 for type 386, so at full
+        /// growth 225 x 63 -- half-extents 112 x 31, plus the player's own 10 x 21
+        /// half-box, rounded to 125 x 55 for margin.
+        ///
+        /// NOTE: an earlier draft used 190 x 110 from a histogram read that mistook the
+        /// growing mid-life values for the maximum. The 190 x 110 box was so generous
+        /// that it fired on frames where the player was nowhere near the column, which
+        /// is why its result was byte-identical at strong 300 and harmful elsewhere. The
+        /// corrected box is deliberately tight.</summary>
+        private const float TornadoHalfWidth = 125f;
+        private const float TornadoHalfHeight = 55f;
         /// <summary>Arm the vertical half of the tornado box. Default OFF so every
         /// measurement recorded before this round still reproduces.</summary>
         internal static bool TornadoVerticalArmed

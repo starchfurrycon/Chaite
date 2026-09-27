@@ -10350,6 +10350,32 @@ showed how much of the run it actually owned -- and showed that for the weak win
 - The weak wing: tornado-independent, so its deficit is in the charge and hover geometry where every knob
   tried so far is also refuted. It needs a different attack, consistent with the owner's two-machines point.
 
+### 136.8 The corrected box, and the band re-verified
+
+With the box corrected from the over-generous 190 x 110 to the decompiled 112 x 31 (rounded to
+`TornadoHalfWidth` 125 / `TornadoHalfHeight` 55 with the player half-box), the box rule still does not help:
+
+```
+                     default              CHAITE_TORNADO_BOX=1 (corrected)
+strong  300    10004 / 8 / 30628        10004 / 8 / 30628   byte-identical, still inert
+strong  600     6744 / 6 / 15937         6383 / 5 / 19491   different, still a death
+weak    300     5879 / 8 / 51124         5879 / 8 / 51124   byte-identical
+weak    800     6380 / 5 / KILL          6380 / 5 / KILL    byte-identical
+```
+
+The tight box is inert at strong 300 just like the loose one, which is now doubly informative: the
+strong-300 tornado damage is not reachable by *any* box rule, loose or tight, because the player is never
+inside the column box while the gate is active. Left default-OFF with the corrected constants recorded.
+
+**Full band re-verified after all round-149 edits** (all eight points byte-identical to the committed
+baseline, and both routes `MATCH`):
+
+```
+strong 300 10004/8/30628   strong 600 6744/6/15937   strong 800 5057/4/17755
+strong 1000 4573/3/10777   strong 1500 3661/1/KILL
+weak   300  5879/8/51124   weak   600 4741/6/35818   weak   1500 3656/4/KILL
+```
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
