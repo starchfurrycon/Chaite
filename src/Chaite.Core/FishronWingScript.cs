@@ -953,6 +953,27 @@ namespace Chaite.Core
                 dash && vertical >= 0 && !player.OnGround)
             {
                 var gapY = Math.Abs(player.Center.Y - boss.Center.Y);
+                // MEASURED (dense native trace, strong 300, 8812 ticks): this rule
+                // fired on 59 frames and 52 of them had `wingTime == 0`, where the
+                // commanded lift cannot fly -- `output.Jump = vertical < 0` only
+                // asks for a jump the wing gate (Player.cs:27001) refuses. The
+                // failure sequence is visible in the trace:
+                //
+                //   t=3482  wingTime 0, plvy +3.34 (terminal fall), |dy| 17
+                //   t=3483..3486  plvy +3.34 every tick -- the lift is inert
+                //   t=3487  CONTACT at |dx| 7.4, |dy| 41.2; plvy snaps to -3.50,
+                //           which is the SHIELD's fixed recoil, not wing flight
+                //
+                // GATING ON WING BUDGET WAS TRIED AND IS A NET NEGATIVE, so the
+                // rule is left exactly as it was. With a `WingTime > 6` gate the
+                // band regressed: strong 300 went 8812 ticks -> 7340, strong 600
+                // lost its KILL and died at 6301, strong 1000 went 3 hits -> 4, and
+                // nothing improved. The inert lift turns out to have been doing
+                // positional work even without flight -- those five ticks hold the
+                // player inside the band instead of letting the fall carry them
+                // along the Boss's line -- so suppressing it changed the geometry
+                // for the worse. Recorded because the reasoning was sound and the
+                // measurement disagreed, which is the same lesson as 122 and 129.5.
                 if (gapY < CoLocationBand)
                 {
                     vertical = -1;

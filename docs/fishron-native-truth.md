@@ -9536,6 +9536,93 @@ This is the §122/§128 lesson yet again in a new costume: an owner statement th
 *fight* ("you only need one flat layer") is not automatically the best *parameter value* for this
 circuit, and the only way to tell is to measure the band.
 
+## 130. Round 162: the wing-budget gate fails, and the real shape of the 300-DPS gap
+
+### 130.1 The finding that looked conclusive
+
+The fixed strong-300 run is now the frontier, so it was traced densely (8813 rows, one per tick).
+`colocation-lift` turned out to be the largest single hit cluster -- 3 of 8 hits, and the biggest
+damages (107 / 119 / 123) -- and when the rule's own firing was audited:
+
+```
+colocation-lift fired on 59 frames
+  wingTime histogram at fire: {0: 52, 7: 1, 8: 1, 125: 1, 126: 1, 157: 1, 158: 1, 159: 1}
+  fired with wingTime == 0: 38 of 59 ... (52 of 59 are <= 8)
+  fired but did NOT climb:  18 of 59
+```
+
+With `wingTime == 0` the commanded lift cannot fly at all: `output.Jump = vertical < 0` only asks for a
+jump that the native wing gate (Player.cs:27001) refuses. The trace shows the whole sequence:
+
+```
+t=3482  wingTime 0, plvy +3.34 (terminal fall), |dy| 17
+t=3483..3486  plvy +3.34 every tick -- the lift is inert
+t=3487  CONTACT at |dx| 7.4, |dy| 41.2; plvy snaps to -3.50, the SHIELD's fixed
+        recoil, not wing flight
+```
+
+and every colocation hit in the run (3487, 5148, 5575) sits on exactly that boundary tick. So the rule
+was commanding a climb it could not perform, during the five ticks the player spends falling into the
+24 px danger band. A `WingTime > 6` gate looked like a clean fix.
+
+### 130.2 MEASURED: it is a net negative, and it is reverted
+
+```
+                    ungated (kept)              WingTime > 6
+strong  300         8812 / 8 / 36546            7340 / 7 / 43942
+strong  600         6744 / 6 / KILL             6301 / 6 / death
+strong  800         5057 / 4 / 17755            4934 / 4 / 19381
+strong 1000         4573 / 3 / 10777            4383 / 4 / 13949
+strong 1200         4437 / 1 / KILL             4438 / 1 / KILL
+strong 1500         3661 / 1 / KILL             3661 / 0 / ZERO-HIT KILL
+strong 2000         2881 / 0 / KILL             2881 / 0 / KILL
+weak    300         8812? (see 129)            5879 / 8 / 51124
+```
+
+Nothing improved that mattered and the two low-DPS points that carry the frontier got worse, so the
+gate was reverted and the reverted tree re-measured to confirm it reproduces 8812 / 8 / 36546,
+6744 / 6 / 15937 and 4437 / 1 / KILL exactly.
+
+The interesting part is *why*. The inert lift was doing positional work anyway: holding the player
+inside the band for those five ticks keeps them from being carried further along the Boss's line by the
+fall, so removing it changed the geometry for the worse. This is the fourth instance of the recorded
+lesson (122, 128, 129.5) -- correct reasoning about a mechanism is not evidence that acting on it helps,
+because the mechanism is entangled with the trajectory.
+
+### 130.3 The real shape of the 300-DPS gap: hits accrue with TIME, not with DPS
+
+The dense trace answers the structural question that section 124 got wrong by assumption. The Boss's
+charge speed is **exactly 17.0 px/tick at every single hit** -- phase-independent, as the decompilation
+says -- so the different DPS outcomes cannot be a speed effect. What differs is *how long the fight
+runs*. And the hit rate is remarkably stable across the band:
+
+```
+strong  300 : 8 hits in  8812 ticks = 1 per 1101 ticks
+strong  600 : 6 hits in  6744 ticks = 1 per 1124 ticks
+strong 1200 : 1 hit  in  4437 ticks = 1 per 4437 ticks  (fight ended early)
+```
+
+At 300 DPS the same run breaks down by phase as:
+
+```
+phase 1: 7 hits in 7780 ticks  (1 per 1111)
+phase 2: 1 hit  in  792 ticks  (1 per  792)   -- enters phase 2 only at t=8020
+phase 3: never reached
+```
+
+So the constraint is not that any one attack is undodgeable. It is that **the circuit sustains about one
+hit per 1100 ticks**, and a 300-DPS kill needs ~15600 ticks, which extrapolates to ~14 hits against a
+pool that absorbs about 9 (480 HP plus roughly 3 healing potions, at 98-123 damage per hit).
+
+The requirement that falls out is concrete and measurable: the sustained hit rate has to come down to
+roughly **1 per 1800-2200 ticks**, a factor of about 1.6-2.0, and it is the *phase-1 endurance* that
+matters most because phase 1 is where nearly all the time is spent. It is emphatically not a 6x problem
+and not a phase-3 problem at this DPS.
+
+Note also that strong 1200 already measures 1 hit per 4437 ticks -- four times better than the 300 arm --
+which shows the circuit is capable of the required rate over a short window. The 300 run simply exposes
+the long-run rate. That is the frontier: make the good rate persist.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
