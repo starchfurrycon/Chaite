@@ -9812,6 +9812,32 @@ of negative results have now bounded where the remaining gain can come from: not
 (129.7). The standoff worked because it changed the *state the fight is in*, which is the direction 131.4
 predicted. That direction should be pushed further.
 
+### 132.5 Mechanism, measured -- and it is a rate change, not a count change
+
+Dense 300 runs with the standoff OFF and ON, same arm:
+
+```
+                    locks  mean sep  median  p25   under 400 px   mean vertness
+OFF (8812/8/36546)    98      551     462    365    34 (35%)         0.653
+ON  (10004/8/30628)  109      624     562    420    23 (21%)         0.566
+```
+
+The standoff demonstrably does what it was chosen to do: median lock separation rises from 462 to 562 px
+and the share of locks committed inside 400 px falls from 35% to 21%. That is the signal 131.5 named.
+
+But the honest reading is more interesting than that. **The standoff does not prevent charges -- it
+produces MORE of them** (98 -> 109), because the circuit spends time in the standoff state and that slows
+the fight. Hit count stays at 8 while the number of charges rises by 11%, so the hit *rate* per charge
+improves from 8.2% to 7.3%. The gain is therefore a genuine increase in per-charge dodge quality, not a
+reduction in exposure. The extra 1192 ticks of survival come from the fight being longer, and the fight is
+longer precisely because the standoff costs tempo.
+
+That reframes the remaining gap. A standoff that slows the fight while improving each dodge is a
+**trade**, and the current form is a blunt one: it is a hard clamp that abandons the patrol whenever the
+Boss is inside 1200 px, which at arena scale is most of the time. A smoother form -- one that biases the
+patrol's retreat direction toward keeping separation without surrendering the beat schedule -- should keep
+the dodge-quality gain and give back less tempo. That is the concrete next step.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
