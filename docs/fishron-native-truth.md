@@ -10190,6 +10190,63 @@ The general lesson, and the second instance this session after the `CHAITE_POLIC
 **every acceptance script must clear the full `CHAITE_*` environment rather than the subset it happens to
 know about.**
 
+### 135.5 The column is HALF the strong-300 damage, but widening the gate is refuted
+
+Section 135.3 left a sharper question: the box never fired at strong 300, so why are there Cthulhunado
+contacts at all? Reading the recorded projectile presence directly answers it. The column is present in
+**one continuous episode from tick 9125 to 10004 -- 881 ticks**, and reconstructing the geometry tick by
+tick over that episode:
+
+```
+|dx| < 760 (the gate)   : 634 ticks (72.0%)
+|dx| < 190 (column box) : 491 ticks (55.7%)
+|dy| < 110 (box Y)      : 643 ticks (73.0%)
+```
+
+The column's 881-tick life is far longer than the circuit's **540-tick memory**, which is the gap the box
+result hinted at. And the fatal stretch is a **wall pin**, which the trace shows exactly:
+
+```
+t=9540  player x 15 (arena left edge), column x 61  -> |dx| 48
+t=9563  HIT at |dx| 13
+t=9600..10004  |dx| frozen at 48, 48, 52, 52 -- still inside the gate,
+               still in the `tornado-clear` branch commanding escape, unable to move
+```
+
+So the player is commanded to flee the column, reaches the arena wall, and is left standing 48 px from a
+column of roughly 56 px half-width. **Four of that run's eight hits fall inside this one episode**, making
+the column the single largest damage source in the strong-300 run -- half its hits.
+
+The obvious repair is a larger gate, and it is **refuted**, sharply:
+
+```
+clearance    strong 300
+ 760 (default)  10004 / 8 / 30628
+1200             7867 / 8 / 41304
+1600             4679 / 7 / 57241
+2200             3658 / 6 / 62397   <- collapse
+3000             3658 / 6 / 62397   identical
+```
+
+2200 and 3000 collapse to the same tick, and the weak arm and higher DPS points are worse too (weak 300 at
+1600: 5737/7; strong 600 at 1600: 4600/7 and no longer a kill; strong 1200 at 1600 loses 1 hit -> 4). Making
+the escape wider than 760 px does not buy safety -- it spends the whole fight crossing the arena, which
+costs more tempo than the column costs damage. **760 is already the optimum**, so this is another
+knife-edge value that the reviewed circuit happens to have right.
+
+### 135.6 Where this leaves the strong-300 arm
+
+The tornado component is now fully characterised and bounded: half the hits, but widening the gate,
+modelling the box, and shrinking the box all fail. The gate value is optimal, the memory horizon is too
+short, and the failure mode is a wall pin.
+
+The remaining option is therefore not geometric but **temporal**: the column lives 881 ticks and the
+memory is 540, so a 341-tick window exists in which the circuit has entirely forgotten a column that is
+still damaging the player. Extending the memory to the true lifetime is the one untested change in this
+family -- it costs nothing geometrically (the gate radius stays at its optimum) and only restores awareness
+where the circuit is currently blind. That is the next round's first test, and it needs the clearing to be
+sweepable, which it now is.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading

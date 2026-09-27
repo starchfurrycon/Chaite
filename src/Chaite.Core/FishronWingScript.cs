@@ -217,6 +217,48 @@ namespace Chaite.Core
         }
 
         private const string TornadoVerticalVariable = "CHAITE_TORNADO_BOX";
+        /// <summary>Horizontal radius of the tornado gate, sweepable.
+        ///
+        /// MEASURED DEFECT (round 148, dense strong-300). The column is produced by
+        /// the boss's projectile attack and is present in ONE continuous episode from
+        /// tick 9125 to 10004 -- 881 ticks, longer than the 540-tick memory -- and
+        /// FOUR of that run's eight hits fall inside it. Reconstructing the geometry
+        /// tick by tick over those 881 ticks:
+        ///
+        ///   |dx| < 760 (the gate)   : 634 ticks (72.0%)
+        ///   |dx| < 190 (column box) : 491 ticks (55.7%)
+        ///
+        /// and the fatal stretch is the player pinned on the arena wall. At tick 9540
+        /// the player reaches world x = 15 (the arena's left edge) while the column
+        /// centre is at x = 61, so the separation is 48 px against a column half-width
+        /// of about 56 px. From there the trace is frozen: |dx| 48, 48, 52, 52 for the
+        /// rest of the run, still inside the gate, still in the `tornado-clear` branch
+        /// commanding escape, and no longer able to move. The hits at 9563 and 9603
+        /// land with |dx| 13 and 43.
+        ///
+        /// The gate is therefore not too small in the sense of the push being too
+        /// weak -- it is that 760 px of HORIZONTAL clearance is not enough to guarantee
+        /// the player is outside a column that ends up beside them, and once the
+        /// escape is spent against a wall there is no recovery. A larger radius pushes
+        /// the player across the arena, which is what the owner's technique notes
+        /// describe ("get the Sharknado released at the two ends", "keep the whole
+        /// width available to run back into"). Sweepable because the right value is an
+        /// empirical question; the reviewed 760 is the default.</summary>
+        internal static float TornadoClearanceRadius
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoClearanceVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return TornadoClearance;
+                return value;
+            }
+        }
+
+        private const string TornadoClearanceVariable = "CHAITE_TORNADO_CLEARANCE";
         /// <summary>How long a landed Sharknado keeps its column. The pinned
         /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
         private const int TornadoMemoryTicks = 540;
@@ -1342,7 +1384,7 @@ namespace Chaite.Core
             // reviewed leg schedule if that is configured instead, and otherwise
             // the reviewed flee.
             var tornadoOverrides = _tornadoTicksLeft > 0 &&
-                Math.Abs(player.Center.X - _tornadoX) < TornadoClearance;
+                Math.Abs(player.Center.X - _tornadoX) < TornadoClearanceRadius;
             if (tornadoOverrides)
             {
                 horizontal = away;
@@ -1738,7 +1780,7 @@ namespace Chaite.Core
             if (_tornadoTicksLeft > 0) _tornadoTicksLeft--;
             var gap = boss.Center.X - player.Center.X;
             if (_tornadoTicksLeft > 0 &&
-                Math.Abs(player.Center.X - _tornadoX) < TornadoClearance)
+                Math.Abs(player.Center.X - _tornadoX) < TornadoClearanceRadius)
             {
                 // Still inside the column the last Sharknado left behind.
                 //
