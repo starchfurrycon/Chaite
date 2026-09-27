@@ -8760,6 +8760,75 @@ weak   1200  shroomite KILL 5 hits     ->  obsidian (1200 not run; 1000 DEATH, 1
 - **Corrected:** the Obsidian tier is the honest one to quote, because Shroomite's 63 defense was carrying results
   that the movement alone does not earn. **No no-hit claim is made below 1500 DPS.**
 
+## 121. Round 156: the phase transition is a real, owner-directed lever
+
+### 121.1 The owner's diagnosis
+
+OWNER RULING 2026-09-26: the DPS-to-outcome non-monotonicity is very likely a **phase-transition handling**
+problem rather than a route problem. The owner's examples: the Boss drops into phase 3 immediately after releasing
+a tornado, so Sharkrons are still in the air while the harder phase begins, or the 1->2 handover is simply
+mis-timed. A competent player **controls** the transition -- after luring the tornado out, they wait a set time and
+distance before pushing the Boss over. The owner also asked for this to be **stated in the console**.
+
+This is a legitimate thing to model, and importantly it is unlike retiring a Cthulhunado: waiting is an action the
+player really can take, whereas deleting a hazard is not.
+
+### 121.2 Implementation, and the bug in the first attempt
+
+`CHAITE_SIM_PHASE_HOLD=1` makes the simulated output **hold damage** on the tick that would carry the Boss across
+a native threshold, while a Sharkron (385) or Cthulhunado (386) is still alive.
+
+The first version tested whether the Boss was currently inside a band just above the threshold. **It never
+fired**, and the reason is worth recording: the drain is 5-17 HP per tick while the band was 2340 HP wide, so life
+steps straight *over* the band without ever being sampled inside it. The question is not "where is the Boss now"
+but "is this the tick that would change phase", so the test has to be a **crossing** test:
+`life > 0.50*lifeMax && life - dps/60 <= 0.50*lifeMax`, and the same at 0.15 for expert phase 3.
+
+### 121.3 Measured effect (Obsidian armour, the strict tier)
+
+```
+strong 1000:  hold OFF -> MUTUAL KILL (SuccessAfterDeath)   hold ON -> KILL, survived, 3 hits   <-- WIN
+strong  600:  hold OFF -> DEATH 6 hits                      hold ON -> identical
+strong  800:  hold OFF -> DEATH 7 hits                      hold ON -> identical
+weak   1000:  hold OFF -> DEATH 6 hits                      hold ON -> identical
+weak   1200:  hold OFF -> (not run)                         hold ON -> DEATH 5 hits
+weak   1600:  hold OFF -> DEATH 5 hits, boss at 3443        hold ON -> DEATH 5 hits, boss at 3443
+```
+
+So the hold **converts the one mutual kill into a clean kill**, and is neutral elsewhere. The 600/800 cases are
+unchanged because those runs die at the **50%** crossing, before any hazard is in the air -- the hold only acts
+where the owner predicted, at a threshold a hazard is standing on.
+
+### 121.4 A regression was found and removed
+
+Without a guard the hold is **not** free: `weak 1600` regressed from boss-at-3443 (hold off) to boss-at-9956
+(hold on) -- the fight lasted longer, took the same number of hits, and ran out of health further from the kill.
+Extending a fight is a cost, not a benefit, so a real player only waits when the wait is affordable. The fix is a
+**health gate**: the hold is refused unless `statLife >= statLifeMax/2`. With the gate, every weak case returns to
+its hold-off result exactly and the strong/1000 win is preserved.
+
+The lesson generalises: a phase-transition hold is only sound paired with a survivability condition, because
+"wait for the tornado" and "stand in the tornado" are the same instruction without one.
+
+### 121.5 The console now states the transition
+
+`MainForm` carries a single line, visible only when the console is actionable:
+
+```
+转阶段前停手，等龙卷与鲨鱼消失再打
+```
+
+It is deliberately one line with no explanatory sub-clause, because the owner has ruled that long explanatory
+sub-text is deleted. It names the action and nothing else.
+
+### 121.6 Status
+
+- **New:** `CHAITE_SIM_PHASE_HOLD=1`, OFF by default, so every earlier measurement is byte-identical.
+- **Gained:** strong/1000 on Obsidian is now a survival-and-kill instead of a mutual kill.
+- **Confirmed:** the owner's mechanism is real -- the hold only helps at a threshold that a hazard occupies.
+- **Still not met:** the 300 DPS floor. Both arms still die there, and neither the phase hold nor the transition
+  wait changes that, because at 300 DPS the fight is ~15600 ticks against a ~4500-6000 tick Obsidian endurance.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

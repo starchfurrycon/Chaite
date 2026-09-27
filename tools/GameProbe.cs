@@ -1658,6 +1658,8 @@ public static class ChaiteGameProbe
         if(int.TryParse(Environment.GetEnvironmentVariable("CHAITE_SIM_RETIRE_PROJECTILE"),
             NumberStyles.Integer,CultureInfo.InvariantCulture,out parsedRetire) && parsedRetire>=0)
             simulatedRetireProjectileType=parsedRetire;
+        // Phase-transition hold, see SimulatedPhaseTransitionHold.
+        simulatedPhaseHold=Environment.GetEnvironmentVariable("CHAITE_SIM_PHASE_HOLD")=="1";
         // The distance falloff band for the simulated output, in tiles (1 tile =
         // 16 px). CHAITE_SIM_DPS still pins the FULL-range DPS; these two move
         // only the range at which that DPS is delivered. Read once, here, for the
@@ -4041,6 +4043,14 @@ public static class ChaiteGameProbe
     /// <summary>Which armour slots 0/1/2 were last applied, for the verdict line.
     /// See the post-plantera block for why the tier is switchable.</summary>
     static string armorTierName="shroomite";
+    /// <summary>Phase-transition hold, see SimulatedPhaseTransitionHold. OFF by
+    /// default so every earlier measurement is unchanged.</summary>
+    const int CthulhunadoProjectileType=386;
+    const int SharkronProjectileType=385;
+    const double SimulatedPhaseHoldBand=0.03;
+    const int SimulatedPhaseHoldMaxTicks=1800;
+    static bool simulatedPhaseHold;
+    static int simulatedHoldTicks;
     static int simulatedDamageEpisodeStart, simulatedBubbleEpisodeStart;
 
     /// <summary>The fraction of the simulated output the player produces at the
@@ -4257,6 +4267,29 @@ public static class ChaiteGameProbe
         string falloffUnreadableReason;
         float falloffFactor=SimulatedFalloffFactor(out falloffTiles,out falloffUnreadableReason);
         TrackSimulatedFalloff(falloffFactor,falloffTiles,falloffUnreadableReason);
+        // OWNER RULING 2026-09-26: the DPS-to-outcome non-monotonicity is very
+        // likely a PHASE-TRANSITION handling problem rather than a route problem,
+        // and a competent player controls the transition rather than letting it
+        // happen. The owner's examples: the Boss drops into phase 3 immediately
+        // after releasing a tornado, so Sharkrons are still alive while the
+        // harder phase begins; or the 1->2 handover is simply mis-timed.
+        //
+        // So the model of a good player is: when the Boss is ABOUT TO change
+        // phase, stop dealing damage, wait for the released hazards to expire,
+        // keep the spacing, and only then push it over. That is what
+        // CHAITE_SIM_PHASE_HOLD enables. It is legitimate to model because it is
+        // an action the player really can take -- unlike retiring a Cthulhunado,
+        // which is not.
+        //
+        // The hold applies ONLY inside a narrow band just above each native phase
+        // threshold (0.5 and, in expert, 0.15). A blanket hold would never let the
+        // fight finish at all, so the band is what keeps it a transition decision
+        // instead of a truce.
+        if(simulatedPhaseHold && SimulatedPhaseTransitionHold())
+        {
+            simulatedHoldTicks++;
+            return;
+        }
         simulatedDamageCarry+=simulatedDps*falloffFactor/60d;
         int whole=(int)simulatedDamageCarry;
         simulatedDamageCarry-=whole;
@@ -4320,6 +4353,70 @@ public static class ChaiteGameProbe
                 " lowPct="+(wingEconomyTicks<=0?0:100.0*wingEconomyLowTicks/wingEconomyTicks).ToString("F1",CultureInfo.InvariantCulture)+
                 " airborne="+(player.velocity.Y!=0f)+" vy="+player.velocity.Y.ToString("F2",CultureInfo.InvariantCulture)+
                 " releaseJump="+player.releaseJump);
+    }
+
+    /// <summary>True while the player is deliberately holding damage to control a
+    /// phase transition. See the call site.
+    ///
+    /// The band is expressed as a fraction of the Boss's max life just ABOVE each
+    /// native threshold, so the hold starts before the transition would happen
+    /// and ends once the transition is safe. `AI_069_DukeFishron` reads
+    /// `life <= lifeMax * 0.5` for phase 2 and `expertMode && life <= lifeMax *
+    /// 0.15` for phase 3, so those two values are the edges to guard.
+    ///
+    /// Hazard clearance is the release condition the owner described: the player
+    /// waits for the Sharkrons and the Cthulhunado to expire before pushing the
+    /// Boss over, because otherwise the new phase starts with the old phase's
+    /// projectiles still in the air. A hard cap on the hold keeps a pathological
+    /// case (a hazard that never expires) from stalling the run forever.
+    /// </summary>
+    static bool SimulatedPhaseTransitionHold()
+    {
+        if(Game.npc==null) return false;
+        for(int i=0;i<Game.npc.Length;i++)
+        {
+            var npc=Game.npc[i];
+            if(npc==null || !npc.active || !npc.boss || npc.lifeMax<=0) continue;
+            // Would this tick's damage CARRY THE BOSS ACROSS a threshold?
+            //
+            // The first version of this tested whether the Boss was currently
+            // inside a band just above the threshold, which never fired: the
+            // drain is 5-17 HP per tick, so life steps straight over a 2340 HP
+            // band without ever being sampled inside it. The question is not
+            // "where is the Boss now" but "is this the tick that would change
+            // phase", so the test is a crossing test.
+            double life=npc.life;
+            double pending=simulatedDps/60.0;   // this tick's damage
+            bool crossing=
+                (life>0.50*npc.lifeMax && life-pending<=0.50*npc.lifeMax) ||
+                (life>0.15*npc.lifeMax && life-pending<=0.15*npc.lifeMax);
+            if(!crossing) continue;
+            // A hazard still in flight is the reason to wait: pushing the Boss
+            // over now would start the next phase with this phase's projectiles
+            // still in the air, which is exactly the interference the owner
+            // described.
+            bool hazardAlive=false;
+            for(int j=0;j<Game.projectile.Length;j++)
+            {
+                var proj=Game.projectile[j];
+                if(proj==null || !proj.active) continue;
+                if(proj.type==CthulhunadoProjectileType || proj.type==SharkronProjectileType)
+                { hazardAlive=true; break; }
+            }
+            if(!hazardAlive) continue;
+            if(simulatedHoldTicks>=SimulatedPhaseHoldMaxTicks) return false;
+            // Health gate. Extending a fight is not free -- the measured failure
+            // at weak/1600 with the hold ON is that the run lasted longer, took
+            // the same number of hits, and ran out of health with the Boss still
+            // at 9956. A real player only chooses to wait when the wait is
+            // affordable, so the hold is refused unless the player is healthy
+            // enough for the delay to be worth taking. This is the difference
+            // between "wait for the tornado" and "stand in the tornado".
+            var holder=Game.player!=null && Game.player.Length!=0?Game.player[0]:null;
+            if(holder!=null && holder.statLife*2 < holder.statLifeMax) return false;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>DIAGNOSTIC ONLY: retire one hazard projectile type outright.    ///

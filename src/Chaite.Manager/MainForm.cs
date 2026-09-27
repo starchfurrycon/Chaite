@@ -60,6 +60,10 @@ namespace Chaite.Manager
 
         private readonly Label _status = UiTheme.Label("正在检查游戏…", 10.5f, true);
         private readonly Label _statusDetail = UiTheme.Paragraph(string.Empty);
+        /// <summary>The one-line instruction for controlling the Boss's phase
+        /// transition. See the footer construction for why it is stated at all,
+        /// and why it carries no explanation.</summary>
+        private readonly Label _phaseHint = UiTheme.Paragraph(string.Empty);
         private readonly Label _memeLine = UiTheme.Paragraph(string.Empty,
             UiTheme.Muted);
         private readonly UiTheme.CloseButton _close = new UiTheme.CloseButton();
@@ -426,6 +430,25 @@ namespace Chaite.Manager
 
             var right = UiTheme.Table(1);
             right.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+            // OWNER RULING 2026-09-26: the phase transition has to be shown,
+            // because the state machine CANNOT be no-hit unless the player
+            // controls it. The Boss drops into the next phase carrying the
+            // previous phase's projectiles -- the Sharkrons and the Cthulhunado
+            // released just before the threshold are still in the air, and they
+            // then interfere with the harder phase's movement. A real player
+            // waits for them to expire before pushing the Boss over. That is a
+            // deliberate action the mod cannot take, so it is stated once, in one
+            // short line, and only when a run is installed and actionable.
+            //
+            // It is one line with no sub-clause on purpose: the owner has ruled
+            // that long explanatory sub-text is deleted, so this says what to do
+            // and nothing about why.
+            _phaseHint.Name = "PhaseHint";
+            _phaseHint.TextAlign = ContentAlignment.MiddleRight;
+            _phaseHint.Margin = new Padding(0, 0, 0, 4);
+            _phaseHint.Text = "转阶段前停手，等龙卷与鲨鱼消失再打";
+            _phaseHint.ForeColor = UiTheme.Accent;
+            right.Controls.Add(_phaseHint);
             _statusDetail.Name = "StatusDetail";
             _statusDetail.TextAlign = ContentAlignment.MiddleRight;
             _statusDetail.Margin = new Padding(0, 0, 0, 6);
@@ -580,6 +603,10 @@ namespace Chaite.Manager
                 _status.ForeColor = UiTheme.Danger;
             }
             var usable = installed || supported;
+            // The transition instruction only makes sense once a run is in place,
+            // so it is shown exactly when the console is actionable and hidden
+            // otherwise -- a disabled console should not be giving play advice.
+            _phaseHint.Visible = usable;
             BuildColumns(usable ? path : null);
             RefreshMemes(usable ? path : null);
             _memeLine.Text = MemeVoice.Line(
