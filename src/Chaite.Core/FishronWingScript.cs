@@ -253,6 +253,19 @@ namespace Chaite.Core
             get { return Environment.GetEnvironmentVariable(NoChargeDashVariable) == "1"; }
         }
 
+        private const string ChargeClimbAwayVariable = "CHAITE_CHARGE_CLIMB_AWAY";
+
+        /// <summary>True when the ascend beat refuses to lift while the Boss is
+        /// below the player. Default OFF, so the reviewed circuit is reproduced
+        /// exactly and this can be swept on whole native fights without a rebuild.
+        /// The evidence for it is in the beat-1 comment: at the measured t=2251 hit
+        /// the beat lifted with the Boss below, which held the player inside the
+        /// 71 px body box along the frozen charge line instead of leaving it.</summary>
+        private static bool ChargeClimbAwayArmed
+        {
+            get { return Environment.GetEnvironmentVariable(ChargeClimbAwayVariable) == "1"; }
+        }
+
         // REFUTED and deliberately deleted, so nobody re-adds it: driving the
         // vertical half of the locked-charge escape straight from the lock
         // geometry (an experiment called CHAITE_CHARGE_NORMAL_OWNER, with a
@@ -1228,6 +1241,35 @@ namespace Chaite.Core
                     vertical = _chargeNormalSequence >= 0 && _chargeNormalVertical > 0
                         ? 1
                         : -1;
+                    // MEASURED REFINEMENT (dense native trace, strong 600, the
+                    // t=2251 hit). The lift above is the beat's default, and it is
+                    // wrong whenever the Boss is BELOW the player: the charge line
+                    // then runs upward through the player, so lifting moves the
+                    // player ALONG that line instead of off it. In the measured
+                    // hit the Boss was below (boss y 4430.7 vs player y 4329.5,
+                    // i.e. dy -101.2) and the beat climbed, which held |dy| inside
+                    // the 71 px body box (62.3, 51.2, 40.3, 32.6, 25.2, 18.1,
+                    // 11.3, 4.8, 1.5 ... 27.1) for the whole arrival while |dx|
+                    // only just cleared 85. Both boxes were satisfied for ticks
+                    // 2239-2245, which is the contact.
+                    //
+                    // The escape that works is perpendicular to the frozen line:
+                    // simulated against the real lock geometry, a perpendicular
+                    // cruise of the wing's own 13.87 takes |perp| clear with NO
+                    // contact at all, while the horizontal-only escape contacts at
+                    // tick 3. The missing component is vertical, and it is ~10
+                    // px/tick against the measured ~0.
+                    //
+                    // So the rule is one-sided: never lift while the Boss is
+                    // below, never dive while it is above. That is the exact
+                    // content of "do not climb back onto the locked line", applied
+                    // to the beat that was free to violate it.
+                    if (ChargeClimbAwayArmed && _chargeNormalSequence >= 0 &&
+                        !float.IsNaN(_chargeNormalVertical) &&
+                        player.Center.Y >= boss.Center.Y)
+                    {
+                        vertical = 1;
+                    }
                     phase = "fishron-wing-charge-ascend";
                     break;
                 default:

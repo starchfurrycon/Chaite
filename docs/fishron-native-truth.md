@@ -9182,13 +9182,88 @@ This also explains, in one stroke, the non-monotonicity the owner predicted: a h
 the fight, it *skips the attack sequences that contain the unanswerable commits*. The outcome is a property of
 which Boss cycles occur, not of how well the circuit plays.
 
-### 124.6 Wall-clock is not the obstacle
+### 124.6 RETRACTED IN PART — the owner's corrections are mechanically right
+
+The owner rejected this section's conclusion on three specific grounds, and on measurement **all three hold**.
+This subsection supersedes 124.3, 124.4 and 124.5, which are kept only as a record of the error.
+
+**(a) "加速是能突破的" -- the escape is NOT impossible.** The model in 124.3 assumed the player enters the arrival
+with no acceleration. That is wrong: the native dense trace shows the player already moving at **13.26-14.50
+px/tick horizontally** at contact, and `wingAccRunSpeed 13.87` -- the wings cruise *faster than the Shield dash's
+14.5 is close to*. Simulated against the real lock geometry:
+
+```
+escape direction                first body contact
+horizontal only (what it did)   tick 3
+perpendicular, wing cruise 13.87   NONE (clean)
+perpendicular dash then cruise     NONE (clean)
+perpendicular, NO dash at all      NONE (clean)
+```
+
+So the player is not helpless at 121 px. **124.3's "cannot be dodged by moving" is refuted.**
+
+**(b) "克盾冲刺能提供极大加速度" -- and the perpendicular dash is worth exactly the missing margin.** The body box
+needs 85 px of perpendicular clearance. The measured escape peaks at **72.6 px** at tick 2241 -- short by 12.4. A
+15-tick perpendicular dash supplies `(14.5 - 8.9) * 15 =` **84 px** of extra clearance. The dash is a genuinely
+decisive tool that the circuit fires in the wrong direction: in the hit run the dash goes to `+x` while the
+perpendicular escape direction is `(+0.701, -0.713)`.
+
+**(c) "怎么会出现玩家突然静止不动" -- correct, and it is the real defect.** At tick 2251 the plan is
+`horizontal: +1, controlRight: True` while the aim point is `x = 2096.8` and the player is at `x = 2158.8`. The
+plan drives the player **toward** the aim. The vertical command over the whole arrival is `-0.74 .. +2.76`, i.e.
+essentially flat, while the perpendicular escape needs about **-10 px/tick downward**. Over 13 ticks that is a
+**129 px** vertical deficit. `plvx` then reverses hard (`13.26 -> -9.00`) and decays back through `4.50`, which is
+what "suddenly standing still" is: a body-hit recoil plus a slow rebuild, not a command to stop.
+
+**(d) The dash is cut short.** `eocDash` starts at 15 but the body contact at tick 2239 sets `eocDash = 10`, so the
+dash yields only ticks 2237-2239 and the escape is truncated at its peak.
+
+**(e) The 300 DPS floor is NOT structurally unreachable.** 124.5's arithmetic stands as a *statement about the
+current circuit's endurance*, not about the mechanic: `600 DPS` needs 7800 ticks against a measured death at 4218,
+so the circuit must be roughly **twice** as enduring, not six times. The six-times figure came from treating one
+unavoidable hit per 650 ticks as a mechanic limit when it is a controller defect.
+
+### 124.7 First corrective rule measured: never lift while the Boss is below
+
+`CHAITE_CHARGE_CLIMB_AWAY=1` (default OFF) stops the ascend beat from lifting when `player.Center.Y >=
+boss.Center.Y`. Motivation: at the measured hit the Boss was below (boss y 4430.7, player y 4329.5), so the frozen
+charge line ran *upward through the player* and the beat's default lift moved the player along that line rather
+than off it, holding `|dy|` at 62.3, 51.2, 40.3, ... 4.8 -- inside the 71 px box -- for the whole arrival.
+
+MEASURED (obsidian, 320 tiles, strong wing):
+
+```
+             climb_away OFF            climb_away ON
+ 600 DPS     6 hits, died @4218        5 hits, died @3781
+ 800 DPS     -                        5 hits, died @5070
+1000 DPS     4 hits, died @4850        5 hits, died @4664
+1200 DPS     0 hits, killed @4438      1 hit,  killed @4437
+```
+
+It moves hits in the right direction at 600 (6 -> 5, `npc contact` 3 -> 5) but shortens the 600 run, and it costs
+one hit at 1200. **Net: not a fix, and left default-OFF.** The honest reading is that the vertical component of the
+escape is a real lever and this particular one-sided rule is too blunt -- it acts on every ascend-beat frame rather
+than only when the player is inside the arrival window.
+
+### 124.8 What is now established, and what is next
+
+**Established.** The player has enough speed. The perpendicular escape works with no dash at all. The circuit's
+defect is that it holds a flat vertical command (0 to +2.8 where -10 is needed) and fires its one dash along `+x`
+instead of perpendicular, and the dash is then truncated by the very contact it failed to avoid.
+
+**Next, in order.** (1) Compute the perpendicular escape *vector* at the lock and steer `horizontal` to its sign
+rather than to `AwayFromBossAxis`, since the dash can only write `velocity.X` and must therefore carry the
+horizontal half of a perpendicular escape. (2) Hold the vertical command at the escape sign for the whole arrival
+window rather than per beat. (3) Spend the dash early enough that its 4 i-frames cover the arrival, given that a
+contact truncates it.
+
+### 124.9 Wall-clock is not the obstacle
 
 A full 300 DPS fight would be 260 s of game time. Measured conversion from the dense runs: 1200 DPS completed a
 4438-tick fight in **47 s wall**, so 15600 ticks is roughly **165 s**, comfortably inside the 900 s cap. The floor
 is not blocked by the harness.
 
-### 124.7 Stated plainly
+### 124.10 Stated plainly (SUPERSEDED by 124.6)
 
 **The 300 DPS floor is recorded as structurally unreachable** under the current constraints: one flat 320-tile
 Ocean arena, no platform rows (the owner's ruling), Obsidian armour as the honest tier, and a formula state machine
