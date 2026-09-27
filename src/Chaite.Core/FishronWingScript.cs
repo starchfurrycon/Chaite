@@ -43,8 +43,20 @@ namespace Chaite.Core
     /// </summary>
     public sealed class FishronWingScript
     {
-        /// <summary>AI_069 treats the first and last 400 tiles as the ocean band.</summary>
-        private const float OceanBandPixels = 6400f;
+        /// <summary>AI_069 treats the first and last 400 tiles as the ocean band.
+        ///
+        /// MEASURED (round 157, when the arena was shortened to 320 tiles):
+        ///
+        /// The band and the arena have to agree. With the arena at the owner's 320
+        /// tiles the real ground ends at x = 5120, but this constant is a band
+        /// WIDTH measured from the world edge, and `worldLeft` is a hardcoded 16,
+        /// so 6400 put the band's right edge at 6156 -- 1036 px of band past the
+        /// end of the ground. The weak wing chased that band and died at tick 2916
+        /// with the Boss at 18605, where on the 399-tile arena the very same run
+        /// was a clean 3-hit kill at 3659. The strong wing was unaffected, which
+        /// is why the fault was easy to miss. 5120 is the arena's own width, so
+        /// the band now ends where the ground does.</summary>
+        private const float OceanBandPixels = 5120f;
         /// <summary>AI_069 enrages below this native player Y.</summary>
         private const float SkyEnrageCeiling = 800f;
         private const float CeilingMargin = 480f;

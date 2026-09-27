@@ -1870,7 +1870,14 @@ public static class ChaiteGameProbe
     // The floor is the whole arena. There are no platform rows: the real fight
     // is on one long straight flat ground, so the fixture gives it one.
     static int ArenaGroundLeft { get { return scenario!=null && scenario.Ocean?1:800; } }
-    static int ArenaGroundRightExclusive { get { return scenario!=null && scenario.Ocean?400:3400; } }
+    // OWNER RULING 2026-09-26: the arena must not be longer than the Ocean band,
+    // because Duke Fishron ENRAGES when it leaves the biome, and the Ocean is only
+    // about 300 tiles wide. The owner's instruction was "it would be better to fix
+    // it at 320 tiles", and the owner also said the previous 399 could not be made
+    // any longer -- the constraint is the biome, not the runway.
+    //
+    // 321 exclusive is 320 tiles (1..320), which is the owner's number.
+    static int ArenaGroundRightExclusive { get { return scenario!=null && scenario.Ocean?321:3400; } }
     /// <summary>
     /// How far the ocean scenario's flat ground is built to, in tiles, past the
     /// arena's own right edge.

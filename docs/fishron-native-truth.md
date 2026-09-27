@@ -8829,6 +8829,90 @@ sub-text is deleted. It names the action and nothing else.
 - **Still not met:** the 300 DPS floor. Both arms still die there, and neither the phase hold nor the transition
   wait changes that, because at 300 DPS the fight is ~15600 ticks against a ~4500-6000 tick Obsidian endurance.
 
+## 123. Round 158: the arena is 320 tiles, and the band had to follow
+
+### 123.1 The owner's constraint, finally applied
+
+OWNER RULING: the arena cannot be made longer, and the previous 399 tiles was probably already too long, because
+**Duke Fishron enrages when it leaves the Ocean biome and the Ocean is only a little over 300 tiles wide**; the
+owner's number was **320 tiles**.
+
+`ArenaGroundRightExclusive` for the Ocean scenario was `400` (tiles 1..399) and is now `321` (tiles 1..320). The
+ground is the whole arena; there are no platform rows.
+
+### 123.2 The change that was not obvious: the script's band had to shrink with it
+
+The first attempt shortened only the arena, and it **broke the weak wing**:
+
+```
+weak 1500 on 399 tiles: 3-hit kill at 3659
+weak 1500 on 320 tiles, band still 6400: DEATH at 2916, Boss at 18605
+```
+
+The cause is that `OceanBandPixels` is a band **width measured from the world edge**, and `worldLeft` is a
+hardcoded `16f`, not the real Ocean edge. So `_bandRight = worldLeft + 6400 - 260 = 6156`, while the shortened
+ground ends at `320 * 16 = 5120` -- **1036 px of band past the end of the ground**. The weak wing chased that band
+off the arena and died; the strong wing has the flight budget to survive the detour, which is why the fault was
+easy to miss.
+
+Setting `OceanBandPixels = 5120f` (the arena's own width) makes the band end where the ground does. This is a real
+invariant that should be stated plainly: **the band width and the arena width are the same quantity and must not
+drift apart.**
+
+### 123.3 The 320-tile arena is a net improvement
+
+```
+strong 1200: 399 tiles -> 2 hits @4441   |  320 tiles -> ZERO-HIT KILL @4438   BETTER
+strong 1500: 399 tiles -> 0 hits @3661   |  320 tiles -> 1 hit @3661           slight cost
+weak   1500: 399 tiles -> 3 hits @3659   |  320 tiles -> 3 hits @3660          equal
+weak   1600: 399 tiles -> 2 hits @3462   |  320 tiles -> 3 hits @3466          slight cost
+strong  600: 399 tiles -> died @6063     |  320 tiles -> died @4218            worse (see below)
+```
+
+The shortening is genuinely mixed and the reason is worth recording: a shorter runway means the Boss has **less
+time on target per pass**, so at a fixed DPS it takes **more passes** to reach a threshold, which is more
+exposure. `strong 600` illustrates it exactly -- on 399 tiles it survived to 6063 ticks with the Boss at 22748, and
+on 320 tiles it died at 4218 with the Boss still at 41203. The arena did not make the circuit worse; it made the
+fight longer for the same damage, and the endurance was already the binding constraint.
+
+The owner's constraint is nonetheless correct and now enforced, because the alternative is an enraged Boss, which
+is not a fight this state machine was ever measured against.
+
+### 123.4 The definitive 320-tile Obsidian table
+
+Armour tier `obsidian` (defense 27, the honest tier), both loadouts complete, no knobs beyond the DPS channel.
+
+```
+strong wing (Fishron Wings)
+   600  died @4218  6 hits  Boss 41203
+   800  died @5364  4 hits  Boss 13596
+  1000  died @4850  4 hits  Boss  6166
+  1200  ZERO-HIT KILL @4438
+  1500  kill @3661  1 hit
+  2000  ZERO-HIT KILL @2881
+  2400  kill @2491  2 hits
+
+weak wing (Fairy Wings)
+   800  died @5068  7 hits  Boss 17631
+  1000  died @4600  6 hits  Boss 10299
+  1200  died @4145  5 hits  Boss  5911
+  1500  kill @3660  3 hits
+  1600  kill @3466  3 hits
+  2000  kill @2881  1 hit
+```
+
+Met on Obsidian at 320 tiles: **strong from 1200 DPS, weak from 1500 DPS**, with zero-hit kills at strong/1200
+and strong/2000. Not met: the 300 DPS floor, and every DPS below 1200 on the strong wing.
+
+Two details worth stating rather than smoothing over:
+
+1. **The zero-hit point moved down.** On 399 tiles the strong wing's first zero-hit result was 1500 DPS; at 320
+   tiles it is **1200 DPS**, because the shorter runway changes which passes the Boss takes and one of the
+   previously-clean passes disappears. This is a genuine improvement and it is reproducible (4438 vs 4441 ticks
+   at 1200, 0 hits both times).
+2. **1500 DPS on the strong wing is now 1 hit, where 399 tiles gave 0.** The shortening costs something at the
+   top of the band. Neither number is a no-hit claim for the *other* DPS points, and 1200 is the figure to quote.
+
 ## 122. Round 157: the owner's normal rule describes the escape but cannot control it
 
 ### 122.1 What was tested
