@@ -63,7 +63,20 @@ foreach ($name in @(
         'CHAITE_COLOCATION_ROUTES', 'CHAITE_APEX_REFILL', 'CHAITE_DASH_SUPPRESS',
         'CHAITE_DASH_DELAY', 'CHAITE_NO_CHARGE_DASH', 'CHAITE_REFILL_GUARD',
         'CHAITE_BAND_TARGET', 'CHAITE_WIDTH_HOLD', 'CHAITE_ALTITUDE_HOLD',
-        'CHAITE_OVERLAP_SUPPRESS', 'CHAITE_CHARGE_FACING', 'CHAITE_NO_CHARGE_REFILL'
+        'CHAITE_OVERLAP_SUPPRESS', 'CHAITE_CHARGE_FACING', 'CHAITE_NO_CHARGE_REFILL',
+        # The simulated-output knobs MUST be cleared too. This route channel is a
+        # control-path record and asserts that replaying a committed route reproduces
+        # the exact control path it was harvested from, which is only meaningful with
+        # NO damage injection (see the note on the expected table below). MEASURED:
+        # with a leftover CHAITE_SIM_DPS=2000 from an earlier experiment in the same
+        # shell, both routes "matched" a kill at 2880/2881 ticks with zero hits --
+        # a completely different run that still looked like a MATCH against a stale
+        # table. Clearing them is what makes this script self-contained.
+        'CHAITE_SIM_DPS', 'CHAITE_SIM_DPS_FULL_TILES', 'CHAITE_SIM_DPS_ZERO_TILES',
+        'CHAITE_SIM_BUBBLE_BREAK', 'CHAITE_ARMOR_TIER', 'CHAITE_APEX_REFILL',
+        'CHAITE_TORNADO_BOX', 'CHAITE_STANDOFF_DISTANCE', 'CHAITE_STANDOFF_PX',
+        'CHAITE_STANDOFF_DPS_MAX', 'CHAITE_STANDOFF_HARD', 'CHAITE_STANDOFF_PRECHARGE',
+        'CHAITE_WEAK_PREJUMP', 'CHAITE_ARENA_PLATFORM_ROWS'
     )) {
     Remove-Item "Env:\$name" -ErrorAction SilentlyContinue
 }

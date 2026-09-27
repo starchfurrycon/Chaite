@@ -199,6 +199,24 @@ namespace Chaite.Core
         /// column. A Cthulhunado is 23 tiles wide, so this is column plus body
         /// plus a full escape.</summary>
         private const float TornadoClearance = 760f;
+        /// <summary>Half-extents of the Cthulhunado column, in px. MEASURED from the
+        /// live projectile at full growth (scale 1.5): width 225 -> half 112, height
+        /// 63 -> half 31, plus the player's own 10 x 21 half-box, rounded out to
+        /// 190 x 110 for margin.</summary>
+        private const float TornadoHalfWidth = 190f;
+        private const float TornadoHalfHeight = 110f;
+        /// <summary>Arm the vertical half of the tornado box. Default OFF so every
+        /// measurement recorded before this round still reproduces.</summary>
+        internal static bool TornadoVerticalArmed
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoVerticalVariable);
+                return !string.IsNullOrEmpty(raw) && raw.Trim() == "1";
+            }
+        }
+
+        private const string TornadoVerticalVariable = "CHAITE_TORNADO_BOX";
         /// <summary>How long a landed Sharknado keeps its column. The pinned
         /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
         private const int TornadoMemoryTicks = 540;
@@ -700,6 +718,7 @@ namespace Chaite.Core
         private int _patternDirection;
         private bool _patternActive;
         private float _tornadoX;
+        private float _tornadoY;
         private int _tornadoTicksLeft;
         private float _bandLeft;
         private float _bandRight;
@@ -795,6 +814,7 @@ namespace Chaite.Core
                     // the position it chose to let the tornado land at, not a
                     // scan of live projectiles.
                     _tornadoX = boss.Center.X;
+                    _tornadoY = boss.Center.Y;
                     _tornadoTicksLeft = TornadoMemoryTicks;
                 }
                 _dashIssued = false;
@@ -1721,8 +1741,54 @@ namespace Chaite.Core
                 Math.Abs(player.Center.X - _tornadoX) < TornadoClearance)
             {
                 // Still inside the column the last Sharknado left behind.
-                // Sharkrons fired from a fixed tornado have limited range, so
-                // horizontal distance is the whole defence.
+                //
+                // MEASURED CORRECTION (round 148). The reviewed gate tests the
+                // HORIZONTAL distance only, and the comment here used to assert that
+                // "horizontal distance is the whole defence" because Sharkrons from a
+                // fixed tornado have limited range. The dense traces say both halves
+                // of that are wrong, on both wings:
+                //
+                //   Cthulhunado (projectile 386) contact events, with |dx| / |dy|:
+                //     strong  5952: |dx| 401  |dy| 172
+                //     strong  9563: |dx| 753  |dy|   9
+                //     strong  9603: |dx| 804  |dy| 216
+                //     strong  9643: |dx| 621  |dy| 254
+                //     weak    6213: |dx| 423  |dy| 202
+                //     weak    9526: |dx| 325  |dy| 121
+                //     weak    9567: |dx| 251  |dy| 342
+                //
+                // Those cannot be body contact (the body box is 85 x 71) and they are
+                // not Sharkron either -- the projectile list at those ticks is
+                // dominated by type 386. So the column damages at 250-800 px
+                // horizontally AND at up to 342 px vertically, i.e. outside the 760 px
+                // gate entirely and at a vertical distance nothing models. The column
+                // grows as it lives: measured width 56 -> 225 and height 15 -> 63 with
+                // scale 0.375 -> 1.5, so the late-phase column is a large box, not a
+                // thin spike.
+                //
+                // The fix is to model the vertical half. If the player is horizontally
+                // inside the column, escape on whichever axis needs the smaller move,
+                // and treat the column's own vertical extent as live.
+                var dxToColumn = player.Center.X - _tornadoX;
+                var dyToColumn = player.Center.Y - _tornadoY;
+                var outX = Math.Abs(dxToColumn) - TornadoHalfWidth;
+                var outY = Math.Abs(dyToColumn) - TornadoHalfHeight;
+                if (TornadoVerticalArmed && outX < 0f && outY < 0f)
+                {
+                    // Inside the column box: leave by the cheaper axis.
+                    if (-outX <= -outY)
+                    {
+                        horizontal = dxToColumn >= 0f ? 1 : -1;
+                        vertical = player.OnGround ? -1 : 1;
+                    }
+                    else
+                    {
+                        horizontal = 0;
+                        vertical = dyToColumn >= 0f ? -1 : 1;
+                    }
+                    phase = "fishron-wing-tornado-box";
+                    return;
+                }
                 horizontal = _tornadoX >= player.Center.X ? -1 : 1;
                 vertical = player.OnGround ? -1 : 1;
                 // MEASURED DEFECT (round 161, the t=2236 lock of strong 600).

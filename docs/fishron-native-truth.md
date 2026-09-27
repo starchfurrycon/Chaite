@@ -10116,6 +10116,80 @@ remain genuinely untested rather than refuted: (a) taking the weak wing's cleara
 axis rather than trying to out-climb, since its horizontal rate is not degraded (measured 7-8 px/tick on
 both wings) while its vertical rate is; and (b) the memorised attack-index controller of 132.8.
 
+## 135. Round 148 (cont.): the tornado's vertical dimension, and a latent hole in the acceptance channel
+
+### 135.1 Long-range damage events are NOT body contact
+
+Inspecting the damage events of the two dense 300-DPS runs against the recorded projectile list
+identified the actual sources, and it corrects a long-standing assumption. Several events happen at
+distances that the 85 x 71 body box cannot reach:
+
+```
+Cthulhunado (projectile 386) present, with the geometry at the damage tick:
+  strong  5952: |dx| 401   |dy| 172
+  strong  9563: |dx| 753   |dy|   9
+  strong  9603: |dx| 804   |dy| 216
+  strong  9643: |dx| 621   |dy| 254
+  weak    6213: |dx| 423   |dy| 202
+  weak    9526: |dx| 325   |dy| 121
+  weak    9567: |dx| 251   |dy| 342
+```
+
+Those are contacts with the **Cthulhunado column**, which the owner had flagged as the dangerous attack.
+The column grows as it lives -- measured `width` 56 -> 225 and `height` 15 -> 63, `scale` 0.375 -> 1.5 --
+so the late column is a large box, and it reaches the player at over 250 px horizontally and up to 342 px
+vertically.
+
+### 135.2 The tornado gate models only the horizontal axis
+
+The circuit's avoidance is `Math.Abs(player.Center.X - _tornadoX) < TornadoClearance` (760 px) plus a
+comment asserting that "horizontal distance is the whole defence". The vertical axis is not modelled at
+all, and `_tornadoX` alone was remembered even though the column is fired from the Boss's own centre (so
+its Y is known for free).
+
+Added: `_tornadoY` tracking from the same spawn tick, measured half-extents (`TornadoHalfWidth` 190,
+`TornadoHalfHeight` 110, from width 225 / height 63 plus the player half-box), and a box rule under
+`CHAITE_TORNADO_BOX` that escapes by the cheaper axis when inside the box.
+
+### 135.3 Result: the box is inert at 300 and harmful elsewhere, so it stays OFF
+
+```
+              default              CHAITE_TORNADO_BOX=1
+strong  300   10004 / 8 / 30628    10004 / 8 / 30628   <- BYTE-IDENTICAL
+strong  600    6744 / 6 / 15937     5610 / 5 / 27277
+strong 1200    4437 / 1 / KILL      4437 / 1 / KILL
+strong 2000    2881 / 0 / KILL      2881 / 0 / KILL
+weak    300    5879 / 8 / 51124     3698 / 6 / 62047   <- much worse
+weak    800    6380 / 5 / KILL      6375 / 6 / KILL
+```
+
+The strong-300 result being **byte-identical** is the informative part: the box rule never fires there, so
+at the DPS that matters the player is never inside the box when the gate is active. The 250-800 px
+Cthulhunado contacts therefore happen **outside the 760 px horizontal gate** -- i.e. after `_tornadoTicksLeft`
+has expired, when the circuit has stopped modelling the column at all. That is a different defect from the
+one this round fixed, and it is the real lead: the tornado's damage lifetime outlasts the circuit's memory
+of it. Left default-OFF; the tracking and sweepable rule stay in the tree.
+
+### 135.4 A latent hole in the acceptance channel itself -- found and fixed
+
+While verifying, `verify-fishron-routes.ps1` reported **DRIFT on both routes** with nonsense values
+(strong 2880/0/kill, weak 2881/2/kill). The cause was not the circuit: the script cleared the control
+knobs but **not the simulated-output knobs**, so a `CHAITE_SIM_DPS=2000` left in the shell by the previous
+sweep leaked into the route replay and injected 77967 damage into what is supposed to be a damage-free
+control-path record.
+
+This matters more than a nuisance. The objective names `CHAITE_ROUTE_FILE` as the **acceptance channel**,
+and this bug meant that channel could be silently converted into a damage-injecting run that still
+*matched* a stale expected table -- a false MATCH in the one place the objective relies on. It has been
+present since the route checks were written.
+
+Fixed by clearing every simulated-output variable in that script, and **proven** by poisoning the shell
+deliberately and re-running: both routes then reproduce their recorded results correctly (strong
+6000/6/False, weak 5636/9/True, `MATCH`), because the script no longer depends on the ambient environment.
+The general lesson, and the second instance this session after the `CHAITE_POLICY_FILE` trap of section 128:
+**every acceptance script must clear the full `CHAITE_*` environment rather than the subset it happens to
+know about.**
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
