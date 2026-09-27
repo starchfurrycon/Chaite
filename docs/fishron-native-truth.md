@@ -9919,6 +9919,98 @@ rather than reactive. A controller that tracks the attack index and answers the 
 directly is a different design, not a tuning of this one, and it is the only direction the evidence has
 not yet ruled out.
 
+## 133. Round 147: the dash's vertical gate is a strong-arm-only lever, and it is refuted as a change
+
+### 133.1 The lever
+
+The dash is the only tool that adds acceleration rather than velocity (measured +22.56 px/tick^2 to 14.50
+once, then decaying), so it is the natural candidate for the 1.5x crossing-rate gap of section 131.1. Two
+knobs gate it during a charge and both were defaulted to what the reviewed circuit does:
+
+* `CHAITE_DASH_DELAY` (default 0) -- ticks after the lock before the dash may fire. The earlier sweep
+  recorded in the tree only tested values of 12 and up; the low end had never been measured.
+* `CHAITE_DASH_SUPPRESS` (default 60) -- vertical gap in px below which a ready charge dash is refused,
+  because "the escape is mostly vertical; a horizontal dash cannot win along the charge axis".
+
+### 133.2 Delay: refuted, and sharply
+
+```
+delay      300 dps
+0 (base)   10004 / 8 / 30628
+2           5661 / 6 / 52340
+4           9637 / 10 / 32439
+6           6140 /  7 / 49981
+8           5324 /  9 / 54058
+```
+
+Every non-zero delay collapses the run. Delay 0 is not a default by accident; firing the dash on the
+lock tick is load-bearing, exactly like the body-hit itself (section 128).
+
+### 133.3 The vertical gate: helps the strong arm widely, and is still a net negative
+
+`CHAITE_DASH_SUPPRESS` swept at 300 dps:
+
+```
+sup=15   10811 / 8 / 26586    <- same 8 hits, +807 ticks
+sup=20    9819 / 10 / 31532
+sup=25    9977 /  9 / 30742
+sup=30   10826 /  9 / 26520    <- best endurance, +1 hit
+sup=35   10826 /  9 / 26520    (saturates)
+sup=40   10064 / 10 / 30288
+sup=50    6902 /  6 / 46080    <- collapse
+sup=60    6367 /  6 / 48774    <- collapse (the default)
+default  10004 / 8 / 30628
+```
+
+The gate **saturates between 30 and 35** and collapses from 50, so the reviewed default of 60 sits just
+past a cliff on the bad side -- a genuinely suspicious value. Across the strong arm, sup=30 is good:
+
+```
+              default (sup 60)        sup=30
+strong  300   10004 / 8 / 30628       10826 / 9 / 26520
+strong  600    6744 / 6 / 15937        6584 / 6 / 17498   worse
+strong  800    5057 / 4 / 17755        6385 / 3 / KILL    better
+strong 1000    4573 / 3 / 10777        4073 / 3 / 19111   much worse (dies)
+strong 1200    4437 / 1 / KILL         4435 / 0 / KILL    ZERO-HIT KILL
+strong 1500    3661 / 1 / KILL         3661 / 1 / KILL    same
+strong 2000    2881 / 0 / KILL         2881 / 0 / KILL    same
+```
+
+including a new **zero-hit kill at strong 1200** (the first at that DPS). But the weak arm is destroyed:
+
+```
+              default                 sup=30
+weak    300    5879 / 8 / 51124       4507 / 7 / 58083
+weak    600    4741 / 6 / 35818       4503 / 7 / 38293
+weak    800    6380 / 5 / KILL        6382 / 4 / KILL
+weak   1500    3656 / 4 / KILL        3210 / 5 / dies
+weak   2000    2881 / 1 / KILL        1621 / 5 / dies
+```
+
+Those weak-arm numbers are baseline (no standoff, since the standoff is DPS-gated to <=450). So the gate
+is a strong-arm-only lever and **is not promoted**. The tree is unchanged from the committed state, and
+the committed points were re-verified (strong 300 10004/8/30628, strong 2000 2881/0/kill, weak 800
+6380/5/kill).
+
+### 133.4 What this round adds
+
+Two more full-band perturbations refuted, in addition to the three of section 132. The dashboard is now:
+
+* **The strong arm is the one that works, and it is close.** At target DPS it kills everywhere from 1200
+  up, with a **measured zero-hit kill at 2000** and now one at 1200 under a refuted knob. Its blocker is
+  the low-DPS arm only.
+* **The weak arm is the real gap.** Its baseline is worse than the strong arm at *every* DPS (weak 300
+  5879 vs strong 10004) and the knee is much lower. The owner's note that the two wings "should have two
+  sets written because their vertical mobility differs" is, on this evidence, not yet honoured: the shared
+  circuit is tuned around the strong wing's vertical budget, and every knob that helps the strong arm
+  hurts the weak one.
+
+**The next round should stop tuning the shared circuit and give the weak wing its own behaviour**, since
+that is both what the owner asked for and where the measurements point. Specifically: the weak wing's
+lower climb rate (its vertical escape is weaker) is why `sup` refusals and the standoff both hurt it --
+it cannot afford to decline a dash or spend ticks repositioning. A weak-specific variant should keep the
+dash unconditionally and take its clearance from the horizontal axis instead.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
