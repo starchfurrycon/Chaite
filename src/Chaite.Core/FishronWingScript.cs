@@ -228,22 +228,14 @@ namespace Chaite.Core
         ///   |dx| < 760 (the gate)   : 634 ticks (72.0%)
         ///   |dx| < 190 (column box) : 491 ticks (55.7%)
         ///
-        /// and the fatal stretch is the player pinned on the arena wall. At tick 9540
-        /// the player reaches world x = 15 (the arena's left edge) while the column
-        /// centre is at x = 61, so the separation is 48 px against a column half-width
-        /// of about 56 px. From there the trace is frozen: |dx| 48, 48, 52, 52 for the
-        /// rest of the run, still inside the gate, still in the `tornado-clear` branch
-        /// commanding escape, and no longer able to move. The hits at 9563 and 9603
-        /// land with |dx| 13 and 43.
+        /// A larger radius pushes the player across the arena, which is what the
+        /// owner's technique notes describe ("get the Sharknado released at the two
+        /// ends", "keep the whole width available to run back into"). Sweepable
+        /// because the right value is an empirical question.
         ///
-        /// The gate is therefore not too small in the sense of the push being too
-        /// weak -- it is that 760 px of HORIZONTAL clearance is not enough to guarantee
-        /// the player is outside a column that ends up beside them, and once the
-        /// escape is spent against a wall there is no recovery. A larger radius pushes
-        /// the player across the arena, which is what the owner's technique notes
-        /// describe ("get the Sharknado released at the two ends", "keep the whole
-        /// width available to run back into"). Sweepable because the right value is an
-        /// empirical question; the reviewed 760 is the default.</summary>
+        /// MEASURED RESULT: 760 is OPTIMAL, and every other value is worse (135.5):
+        /// 1200 -> 7867, 1600 -> 4679, 2200 and 3000 both -> 3658. The escape radius
+        /// is a knife edge and the reviewed value sits on it.</summary>
         internal static float TornadoClearanceRadius
         {
             get
@@ -259,8 +251,41 @@ namespace Chaite.Core
         }
 
         private const string TornadoClearanceVariable = "CHAITE_TORNADO_CLEARANCE";
-        /// <summary>How long a landed Sharknado keeps its column. The pinned
-        /// build gives projectile 384 a timeLeft of 540 ticks.</summary>
+        /// <summary>How long a landed Sharknado keeps its column.
+        ///
+        /// MEASURED (round 148/149): the Cthulhunado (projectile 386) is present in one
+        /// continuous episode of **881 ticks** (9125..10004) with a recorded `timeLeft`
+        /// reaching 840, against a memory of 540 -- so a ~341-tick window exists in
+        /// which the circuit has forgotten a column that is still there.
+        ///
+        /// MEASURED RESULT: extending the memory is REFUTED, and by a very narrow
+        /// margin. 540 -> 10004/8/30628, but **560 is already past the cliff**:
+        ///
+        ///   560, 600, 620, 640, 660, 700, 900, 1200, 1600  ->  ALL 6969 / 8 / 45782
+        ///
+        /// Every value above 540 collapses to one identical failure tick. The cause is
+        /// a coupling, not the column: this branch RETURNS, so while it is active the
+        /// pre-charge jump below it never runs, and `PreJumpTicks = 20` is exactly the
+        /// wind-up the jump needs. Persisting the gate a few ticks longer therefore
+        /// suppresses the jump often enough to lose the run -- a 20-tick change flips
+        /// it. The 540 value is another knife edge that the reviewed circuit has right.
+        /// Sweepable via <c>CHAITE_TORNADO_MEMORY</c> for future measurement; default
+        /// is the reviewed 540.</summary>
+        internal static int TornadoMemoryHorizon
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoMemoryVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 || value > 3000)
+                    return TornadoMemoryTicks;
+                return value;
+            }
+        }
+
+        private const string TornadoMemoryVariable = "CHAITE_TORNADO_MEMORY";
         private const int TornadoMemoryTicks = 540;
         /// <summary>Centre-to-centre distance inside which the Boss body itself
         /// is the threat. A charge that ends beside the player leaves the Boss
@@ -857,7 +882,7 @@ namespace Chaite.Core
                     // scan of live projectiles.
                     _tornadoX = boss.Center.X;
                     _tornadoY = boss.Center.Y;
-                    _tornadoTicksLeft = TornadoMemoryTicks;
+                    _tornadoTicksLeft = TornadoMemoryHorizon;
                 }
                 _dashIssued = false;
             }
@@ -1831,6 +1856,23 @@ namespace Chaite.Core
                     phase = "fishron-wing-tornado-box";
                     return;
                 }
+                // MEASURED NOTE (round 149): the horizontal escape is NOT blocked by
+                // the arena edge, so do not add a wall fallback here. An earlier draft
+                // of this round claimed a "wall pin" from a relative-coordinate
+                // misreading -- the trace was read as world x = 15 against a column at
+                // x = 61, i.e. 48 px apart. The raw record says otherwise: the player
+                // is at x 2236 and the column at x 2476, i.e. **240 px** apart, and the
+                // printed 15/61 were local-to-column offsets. A wall fallback written on
+                // that reading measured byte-identical on both arms, which is what a
+                // never-true condition looks like.
+                //
+                // The decompiled aiStyle 64 is still worth having, because it bounds
+                // what this branch can ever achieve: `width = 150 * scale` and
+                // `height = 42 * scale` with scale capped at 1.5 for type 386, so at
+                // full growth the column is 225 x 63 -- about 112 px wide but only 31 px
+                // per side vertically -- and its only motion is a `cos` sway of
+                // amplitude `width/5 * 2 = 90` px on X. It is wide and flat, and it
+                // never moves vertically.
                 horizontal = _tornadoX >= player.Center.X ? -1 : 1;
                 vertical = player.OnGround ? -1 : 1;
                 // MEASURED DEFECT (round 161, the t=2236 lock of strong 600).

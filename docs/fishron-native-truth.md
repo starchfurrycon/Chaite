@@ -10247,6 +10247,109 @@ family -- it costs nothing geometrically (the gate radius stays at its optimum) 
 where the circuit is currently blind. That is the next round's first test, and it needs the clearing to be
 sweepable, which it now is.
 
+## 136. Round 149: the tornado ablation -- the column costs the strong wing the run, and does NOT touch the weak wing
+
+### 136.1 The decisive experiment
+
+Section 135.5 concluded from projectile-list correlation that the column caused four of the strong-300
+hits. Correlation is not causation, so this round ablated it directly with the probe's existing
+`CHAITE_SIM_RETIRE_PROJECTILE` (it deactivates every projectile of a given type each frame). A null control
+was run first: retiring an **inert** type must change nothing, and it does not.
+
+```
+                        default                 retire 9999 (null control)   retire 386 (tornado)
+strong  300   10004 / 8 / 30628  dies     10004 / 8 / 30628  identical    16077 / 9 / 0  KILL  ACCEPTED
+weak    300    5879 / 8 / 51124  dies       --                            5879 / 8 / 51124  BYTE-IDENTICAL
+strong  600    6744 / 6 / 15937  dies       --                            8333 / 4 / 0    KILL
+weak    800    6380 / 5 / KILL              --                            6367 / 4 / KILL
+```
+
+The null control being byte-identical is what licenses the attribution, and the result is much stronger
+than the correlation suggested: **removing the column converts the strong wing's 300-DPS run from a death
+into an accepted kill.**
+
+### 136.2 The column accelerates the drain; it does not merely add hits
+
+This is the subtler half. The strong-300 kill without the column takes **16077 ticks and 9 hits**, i.e. one
+hit per **1786** ticks -- which is *worse* per tick than the doomed run's 8 hits in 10004 ticks (one per
+**1250**). A worse hit rate survives while a better one dies, so raw hit count is not the mechanism. What
+the column changes is the **timing**: it drains life fast enough to reach the death threshold before the
+Boss's health bar is exhausted at 300 DPS.
+
+That reframes the requirement. The objective needs lifetime, not fewer hits: at 300 DPS a kill needs about
+16000 ticks, and the column both shortens the run and front-loads the damage.
+
+### 136.3 The two wings fail for DIFFERENT reasons -- the weak wing is tornado-independent
+
+The most valuable single line in the table is the weak-300 row: retiring the column leaves the run
+**byte-identical** (5879 / 8 / 51124). The weak wing's deficit is therefore entirely independent of the
+tornado, and none of the tornado work in sections 135/136 can help it. Conversely the strong wing's deficit
+is *dominated* by the tornado.
+
+This is the first concrete, measured evidence for the owner's instruction that the two wings need two
+different state machines: they fail through different hazards, not the same hazard at different strength.
+
+### 136.4 The column cannot be destroyed -- it can only be avoided
+
+The decompiled setup for type 386 answers the last remaining option:
+
+```
+width = 150;  height = 42;  hostile = true;  penetrate = -1;
+aiStyle = 64;  tileCollide = false;  timeLeft = 840;
+```
+
+`penetrate = -1` means the column is **invulnerable**: firing at it cannot remove it. And `aiStyle 64`
+shows its true shape -- `width = 150 * scale`, `height = 42 * scale`, scale capped at 1.5 for 386, so at
+full growth **225 x 63**, i.e. about 112 px wide but only **31 px per side vertically**, with its only
+motion a `cos` sway of amplitude `width/5 * 2 = 90` px on X. It is wide, flat, and never moves vertically.
+The measured histogram confirms this exactly (width 150 at scale 1, height 42).
+
+So the column is: undestroyable, untrackable beyond 540 ticks, and already optimally avoided at 760 px.
+
+### 136.5 The whole tornado family is refuted, and the gate is a knife edge
+
+Every accessible lever has now been measured and every one is negative:
+
+```
+lever                        strong 300           verdict
+default (radius 760, mem 540) 10004 / 8 / 30628
+CHAITE_TORNADO_BOX=1          10004 / 8 / 30628   byte-identical, never fires
+radius 1200                    7867 / 8 / 41304   worse
+radius 1600                    4679 / 7 / 57241   worse
+radius 2200 / 3000             3658 / 6 / 62397   worse, both identical
+CHAITE_TORNADO_WALLPIN=1      10004 / 8 / 30628   byte-identical, never fires
+memory 560 / 600 / 620 / 640 / 660 / 700 / 900 / 1200 / 1600   ALL 6969 / 8 / 45782
+```
+
+The memory result is the sharpest. **560 -- a 20-tick increase -- is already past the cliff**, and every
+larger value collapses to one identical failure tick. The cause is a coupling rather than the column: this
+branch `return`s, so while it is active the pre-charge jump below it never runs, and `PreJumpTicks = 20` is
+exactly the wind-up that jump needs. Persisting the gate slightly longer suppresses the jump often enough
+to lose the run. Both 760 and 540 are knife-edge values the reviewed circuit happens to have right.
+
+### 136.6 Two errors corrected, and the lesson
+
+1. The "wall pin" of section 135.5 was a **relative-coordinate misreading**. The trace printed player x 15
+   against column x 61 (48 px apart); the raw record has the player at x 2236 and the column at x 2476,
+   i.e. **240 px** apart. The printed pair were local-to-column offsets. The fallback written on that
+   reading measured byte-identical on both arms -- exactly what a never-true condition looks like -- and has
+   been removed rather than shipped.
+2. `TornadoVerticalArmed`/`TornadoHalfWidth`/`TornadoHalfHeight` (135.2) were built on an over-generous box
+   (190 x 110). The decompiled dimensions are 112 x 31. Left in place default-OFF but flagged, since the
+   corrected box is worth one more measurement.
+
+The lesson, now the sixth instance this session and the reason the ablation mattered: **a plausible causal
+story from correlational data was wrong in its details while right in its conclusion.** Reading the
+projectile list next to each damage tick made four hits *look* like the column; only removing the column
+showed how much of the run it actually owned -- and showed that for the weak wing it owned **none** of it.
+
+### 136.7 What this leaves
+
+- The strong wing: the tornado is the dominant remaining hazard and every avoidance lever is refuted. The
+  next idea must change *when the column is allowed to exist or land*, not how the player evades it.
+- The weak wing: tornado-independent, so its deficit is in the charge and hover geometry where every knob
+  tried so far is also refuted. It needs a different attack, consistent with the owner's two-machines point.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
