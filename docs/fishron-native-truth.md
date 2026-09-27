@@ -9715,6 +9715,37 @@ commits), so steering it means changing the pre-charge approach, not the escape.
 round should work, and section 131.2's failed command-space edit is the evidence that the post-lock side
 is the wrong place to look.
 
+### 131.5 The lock geometry separates the hits cleanly, and names the approach to fix
+
+Characterising the 98 locks by the geometry at the commit (strong 300, dense):
+
+```
+              n     mean vertness   mean sep   mean dy   mean |perp| at lock
+HIT locks     8        0.490          311        +81          29.2
+clean locks  90        0.668          572       +118          44.2
+```
+
+where `vertness` is |uy| of the charge direction (1.0 = straight down or up, 0 = purely horizontal), and
+`|perp|` is the player's perpendicular distance from the charge line at the commit.
+
+Three things fall out, and together they are the most actionable result of the round:
+
+1. **Hit charges are committed from much closer.** Mean separation 311 px against 572 for clean locks.
+   At 17 px/tick, 311 px is about 18 ticks; 572 px is about 34. The escape needs its approach window.
+2. **Hit charges are committed nearly on the line.** Mean |perp| 29.2 against 44.2.
+3. **Every hit is on a DIAGONAL charge.** Not one of the 29 near-vertical charges (|uy| > 0.8) produced a
+   hit, while all 8 hits have mean vertness 0.49. The near-vertical charge is handled reliably; it is the
+   diagonal that fails. That is consistent with the escape's structure: a vertical charge is escaped by
+   horizontal motion, which the wings deliver at 7-8 px/tick, while a diagonal charge needs a component
+   the player can build less well -- and the measured climb rate is 8.61 px/tick but the descent is
+   10.01, so down-left and down-right geometry is asymmetric.
+
+**Therefore the pre-charge approach to change is the standoff.** The circuit already has a
+`StandoffPixels = 720` concept, and the failure mode is that a third of the locks happen at 300-400 px,
+where there is not enough time for the crossing to develop. Holding the Boss further out before the
+commit is a state-space change at the lock -- exactly what 131.2's failed command-space edit could not
+achieve -- and it targets the separation signal directly.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
