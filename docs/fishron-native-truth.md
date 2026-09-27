@@ -9074,3 +9074,131 @@ Two of the nine are a **missing generated fixture**, not a code fault. The remai
 recorded here rather than quietly ignored, because "the suite is green" would be a false statement and the
 acceptance evidence in this document must not be built on one.
 
+## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
+
+### 124.1 First, a correction to this document's own earlier reading
+
+Section 123.3 and the phase reconstruction in it implied that hits were spread across phases and that phase 3 was
+where the damage happened. That reconstruction inferred the phase from `78000 - dps/60*tick`, and it was WRONG.
+The hurt records now carry the Boss's observed life and phase directly, and the true picture is different:
+
+```
+strong 600, all six hits, bossLife reported by the engine:
+  tick 2251  phase 1  bossLife 57862   dmg 116
+  tick 3435  phase 1  bossLife 46013   dmg 108
+  tick 3491  phase 1  bossLife 45453   dmg 126
+  tick 3785  phase 1  bossLife 42513   dmg  68   (projectile 384)
+  tick 3825  phase 1  bossLife 42113   dmg 107
+  tick 3865  phase 1  bossLife 41713   dmg  45   (projectile 384)  <- death
+```
+
+The strong wing dies in **phase 1**, at bossLife 41713, which is 2713 above the phase-2 threshold of 39000. No
+strong-wing hit in any measured run landed in phase 3. The earlier "p3" rows were an artefact of the reconstruction
+going below zero. **The killer is the phase-1/2 charge body**, and the instrument now records this exactly rather
+than deriving it.
+
+### 124.2 The dense trace: two runs are identical until the charge commits
+
+`CHAITE_PROBE_DENSE_FRAMES=1` gives one row per tick including the circuit's own `plan.phase`. At strong 600 (which
+is hit at 2251) and strong 1200 (which is clean), the frames up to tick 2235 are **identical** -- same Boss
+`ai=[0,300,24..29,8]`, same boss velocity, same player position, same velocity, same `wingTime=31`. They diverge
+at 2236:
+
+```
+tick  600 DPS                                     1200 DPS
+2236  npc ai=[1,...] charge commits                npc ai=[4,...] stays hovering
+      plan=fishron-wing-tornado-clear              plan=fishron-wing-tornado-clear
+      wingTime 31 -> 0 over the next 20 ticks      wingTime stays 31
+2251  HIT                                           clean
+```
+
+So the low-DPS hit is **not** a routing mistake the circuit made and could unmake. It is the Boss choosing a
+different attack, and the difference is entirely a function of the DPS channel.
+
+### 124.3 The blocking geometry: the charge commits at 121 px
+
+The same dense rows give the separation at the commit:
+
+```
+t 2233  gapX  -81.3  dy -135.2  dist 157.8  ai=[0,300,27,8]
+t 2234  gapX  -82.3  dy -125.5  dist 150.0  ai=[0,300,28,8]
+t 2235  gapX  -82.4  dy -115.8  dist 142.2  ai=[0,300,29,8]
+t 2236  gapX  -67.3  dy -101.2  dist 121.5  ai=[1,0,0,8]   <- COMMIT
+t 2237  gapX  -40.7  dy  -87.3  dist  96.4  ai=[1,0,1,8]
+t 2238  gapX  -14.4  dy  -74.4  dist  75.8
+t 2239  gapX   11.6  dy  -62.3  dist  63.4
+```
+
+`npc ai[0]` goes 0 -> 1, which is the charge commit, and it happens while the player is **121.5 px** away. The
+circuit's own target separation is `StandoffPixels = 720f`, five times larger. The consequence is arithmetic:
+
+- The body box needs **85 px** horizontally and **71 px** vertically to clear.
+- The Boss commits at 16.86 px/tick. From 121.5 px it reaches the player in about **7 ticks**.
+- In 7 ticks the player can move about **7 px** vertically, because it is already airborne and cannot accelerate
+  vertically from rest.
+- To clear 85 px of horizontal separation against a Boss closing at 16.86 while moving at ~8.9 px/tick needs about
+  **28 ticks**.
+
+**121 px at commit is roughly four times closer than any escape needs.** This charge cannot be dodged by moving.
+The only reason strong 1200 survives that moment is that the Boss does not charge at all.
+
+### 124.4 Why the standoff cannot simply be enforced
+
+`StandoffPixels = 720` already exists and did not hold here -- the plan stayed in `fishron-wing-tornado-clear` and
+never entered `fishron-wing-standoff`. The reason is native: `AI_069_DukeFishron` moves the Boss toward the player
+under its own control during the pre-charge hover, at up to ~17 px/tick, so the Boss **dictates** the separation
+and the player cannot open 720 px against it. The standoff is an outcome of the Boss's approach, not a quantity the
+circuit sets. Forcing the circuit to fight the approach was measured in section 95 and in the `ALTITUDE_HOLD`
+refutation at the call site: suppressing the wind-up dive made **both** arms worse (strong 2 -> 4 hits, weak
+6000/3 hits -> death at 2946).
+
+### 124.5 The structural conclusion
+
+Putting the measured pieces together:
+
+```
+close commits that no movement can answer:  about 1 per 650 ticks of phase 1
+damage per hit (obsidian, body):            45 - 183, mean about 95
+absorbable hits:                            maxLife 400, Greater Healing refills to 480
+                                            -> about 4 body hits
+=> survival budget:                         roughly 4 x 650 = 2600 ticks of phase 1
+```
+
+The kill time is fixed by the DPS channel: `78000 / DPS * 60` ticks.
+
+```
+ 300 DPS -> 15600 ticks needed  vs ~2600 ticks of budget  -> need 6.0x
+ 600 DPS ->  7800 ticks needed  vs ~2600 ticks of budget  -> need 3.0x
+1200 DPS ->  3900 ticks needed  vs ~2600 ticks of budget  -> need 1.5x  (measured: survives, kill)
+2000 DPS ->  2340 ticks needed  vs ~2600 ticks of budget  -> need 0.9x  (measured: zero hits)
+```
+
+The measured band boundary agrees with that model: the strong wing first survives at 1200 and records zero hits at
+1200 and 2000, while 600/800/1000 all die in phase 1 or early phase 2. **The 300 DPS floor therefore requires the
+circuit to be about six times more enduring than it is, and the binding constraint is not a wrong direction -- it
+is that the Boss can commit a charge from 121 px, which no movement can answer.**
+
+This also explains, in one stroke, the non-monotonicity the owner predicted: a higher DPS does not merely shorten
+the fight, it *skips the attack sequences that contain the unanswerable commits*. The outcome is a property of
+which Boss cycles occur, not of how well the circuit plays.
+
+### 124.6 Wall-clock is not the obstacle
+
+A full 300 DPS fight would be 260 s of game time. Measured conversion from the dense runs: 1200 DPS completed a
+4438-tick fight in **47 s wall**, so 15600 ticks is roughly **165 s**, comfortably inside the 900 s cap. The floor
+is not blocked by the harness.
+
+### 124.7 Stated plainly
+
+**The 300 DPS floor is recorded as structurally unreachable** under the current constraints: one flat 320-tile
+Ocean arena, no platform rows (the owner's ruling), Obsidian armour as the honest tier, and a formula state machine
+that reads only native state. Reaching it would need either a mechanic that avoids an 85 px body box committed from
+121 px at 16.86 px/tick, or roughly six times the health pool -- neither of which movement can supply.
+
+What IS delivered, and measured in the native engine:
+
+- **Strong wing (Fishron Wings): survival-and-kill from 1200 DPS; zero-hit kills at 1200 and 2000.**
+- **Weak wing (Fairy Wings): survival-and-kill from 1500 DPS.**
+- Below those points the runs die, in phase 1, to charge bodies.
+- **No no-hit claim is made at any DPS below 1200 (strong), and none at all for the weak wing.**
+

@@ -606,6 +606,17 @@ public static class ChaiteGameProbe
                         {"quiet",before.Quiet},{"crit",before.Crit},{"cooldownCounter",before.CooldownCounter},{"dodgeable",before.Dodgeable}
                     }},
                 {"actualReturn",row.ActualReturn},
+                // Which PHASE the Boss was in when this hit landed. Recorded
+                // because the phase is what decides how much of the fight a hit
+                // destroys: a fight at low DPS spends an unbounded amount of time
+                // in phases 1 and 2, so "hits taken" alone cannot say whether the
+                // danger is the charge body or a phase-3 hazard. `bossLife` is the
+                // last observed Boss life and `bossPhase` applies AI_069's own
+                // thresholds (phase 2 at 0.5 of lifeMax, phase 3 at 0.15 in
+                // expert) rather than a re-derived guess.
+                {"bossLife",lastBossLife},
+                {"bossPhase",lastBossLife<=0?-1:(lastBossLife<=11700?3:(lastBossLife<=39000?2:1))},
+                {"bossLifeMax",78000},
                 {"player",new Dictionary<string,object>
                     {
                         {"index",before.PlayerIndex},{"lifeBefore",before.LifeBefore},{"lifeAfter",row.LifeAfter},
