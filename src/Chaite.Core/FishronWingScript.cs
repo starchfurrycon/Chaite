@@ -1328,6 +1328,20 @@ namespace Chaite.Core
                     // below, never dive while it is above. That is the exact
                     // content of "do not climb back onto the locked line", applied
                     // to the beat that was free to violate it.
+                    // MEASURED (round 161): REMOVING this gate is a net negative,
+                    // so it stays. The rule itself is a genuine correctness fix --
+                    // the guard fires only when the charge is LOCKED and the Boss is
+                    // genuinely below, which is exactly when lifting moves the
+                    // player along the frozen line. But ungating it regressed the
+                    // measured points: strong 800 went 4 hits -> 6, strong 1000
+                    // 3 -> 5, and weak 1500 went from a 4-hit KILL to a death at
+                    // 3131 ticks, while weak 1000 gained a kill. A net loss at the
+                    // top of the useful band, so the switch stays and stays OFF.
+                    //
+                    // The lesson is the one already recorded in 122 and 128: a rule
+                    // that is CORRECT in isolation can still be a worse controller
+                    // than the heuristic it replaces, because the heuristic is
+                    // entangled with the beat schedule.
                     if (ChargeClimbAwayArmed && _chargeNormalSequence >= 0 &&
                         !float.IsNaN(_chargeNormalVertical) &&
                         player.Center.Y >= boss.Center.Y)

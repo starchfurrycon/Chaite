@@ -9429,6 +9429,34 @@ first being the exported-policy trap in 128.1). The lesson recorded for future r
 charge out of many behaves differently, compare the *branch* it took against the branch the working
 charges took, before assuming the strategy is wrong.
 
+### 129.5 The one ungated rule that had to be put back behind its switch
+
+Applying the same branch audit to `ChargeEscape`'s ascent beat found a second latent problem: the
+"never lift while the Boss is below" rule (the measured fix for the t=2251 hit) was gated behind
+`ChargeClimbAwayArmed`, i.e. behind the switch of an *unrelated* experiment that had already measured
+as a net negative. So a correctness fix was never running.
+
+Ungating it -- making the one-sided rule unconditional, which its own guard already limits to locked
+charges with the Boss genuinely below -- **regressed the band**:
+
+```
+                 gated (kept)             ungated
+strong  800      4 hits                   6 hits
+strong 1000      3 hits                   5 hits
+weak   1000      died                     KILL (better)
+weak   1500      4-hit KILL               died @3131 (much worse)
+```
+
+A net loss at the top of the useful band, so the gate went back and **stays OFF**. Rebuilt and
+re-measured afterwards, the kept tree reproduces the 129.3 table exactly (strong 300 -> 8812/8/36546,
+strong 600 -> 6744/6/15937, strong 1200 -> 4437/1/kill, strong 1500 -> 3661/1/kill, strong 2000 ->
+2881/0/zero-hit kill, weak 800 -> 6380/5/kill, weak 1500 -> 3656/4/kill).
+
+This is the third instance of the lesson already recorded in 122 and 128: **a rule that is correct in
+isolation can still be a worse controller than the heuristic it replaces, because the heuristic is
+entangled with the beat schedule.** The distinguishing test is not "is the rule right" but "does the
+band improve".
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
