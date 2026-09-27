@@ -8913,6 +8913,33 @@ Two details worth stating rather than smoothing over:
 2. **1500 DPS on the strong wing is now 1 hit, where 399 tiles gave 0.** The shortening costs something at the
    top of the band. Neither number is a no-hit claim for the *other* DPS points, and 1200 is the figure to quote.
 
+### 123.5 The test suite has 9 pre-existing failures, and they are not from this change
+
+`tests/Chaite.Tests.exe` reports **749 pass / 9 fail**. This was isolated rather than assumed:
+
+```
+with OceanBandPixels = 5120 (this round): 749 pass, 9 fail
+with OceanBandPixels = 6400 (reverted):   749 pass, 9 fail   <- identical
+```
+
+So the 9 failures are **pre-existing** and unrelated to the arena or the band. They are:
+
+```
+FishronWingFollowsReviewedChargeCycle            expected 0, got -1
+FishronWingRestartsCycleAfterProjectileAttack    expected 0, got -1
+PolicyKeepsTheBranchLabelItAdjusted              the marker records that a policy acted
+HeldDashIsNotSpentUntilItIsIssued                without a policy the dash is issued as soon as it is ready
+ForcedDashDoesNotBurnTheChargesDash              the residual can force the bit on
+DashHeadSeparatesHoldingFromForcing              the force class can ask for a dash the script did not propose
+LateFeatherFallExpiryNeutralizesEveryInput       expected False, got True
+ChaiteObservationMatchesThePythonFixture         fixture missing: tests/Chaite.Tests/fixtures/observation-conformance.jsonl
+ChaiteObservationSelectsTheRecordedProjectileWindow   same missing fixture
+```
+
+Two of the nine are a **missing generated fixture**, not a code fault. The remaining seven are pre-existing and are
+recorded here rather than quietly ignored, because "the suite is green" would be a false statement and the
+acceptance evidence in this document must not be built on one.
+
 ## 122. Round 157: the owner's normal rule describes the escape but cannot control it
 
 ### 122.1 What was tested
