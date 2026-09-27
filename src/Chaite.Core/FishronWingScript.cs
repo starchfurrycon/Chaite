@@ -1246,6 +1246,39 @@ namespace Chaite.Core
                 // measured result was that diagonal charges spent most of their
                 // length travelling back across the locked line.
                 horizontal = _chargeNormalHorizontal;
+                // MEASURED (dense native trace, strong 300): the escape the circuit
+                // executes splits diagonally against the locked line rather than
+                // crossing it. Over the 3060 charge frames of that run the velocity
+                // relative to the Boss's charge direction is |along| 5.64 and
+                // |across| 10.15; inside the 7-tick arrival window of the 8 hits it
+                // becomes |along| 5.62 and |across| 5.43. The ALONG component is
+                // unchanged and the crossing rate collapses, and crossing needs
+                // 85 px of perpendicular clearance.
+                //
+                // STEERING THE HORIZONTAL COMMAND TO THE EXACT PERPENDICULAR OF THE
+                // CHARGE WAS TRIED AND REFUTED. Choosing the perpendicular of the
+                // frozen charge velocity, on the side the latch already leaned to,
+                // collapsed the band:
+                //
+                //   strong 300   8812 / 8 / 36546   ->  3722 / 6 / 62035
+                //   strong 600   6744 / 6 / KILL    ->  3722 / 6 / 46130
+                //   strong 800   5057 / 4 / 17755   ->  3631 / 6 / 36740
+                //   strong 1200  4437 / 1 / KILL    ->  4439 / 4 / KILL
+                //
+                // Strong 300 and 600 die on the SAME tick, 3722, which is the
+                // broken-invariant signature already recorded in section 126: the
+                // change made the trajectory independent of the fight it was in.
+                // The knob was removed rather than left default-OFF, so it cannot be
+                // half-restored later.
+                //
+                // The instructive part is that the horizontal COMMAND was already
+                // the latched normal, so the diagonal must arise downstream -- the
+                // executed velocity is the sum of the command, the wing's own
+                // horizontal rate (measured 7-8 px/tick, not the 13.87 of
+                // wingAccRunSpeed), and the vertical beat. A command-space fix cannot
+                // reach that, which is why this failed where the tornado-clear
+                // wind-up fix (129) succeeded: that one restored a needed
+                // pre-condition instead of redirecting an already-correct command.
                 // REFUTED: running and dashing ALONG a locked horizontal charge.
                 //
                 // All four hits that share this anatomy do dash INTO the charge --

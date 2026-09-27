@@ -9623,6 +9623,73 @@ Note also that strong 1200 already measures 1 hit per 4437 ticks -- four times b
 which shows the circuit is capable of the required rate over a short window. The 300 run simply exposes
 the long-run rate. That is the frontier: make the good rate persist.
 
+## 131. Round 162 (cont.): the crossing-rate signature, and a refuted command-space fix
+
+### 131.1 The measured failure signature
+
+The owner's rule is "dodge along the NORMAL of the charge", and section 127 established that the
+horizontal *command* is already correct at every dash. So the untested half was what the player actually
+*executes*. Measuring every one of the 3060 charge frames of the dense strong-300 run in coordinates
+aligned with the Boss's frozen charge direction:
+
+```
+                      n      |along|   |across|   |perp|
+ALL charge frames     3060     5.64     10.15     164.54
+non-arrival frames    3005     5.65     10.24     166.12
+HIT ARRIVAL (7 ticks)   55     5.62      5.43      78.03
+```
+
+Inside the 7-tick arrival window of the eight hits, **the along component is unchanged (5.65 -> 5.62)
+and the crossing rate collapses by nearly half (10.15 -> 5.43)**. Contact needs 85 px of perpendicular
+clearance against the Boss's 85 px half-width, so 5.43 px/tick cannot make it. This is a clean,
+quantitative statement of the failure: **the circuit is not failing to run away, it is failing to cross
+the charge line fast enough at the moment of arrival.**
+
+### 131.2 Steering the command to the true perpendicular: refuted
+
+The obvious fix is to make the horizontal command the exact perpendicular of the charge velocity instead
+of the latched normal. Tried, choosing the side the latch already leaned toward:
+
+```
+              kept                          exact perpendicular
+strong  300   8812 / 8 / 36546               3722 / 6 / 62035
+strong  600   6744 / 6 / KILL                3722 / 6 / 46130
+strong  800   5057 / 4 / 17755               3631 / 6 / 36740
+strong 1200   4437 / 1 / KILL                4439 / 4 / KILL
+```
+
+Strong 300 and 600 die on the **same tick, 3722** -- the broken-invariant signature of section 126, where
+an identical death tick across different DPS values means the change made the trajectory independent of
+the fight. The knob was **deleted from the tree** rather than left default-OFF, so it cannot be
+half-restored.
+
+The instructive part: the horizontal *command* was already the latched normal, so the diagonal split must
+arise **downstream** of the command -- the executed velocity is the sum of the command, the wing's own
+horizontal rate (measured 7-8 px/tick, not the 13.87 that `wingAccRunSpeed` suggests), and the vertical
+beat. A command-space fix cannot reach that. This is precisely why the tornado-clear wind-up fix of
+section 129 succeeded where this failed: that one restored a missing *pre-condition*, while this one
+merely redirected a command that was already right.
+
+### 131.3 Where the frontier stands after this round
+
+```
+strong 300 : 8812 ticks, 8 hits, boss 36546   (dies; needs ~15600 ticks to kill)
+strong 600 : 6744 ticks, 6 hits, KILL
+strong 1200: 4437 ticks, 1 hit,  KILL
+strong 1500: 3661 ticks, 1 hit,  KILL
+strong 2000: 2881 ticks, 0 hits, ZERO-HIT KILL
+weak   800 : 6380 ticks, 5 hits, KILL
+weak  1500 : 3656 ticks, 4 hits, KILL
+```
+
+Five negative results this round (wing-budget gate, platform rows 1 and 0, exact perpendicular, plus the
+earlier counter-dash tuning) and one positive (the tornado-clear wind-up). The requirement that remains
+is the one quantified in 130.3: bring the sustained rate from about 1 hit per 1100 ticks to about 1 per
+1800-2200, and the signature to attack is the arrival-window crossing collapse above. The open question
+is whether a command-space change can affect it at all, given that the executed velocity is dominated by
+downstream terms; the next attempt should therefore change what the *player state* is at the lock rather
+than what is commanded after it.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
