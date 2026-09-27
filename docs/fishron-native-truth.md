@@ -9186,6 +9186,48 @@ than a weak heuristic and revert it: the outcome has stopped depending on the fi
 **All three new knobs are left default-OFF and none is promoted into the reviewed circuit**, because none of them
 is better than it. They are kept as documented instruments, not as fixes.
 
+## 127. Round 160 continued: the horizontal command is already correct, measured
+
+### 127.1 The acceleration profile, which is what "suddenly standing still" actually was
+
+Over all 2600 frames of strong 600, the per-tick change in horizontal velocity has an unmistakable shape:
+
+```
+largest |dvx| per tick:   +-22.6, +-22.5, +-22.4 (x6), +-22.3, +-18.2, +-17.9, +-17.3
+typical  |dvx| per tick:   0.1 (1477 frames), 0.4, 0.3, 0.2, 0.0 (240)
+```
+
+Every large event is a **dash**: the Shield sets `velocity.X` to 14.50 in a **single frame** (+22.56 from a standing
+-8.06) and it then decays by 0.30-0.32 per tick:
+
+```
+t=1174  vx= -8.06  hcmd=-1  dash=False  fishron-wing-refill
+t=1175  vx=+14.50  hcmd=+1  dash=True   fishron-wing-charge-horizontal-dash   dvx=+22.56
+t=1176  vx=+14.18  hcmd=+1  dash=False  fishron-wing-charge-horizontal        dvx=-0.32
+t=1177  vx=+13.87  hcmd=+1  dash=False  fishron-wing-charge-horizontal        dvx=-0.31
+```
+
+And while there is no dash, the held speed is `|vx| = 8` and the plan's `horizontal` command **already matches its
+sign in every one of these frames**. So, measured:
+
+- The dash does supply a very large instantaneous acceleration (+22.6 px/tick^2), exactly as the owner said.
+- The steady wing cruise in this fight is **8 px/tick**, not `wingAccRunSpeed`'s 13.87.
+- 15.9% of frames are at `|vx| < 2.0`, and the largest reversals are always dash events, not drifts to a stop.
+- The command direction was already correct at every dash sampled.
+
+### 127.2 What that rules out
+
+The circuit is **not** failing to command horizontal motion, and it is **not** pointing the escape the wrong way in
+the steady state. It is also not arena-limited: charges happen between x 735 and x 4107 while the band runs 276 to
+4876, so no charge frame is within 120 px of an edge. That removes the three cheapest explanations for
+"the player is standing still" and leaves the tactical pattern above them, which is where the remaining fault must
+be.
+
+### 127.3 Regression check
+
+With all three new knobs default-OFF, the delivered points are unchanged: strong 1200 -> 4436 ticks / 2 hits /
+kill, strong 1500 -> 3661 / 1 / kill, weak 1500 -> 3660 / 4 / kill. Nothing in this round shipped.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
