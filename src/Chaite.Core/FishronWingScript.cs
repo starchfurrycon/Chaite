@@ -293,6 +293,59 @@ namespace Chaite.Core
         }
 
         private const string TornadoMemoryVariable = "CHAITE_TORNADO_MEMORY";
+        /// <summary>How long the ESCAPE branch runs and, through its `return`, keeps
+        /// suppressing the pre-charge jump.
+        ///
+        /// WHY THIS IS SEPARATE FROM THE MEMORY (round 150). Round 149 established both
+        /// halves of a puzzle that the single counter could not satisfy at once:
+        ///
+        ///  - The column is present for **881 ticks**, and the memory is **540**, so 341
+        ///    ticks of live column are unmodelled.
+        ///  - Extending the memory is REFUTED: 560 onward all collapse to one identical
+        ///    failure (6969/8/45782). The cause is a coupling, because this branch
+        ///    `return`s and so suppresses the pre-charge jump beneath it, and
+        ///    `PreJumpTicks = 20` is exactly that jump's wind-up.
+        ///
+        /// One counter was doing three jobs: how long the column is REMEMBERED, how long
+        /// the player ESCAPES it, and how long the jump is SUPPRESSED. The last two
+        /// belong together (an escape without a jump is the review's own design), but
+        /// neither should scale with the first. Splitting them lets the memory cover the
+        /// column's real 881-tick life while the response stays at the reviewed 540.
+        ///
+        /// Sweepable via <c>CHAITE_TORNADO_RESPONSE</c>; default is the reviewed 540, so
+        /// with the default memory the circuit is unchanged.</summary>
+        internal static int TornadoResponseHorizon
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoResponseVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 || value > 3000)
+                    return TornadoMemoryTicks;
+                return value;
+            }
+        }
+
+        private const string TornadoResponseVariable = "CHAITE_TORNADO_RESPONSE";
+        /// <summary>Radius of the escape/recall gate for the response window. Defaults to
+        /// the reviewed <see cref="TornadoClearance"/> so the circuit is unchanged.</summary>
+        internal static float TornadoRecallRadius
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoRecallVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return TornadoClearance;
+                return value;
+            }
+        }
+
+        private const string TornadoRecallVariable = "CHAITE_TORNADO_RECALL";
         private const int TornadoMemoryTicks = 540;
         /// <summary>Centre-to-centre distance inside which the Boss body itself
         /// is the threat. A charge that ends beside the player leaves the Boss
@@ -794,6 +847,10 @@ namespace Chaite.Core
         private float _tornadoX;
         private float _tornadoY;
         private int _tornadoTicksLeft;
+        /// <summary>Separate from the recall horizon. See <see cref="TornadoResponseHorizon"/>.
+        /// The ESCAPE branch and the jump suppression it implies are gated on this, while
+        /// mere RECALL of where the column landed is gated on <c>_tornadoTicksLeft</c>.</summary>
+        private int _tornadoResponseLeft;
         private float _bandLeft;
         private float _bandRight;
         private float _floorY;
@@ -890,6 +947,7 @@ namespace Chaite.Core
                     _tornadoX = boss.Center.X;
                     _tornadoY = boss.Center.Y;
                     _tornadoTicksLeft = TornadoMemoryHorizon;
+                    _tornadoResponseLeft = TornadoResponseHorizon;
                 }
                 _dashIssued = false;
             }
@@ -1810,9 +1868,19 @@ namespace Chaite.Core
             vertical = 0;
             phase = null;
             if (_tornadoTicksLeft > 0) _tornadoTicksLeft--;
+            if (_tornadoResponseLeft > 0) _tornadoResponseLeft--;
             var gap = boss.Center.X - player.Center.X;
-            if (_tornadoTicksLeft > 0 &&
-                Math.Abs(player.Center.X - _tornadoX) < TornadoClearanceRadius)
+            // DECOUPLED (round 150). The escape branch runs for the RESPONSE window
+            // while the column is merely RECALLED for the longer memory horizon, so
+            // that a longer memory does not also prolong the jump suppression that
+            // this branch's `return` implies (see TornadoResponseHorizon). When both
+            // horizons are equal and the radii are equal this is the reviewed circuit
+            // exactly: `_tornadoResponseLeft > 0 && |dx| < 760` reduces to the old
+            // `_tornadoTicksLeft > 0 && |dx| < 760`.
+            var responseLive = _tornadoResponseLeft > 0;
+            var recallGate = Math.Abs(player.Center.X - _tornadoX) < TornadoClearanceRadius;
+            var responseGate = Math.Abs(player.Center.X - _tornadoX) < TornadoRecallRadius;
+            if (recallGate && responseLive)
             {
                 // Still inside the column the last Sharknado left behind.
                 //

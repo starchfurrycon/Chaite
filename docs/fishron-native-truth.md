@@ -10376,6 +10376,97 @@ strong 1000 4573/3/10777   strong 1500 3661/1/KILL
 weak   300  5879/8/51124   weak   600 4741/6/35818   weak   1500 3656/4/KILL
 ```
 
+## 137. Round 150: the cascade, the decoupling, and why the tornado is a closed problem
+
+### 137.1 The column is not one projectile -- it is a self-cloning cascade
+
+The hit geometry of round 136 never made sense: three hits at |dx| 443-771 px against a column whose box is
+only 112 px wide. Listing every hostile projectile near the player at those ticks resolves it. At t=9593
+there are **twelve** type-386 projectiles within 250 px of the player, one as close as **36 px**, with
+widths cascading 175, 168, 161, 154, 147, 140, 133, 126, 119, 112, 105, 98, 91, 84, 77, 70, 63:
+
+```
+t=9593  player (2444, 5646)   nearest 386 at 57 px, w=147 h=41
+t=9615  player (2473, 5733)   nearest 386 at 36 px, w=147 h=41
+t=9660  player (2567, 5798)   nearest 386 at 50 px, w=126 h=35
+```
+
+The decompiled `aiStyle 64` says why: while `ai[0] > 0` the projectile re-spawns itself at a **decremented**
+`ai[1]`, and `ai[1]` drives the scale --
+
+```
+center4.Y -= num510 * scale / 2f;
+NewProjectile(..., type, damage, knockBack, owner, 10f, this.ai[1] - 1f);
+```
+
+-- so one Sharknado is a *chain* of 386s at decaying sizes, all hostile, all 50 damage, each alive for the
+full 840-tick `timeLeft`. The hazard is therefore not a 112 px box but a **cascade of damaging boxes
+spanning hundreds of px**, which is exactly the measured picture.
+
+### 137.2 A correction to my own diagnostic
+
+Round 149's geometry script measured `dx = player.X - col[0].x` and reported the player at column-offset
+15 with the column at 61. Recomputing from the same raw data: the player is at x **2474** and the column
+spawned at x **2476** -- i.e. **2 px**. `col[0]` was an arbitrary fragment of the cascade, not the spawn
+point, so that diagnostic was measuring the distance to a random sub-projectile while I read it as the
+distance to the column. Two errors compounded: the reported offsets were not world coordinates, and
+`col[0]` was not the column.
+
+The real geometry at the three late hits is that the player is **standing at the tornado's own spawn
+point**, and the escape gate evaluates `|player.X - _tornadoX|` at **759, 771 and 731 px** -- just outside
+the reviewed 760 px boundary. So the gate is sized about right; the player was failing to get clear by
+1-11 px.
+
+### 137.3 The decoupling, and the proof that the RESPONSE window is the control
+
+The round-149 design was implemented. The single counter had been doing three jobs, and they are now
+separate:
+
+```
+memory   CHAITE_TORNADO_MEMORY    default 540   how long the column is RECALLED
+response CHAITE_TORNADO_RESPONSE  default 540   how long the ESCAPE runs and the jump stays suppressed
+recall   CHAITE_TORNADO_RECALL    default 760   the radius the response gate tests
+```
+
+The gate test passed exactly as designed -- and it discriminates, which is what gives it value:
+
+```
+strong 300, memory 540 / response 540   10004 / 8 / 30628   (baseline)
+strong 300, memory 881 / response 540   10004 / 8 / 30628   BYTE-IDENTICAL
+strong 300, memory 881 / response 700    6969 / 8 / 45782   the collapse
+```
+
+So **the response window is the load-bearing parameter and the memory horizon is inert**. This also
+corrects round 149's interpretation: the "memory sweep" that collapsed at 560 was in fact a *response*
+sweep, because one counter carried both meanings. The conclusion is unchanged (540 is optimal) but the
+mechanism is now correctly attributed, and the 341-tick recall window it opens does not help.
+
+### 137.4 The tornado hazard is closed
+
+Every lever is now measured and every one is at its optimum or negative:
+
+```
+lever                                    strong 300
+default                                  10004 / 8 / 30628
+box (loose 190x110)                      10004 / 8 / 30628   inert, never fires
+box (tight 112x31)                       10004 / 8 / 30628   inert, never fires
+wall-pin fallback                        10004 / 8 / 30628   inert (removed, coord misread)
+radius 1200 / 1600 / 2200 / 3000         7867 / 4679 / 3658 / 3658
+response 560..1600                       all 6969 / 8 / 45782
+memory 881 (response pinned at 540)      10004 / 8 / 30628   inert
+```
+
+The honest summary: the column is **indestructible** (`penetrate = -1`), it **clones itself** into a
+cascade that reaches far beyond its sprite, it **outlives the circuit's memory** by 341 ticks, and both the
+escape radius (760) and the response window (540) are already at their optima with sharp cliffs on either
+side. Removing it entirely converts strong-300 into an accepted kill (136.1), so the damage is real and
+decisive -- but there is no accessible control that avoids it.
+
+This also bounds what the tornado can explain. The strong-300 run's 892 total damage divides as 524 before
+tick 9125 (5 hits, all with no tornado present) and **368 inside the tornado window (3 hits)**. So the
+tornado owns 3 of 8 hits, not 4 as round 135.5 estimated from correlation, and the majority of the damage
+precedes it.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
