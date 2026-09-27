@@ -165,6 +165,12 @@ namespace Chaite.Core
         /// the very first charge of a fight latches like every later one.</summary>
         private int _chargeNormalSequence = -1;
 
+        /// <summary>Latched by `ChargeEscape` on the frames of a locked charge, at
+        /// the last point it runs before Tick. True once the counter-dash has been
+        /// issued for the current armed window; it is cleared wherever the script
+        /// resets the locked-charge state.</summary>
+        internal bool _counterDashSpent;
+
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
         /// Why this knob exists, measured rather than reasoned: the reviewed
@@ -280,6 +286,35 @@ namespace Chaite.Core
         {
             get { return Environment.GetEnvironmentVariable(ChargeDashSideVariable) == "1"; }
         }
+
+        private const string CounterDashVariable = "CHAITE_COUNTER_DASH";
+
+        /// <summary>True when the locked-charge dash is timed to meet the arriving
+        /// Boss instead of being fired at the lock. Default OFF. See the call site
+        /// for the native basis: the dash grants contact immunity to the NPC it
+        /// touches, deals the shield's damage, and recoils the player clear.</summary>
+        private static bool CounterDashArmed
+        {
+            get { return Environment.GetEnvironmentVariable(CounterDashVariable) == "1"; }
+        }
+
+        /// <summary>Closing distance at which the counter-dash is issued. Paired
+        /// with CounterDashVariable.</summary>
+        private static float CounterDashPixels
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(CounterDashGapVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value < 0f)
+                    return 120f;
+                return value;
+            }
+        }
+
+        private const string CounterDashGapVariable = "CHAITE_COUNTER_DASH_GAP";
 
         /// <summary>True when the ascend beat refuses to lift while the Boss is
         /// below the player. Default OFF, so the reviewed circuit is reproduced
@@ -552,6 +587,7 @@ namespace Chaite.Core
             _chargeNormalHorizontal = 0;
             _chargeNormalVertical = 0;
             _chargeNormalSequence = -1;
+            _counterDashSpent = false;
             _previousState = int.MinValue;
             _previousSequence = int.MinValue;
             _previousTimer = 0;
@@ -1355,7 +1391,49 @@ namespace Chaite.Core
                 // arms fail at the same kind of tick. Holding the dash until
                 // DashDelay ticks after the lock puts the i-frames over the
                 // arrival instead. 0 = the fixed circuit.
-                if (_chargeNormalSequence >= 0 &&
+                // COUNTER-DASH (round 161). An external guide for this fight names
+                // "Shield of Cthulhu counter-dash for i-frames" as THE core
+                // survival mechanic, and the native code says why:
+                //
+                //   Player.cs:31602  (dash == 2 && i == eocHit && eocDash > 0)
+                //       -> while the dash is live the player takes NO contact
+                //          damage from the NPC the dash touched
+                //   Player.cs:21284-21292
+                //       eocDash = 10; dashDelay = 30;
+                //       velocity.X = -sign * 9; velocity.Y = -4f;   // recoil, its own
+                //       GiveImmuneTimeForCollisionAttack(4);
+                //       eocHit = i;
+                //
+                // So dashing INTO the charge makes the player immune to that body,
+                // deals the shield's contact damage, and recoils the player clear.
+                // Dashing AWAY -- which is what the escape branch does -- buys
+                // nothing against the body, because the body arrives faster than
+                // the player can leave.
+                //
+                // The circuit already produces dash-body-hits, and section 97
+                // measured that removing them entirely kills both arms and starves
+                // the fight of damage. What it has never done is TIME the dash to
+                // be live when the body arrives. This arm spends the dash once the
+                // closing Boss is inside CounterDashPixels, then holds it. Default
+                // OFF so the reviewed circuit is reproduced exactly.
+                var counterDash = false;
+                if (CounterDashArmed && _chargeNormalSequence >= 0 && !_counterDashSpent)
+                {
+                    var cbx = boss.Center.X - player.Center.X;
+                    var cby = boss.Center.Y - player.Center.Y;
+                    if (cbx * cbx + cby * cby <= CounterDashPixels * CounterDashPixels)
+                    {
+                        counterDash = true;
+                        _counterDashSpent = true;
+                        horizontal = AwayFromBossAxis(cbx);
+                    }
+                }
+                if (counterDash)
+                {
+                    dash = true;
+                    phase = "fishron-wing-charge-counter-dash";
+                }
+                else if (_chargeNormalSequence >= 0 &&
                     ChargeTicksSinceLock < DashDelay)
                 {
                     // still too early: hold the proposal, spend nothing

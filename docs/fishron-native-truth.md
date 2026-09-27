@@ -9228,6 +9228,73 @@ be.
 With all three new knobs default-OFF, the delivered points are unchanged: strong 1200 -> 4436 ticks / 2 hits /
 kill, strong 1500 -> 3661 / 1 / kill, weak 1500 -> 3660 / 4 / kill. Nothing in this round shipped.
 
+## 128. Round 161: the counter-dash, and an environment trap that silently voids measurements
+
+### 128.1 METHOD TRAP FOUND: the exported policy owns dash issuance
+
+`tools/run-native-acceptance.ps1` does **not** unset the policy environment, and this shell has
+
+```
+CHAITE_POLICY_FILE   = ...\policies\fishron-strong-wing.policy.bin
+CHAITE_POLICY_FORMAT = exported
+```
+
+ambiently. Any run that passes `-FormulaRoute` **while those variables are set** still loads the exported policy,
+and the policy owns dash issuance, so **every edit to `FishronWingScript` is inert**. The signature is the shield
+line: `shield rows: 1024  dash started: 25  dash-active ticks: 352` in a policy-loaded run, versus
+`shield rows: 45-58  dash started: 38-53` without it.
+
+This invalidated a whole batch of measurements taken this round, including the first counter-dash sweep, and it is
+the reason three runs appeared byte-identical. **All formula-route measurements must remove both variables first.**
+Re-run with them removed, the reviewed circuit reproduces its recorded numbers exactly (strong 600 -> 4218 / 6 /
+41203; strong 1200 -> 4436 / 2 / kill), which is how the mistake was caught.
+
+A second, smaller trap in the same area: `CHAITE_POLICY_FORMAT` must never be set while `CHAITE_POLICY_FILE` is
+absent, or `ExportedPolicy.ForConfiguredFile()` throws and the run dies at tick 1 with `valid battle: False` and
+`ticks: 1`. A cleanup list that removes one but not the other produces a crash that looks like a code regression.
+
+### 128.2 The counter-dash, and its native basis
+
+An external guide for this fight names "Shield of Cthulhu counter-dash for i-frames" as **the** core survival
+mechanic. The native code agrees, and says what it actually buys:
+
+```
+Player.cs:31602   (dash == 2 && i == eocHit && eocDash > 0)  -> no contact damage from the NPC the dash touched
+Player.cs:21284   eocDash = 10; dashDelay = 30;
+Player.cs:21288   velocity.X = -sign * 9; velocity.Y = -4f;   -> recoil, applied by the SHIELD
+Player.cs:21291   GiveImmuneTimeForCollisionAttack(4);
+Player.cs:21292   eocHit = i;
+```
+
+So a dash INTO the charge makes the player immune to that body, deals the shield's contact damage, and recoils the
+player clear. Dashing AWAY, which is what the escape branch does, buys nothing against a body that arrives at 17
+px/tick. This inverts the assumption behind 124.3-124.5 and 125: the dash is not a speed tool for running away, it
+is an immunity tool for meeting the charge.
+
+### 128.3 MEASURED: it fires, and it does not help yet
+
+`CHAITE_COUNTER_DASH=1`, `CHAITE_COUNTER_DASH_GAP=<px>`, default OFF, spends the charge's dash once the closing
+Boss is inside the given distance. Policy unset so the formula route actually runs:
+
+```
+strong 800  baseline      : 5364 ticks, 4 hits, boss 13596, dash started 48, npc contact 5
+            counter 110px : 5364 ticks, 4 hits, boss 13596, dash started 49, npc contact 5  (IDENTICAL outcome)
+strong 600  baseline      : 4218 ticks, 6 hits, boss 41203, dash started 43, npc contact 3
+            counter 110px : 4474 ticks, 7 hits, boss 38583, dash started 46, npc contact 7  (one more hit)
+```
+
+The mechanism fires (the dash count rises) but the outcome does not change at 800 and gets one hit worse at 600.
+The distance gate alone is not the missing piece: the dash has to actually be **live at the body**, and `eocDash`
+counts down, so issuing it at 110 px means it may already be spent when the body arrives -- and if it *does* touch,
+`eocDash` is cut to 10 by the hit itself. The gate is measured in distance while the resource is measured in ticks,
+and the closing speed varies with the lock geometry.
+
+### 128.4 Status
+
+`CHAITE_COUNTER_DASH` is left default-OFF like the other three new knobs. Nothing in rounds 160-161 is promoted
+into the reviewed circuit, and the delivered points are unchanged: strong 1200 -> 2 hits / kill, strong 1500 -> 1 /
+kill, weak 1500 -> 4 / kill.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
