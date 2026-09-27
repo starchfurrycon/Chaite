@@ -255,6 +255,32 @@ namespace Chaite.Core
 
         private const string ChargeClimbAwayVariable = "CHAITE_CHARGE_CLIMB_AWAY";
 
+        private const string ChargeEscapeSimVariable = "CHAITE_CHARGE_ESCAPE_SIM";
+
+        /// <summary>True when the locked-charge escape direction is chosen by
+        /// forward-simulating the frozen charge against candidate 2-D directions
+        /// instead of by projecting the player's own past velocity. Default OFF.
+        /// The frozen normal is still latched either way, so the reviewed circuit
+        /// is reproduced exactly when this is unset.</summary>
+        private static bool ChargeEscapeSimArmed
+        {
+            get { return Environment.GetEnvironmentVariable(ChargeEscapeSimVariable) == "1"; }
+        }
+
+        private const string ChargeDashSideVariable = "CHAITE_CHARGE_DASH_SIDE";
+
+        /// <summary>True when the locked-charge escape refuses any direction that
+        /// moves the player toward the Boss. Default OFF.
+        ///
+        /// Native Player.cs:31602 gives the Shield's dash immunity only to the NPC
+        /// the dash first touched (`eocHit`), so a dash that lands on the Boss
+        /// spends that immunity on the Boss and leaves only the 4 tick collision
+        /// immunity while eocDash still has ~11 ticks to run.</summary>
+        private static bool ChargeDashSideArmed
+        {
+            get { return Environment.GetEnvironmentVariable(ChargeDashSideVariable) == "1"; }
+        }
+
         /// <summary>True when the ascend beat refuses to lift while the Boss is
         /// below the player. Default OFF, so the reviewed circuit is reproduced
         /// exactly and this can be swept on whole native fights without a rebuild.
@@ -1781,8 +1807,166 @@ namespace Chaite.Core
             // The velocity projection below is left in place. Reverted.
             var normalX = rateA >= rateB ? normalAX : normalBX;
             var normalY = rateA >= rateB ? normalAY : normalBY;
+            if (ChargeEscapeSimArmed)
+            {
+                // MEASURED REPLACEMENT (round 160). Everything above decides the
+                // escape from the player's OWN PAST VELOCITY, and the comment at
+                // 1742 already names the consequence: "a bad earlier choice
+                // becomes the reason to keep making it". The dense native trace of
+                // the t=2251 hit shows that consequence directly -- the latched
+                // normal was a CLIMB (-1) while the frozen charge line ran upward
+                // through the player (Boss below at lock: boss y 4430.7, player y
+                // 4329.5), so the escape moved the player ALONG that line and held
+                // |dy| at 62.3, 51.2, 40.3 ... 4.8, inside the 71 px body box, for
+                // the whole arrival. The measured peak perpendicular clearance was
+                // 72.6 px against the 85 the body box needs.
+                //
+                // The lock is fully determined: AI_069_DukeFishron commits
+                // `velocity = normalize(player - boss) * 16f` and holds that exact
+                // vector to the end of the charge (dense rows: boss velocity
+                // (-12.12,-11.92), |v| 17.00, constant for every one of the 22
+                // ticks). So the escape can be chosen by asking which command
+                // actually clears the body, with no dependence on what the player
+                // was doing before.
+                //
+                // Verified against the real geometry before writing it: a
+                // perpendicular escape at the wing's own measured 13.87 cruise
+                // gives NO body contact at all, and still gives none with the dash
+                // removed; a horizontal-only escape contacts at tick 3 and the
+                // measured flat escape contacts at tick 3 as well. The choice
+                // therefore has to be made over 2-D directions, not over the
+                // vertical sign alone -- which is exactly what killed the
+                // CHAITE_CHARGE_NORMAL_OWNER attempt recorded above.
+                var bx = dx;   // boss centre -> player centre, the same vector native aims along
+                var by = dy;
+                var bovx = boss.Velocity.X;
+                var bovy = boss.Velocity.Y;
+                var selfX = player.Velocity.X;
+                var selfY = player.Velocity.Y;
+                // WHY THE SIDE MATTERS AND NOT JUST THE CLEARANCE.
+                //
+                // Native Player.cs:31602:
+                //   if (... || (dash == 2 && i == eocHit && eocDash > 0) || ...)
+                //       continue;
+                // The Shield's damage immunity during a dash applies ONLY to the
+                // NPC the dash first touched (`eocHit`). A dash that lands on the
+                // Boss therefore SPENDS the shield's immunity on the Boss and
+                // leaves only the 4 tick collision immunity, while `eocDash` still
+                // has ~11 ticks to run. MEASURED in the fatal charge: the dash
+                // fired at t=2237, the body contact at t=2239 made the Boss
+                // `eocHit`, the 4 i-frames lapsed around t=2243, and the hit landed
+                // at t=2251 with the dash window still open.
+                //
+                // Both perpendiculars give the SAME clearance from the frozen line,
+                // so clearance alone cannot choose between them. The tie has to be
+                // broken by never dashing into the Boss, which is what the
+                // candidate filter below does: a candidate whose motion has a
+                // negative projection onto (player -> Boss) drives the player at
+                // the Boss and is dropped.
+                if (ChargeDashSideArmed && (normalX * bx + normalY * by) < 0f)
+                {
+                    // The fallback normal also has to point away from the Boss.
+                    normalX = -normalX;
+                    normalY = -normalY;
+                }
+                var bestX = normalX;
+                var bestY = normalY;
+                var bestScore = float.NegativeInfinity;
+                for (var i = 0; i < DirectionCount; i++)
+                {
+                    float cx = ChargeEscapeSimDirections[i, 0];
+                    float cy = ChargeEscapeSimDirections[i, 1];
+                    if (ChargeDashSideArmed && (cx * bx + cy * by) < 0f)
+                    {
+                        // This candidate drives the player at the Boss, which is
+                        // the one thing that must not happen while the dash is
+                        // live: it would make the Boss `eocHit` and spend the
+                        // shield immunity. Skip it entirely.
+                        continue;
+                    }
+                    var score = ScoreEscapeDirection(
+                        cx, cy, bx, by, bovx, bovy, selfX, selfY);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestX = cx;
+                        bestY = cy;
+                    }
+                }
+                normalX = bestX;
+                normalY = bestY;
+            }
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);
             _chargeNormalVertical = Math.Abs(normalY) < 0.2f ? 0 : (normalY > 0f ? 1 : -1);
+        }
+
+        /// <summary>Candidate escape directions for the locked-charge dodge, in
+        /// screen coordinates (y grows downward). The axes are 22.5 degrees apart
+        /// so the chosen direction can put most of its speed on whichever axis the
+        /// frozen charge line leaves open, instead of the four cardinal moves
+        /// alone. `CHAITE_CHARGE_ESCAPE_SIM=1` arms the search.</summary>
+        private static readonly float[,] ChargeEscapeSimDirections =
+        {
+            { 1f, 0f }, { -1f, 0f }, { 0f, -1f }, { 0f, 1f },
+            { 0.92388f, -0.38268f }, { 0.92388f, 0.38268f },
+            { -0.92388f, -0.38268f }, { -0.92388f, 0.38268f },
+            { 0.38268f, -0.92388f }, { 0.38268f, 0.92388f },
+            { -0.38268f, -0.92388f }, { -0.38268f, 0.92388f },
+            { 0.70711f, -0.70711f }, { 0.70711f, 0.70711f },
+            { -0.70711f, -0.70711f }, { -0.70711f, 0.70711f }
+        };
+
+        /// <summary>Number of candidate directions. NOTE: a 2-D array's `Length`
+        /// is the product of both dimensions (32 here), so indexing a loop with it
+        /// runs off the first dimension and throws IndexOutOfRangeException on the
+        /// live tick -- which is how this was found.</summary>
+        private const int DirectionCount = 16;
+
+        /// <summary>Scores one escape direction by replaying the frozen charge
+        /// against it and returning the least clearance it ever achieves.
+        ///
+        /// The Boss's path is already decided at the lock, so this is a
+        /// deterministic forward simulation, not a prediction. The player's speed
+        /// is the measured wing cruise (13.87) along the candidate direction, with
+        /// a short ramp from its current speed so a direction it is already
+        /// travelling is not unfairly rewarded or punished.
+        ///
+        /// The score is the minimum of the two body-box margins
+        /// (`|dx| - 85`, `|dy| - 71`), maximised over the horizon. Using the box
+        /// margins rather than the centre distance matters because the native
+        /// contact test is a box test, and because a direction can keep the
+        /// centres far apart while still sitting inside the box on one axis.</summary>
+        private static float ScoreEscapeDirection(float cx, float cy,
+            float bx, float by, float bovx, float bovy, float selfX, float selfY)
+        {
+            // MEASURED (dense trace, 1193 charge frames of strong 600): the
+            // horizontal speed actually held during charges is 7-8 px/tick -- the
+            // histogram peaks at 366 frames at 7 and 312 at 8 -- with a maximum of
+            // 14.50 reached only on the 28 dash frames. A first version of this
+            // used 13.87 for the cruise and therefore chose directions against a
+            // speed 1.7x too high, which systematically under-bought the vertical
+            // component. 8f is the measured mode.
+            const float Cruise = 8f;
+            const float Ramp = 0.25f;      // ticks needed to reach the commanded speed
+            const int Horizon = 24;        // the charge reaches the player well inside this
+            var px = -bx;                  // player position relative to the Boss at lock
+            var py = -by;
+            var vx = selfX;
+            var vy = selfY;
+            var margin = float.MaxValue;
+            for (var t = 0; t < Horizon; t++)
+            {
+                vx += (cx * Cruise - vx) * Ramp;
+                vy += (cy * Cruise - vy) * Ramp;
+                px += vx;
+                py += vy;
+                var dx = px - bovx * t;
+                var dy = py - bovy * t;
+                var m = Math.Min(Math.Abs(dx) - 85f, Math.Abs(dy) - 71f);
+                if (m < margin)
+                    margin = m;
+            }
+            return margin;
         }
 
         private bool PredictChargImminent(int state, int timer)        {

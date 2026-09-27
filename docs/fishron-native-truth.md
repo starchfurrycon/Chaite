@@ -9074,6 +9074,118 @@ Two of the nine are a **missing generated fixture**, not a code fault. The remai
 recorded here rather than quietly ignored, because "the suite is green" would be a false statement and the
 acceptance evidence in this document must not be built on one.
 
+## 125. Round 160: the Shield dash immunity is SINGLE-TARGET, and that is why the dash never saved a run
+
+### 125.1 The native rule
+
+```csharp
+// Player.cs:31602
+if ((specialHitSetter == ImmunityCooldownID.General && immune) ||
+    (dash == 2 && i == eocHit && eocDash > 0) ||
+    npcTypeNoAggro[Main.npc[i].type])
+    continue;
+```
+
+The Shield of Cthulhu's damage immunity during a dash is conditioned on `i == eocHit` -- **only the NPC the dash
+first touched**. It is not a general invulnerability window for the whole 15 ticks.
+
+### 125.2 What that did to the fatal charge
+
+```
+t 2236  lock             boss (-12.12,-11.92) const, separation 121.5 px
+t 2237  dash fires       plvx +14.50            <-- dash starts, eocDash = 15
+t 2239  BODY CONTACT     the player is dashing into the Boss
+                         => Boss becomes eocHit and CONSUMES the shield immunity
+t 2243  4 collision i-frames lapse (eocDash still > 0, ~11 ticks left)
+t 2251  HIT              while the dash window is still open
+```
+
+The shield's own immunity was spent on the Boss, and what remained was only the 4-tick collision immunity. The
+player dashes *into* the thing it needs protection from.
+
+### 125.3 Why the escape search alone could not fix it
+
+Both perpendiculars to the frozen charge line give the **same** clearance, so a clearance-maximising score cannot
+choose between them. In the fatal charge the search picked a direction with `horizontal +1` while the Boss was
+approaching from the left -- i.e. across the Boss's path -- which is exactly the direction that makes the Boss
+`eocHit`. Clearance is not the whole objective; the dash must also touch nothing.
+
+### 125.4 Implemented in this round (all default OFF)
+
+- `CHAITE_CHARGE_ESCAPE_SIM=1` -- `LatchChargeNormal` no longer decides the escape from the player's own past
+  velocity. It forward-simulates the frozen charge against 16 candidate 2-D directions and scores each by the least
+  body-box margin it achieves over a 24-tick horizon, using the measured wing cruise (13.87) with a short ramp.
+- `CHAITE_CHARGE_DASH_SIDE=1` -- drops every candidate whose motion has a negative projection onto
+  `(player -> Boss)`, so the escape never drives the player at the Boss and never lets the dash's i-frames be spent
+  on it.
+- `CHAITE_CHARGE_CLIMB_AWAY=1` -- from 124.7; refuses to lift while the Boss is below.
+
+### 125.5 MEASURED (obsidian, 320 tiles)
+
+First version, cruise assumed 13.87:
+
+```
+strong 300   OFF baseline: died @4218, 6 hits, npc contact 3
+             SIM+SIDE   : died @5022, 7 hits, npc contact 8      (longer, still dies)
+strong 600   SIM+SIDE   : died @5921, 7 hits, boss 24109
+strong 800   SIM+SIDE   : died @5306, 6 hits, boss 14362
+strong 1000  SIM+SIDE   : died @4577, 5 hits, boss 10675        (baseline also died)
+weak   800   SIM+SIDE   : died @2923, 6 hits
+weak  1000   SIM+SIDE   : died @2923, 6 hits   <-- IDENTICAL TICK
+```
+
+### 125.5.1 The speed premise was wrong, and fixing it did not rescue the search
+
+The 1193 charge frames of strong 600 give the **actual** horizontal speed held during a charge:
+
+```
+|plvx|   frames
+   0-6      180
+   7        366   <- mode
+   8        312   <- mode
+   9-11     104
+  12-13     176
+  14         55   <- 14.5 appears on exactly the 28 dash frames
+```
+
+So the sustained horizontal cruise during a charge is **7-8 px/tick**, and 13.87 (which is
+`wingAccRunSpeed`) is not what the player actually holds. A first version of the search used 13.87 and therefore
+chose directions against a speed **1.7x too high**, systematically under-buying the vertical component. Re-measured
+with the mode, `Cruise = 8f` and a 0.25 ramp:
+
+```
+strong 300   died @4302, 6 hits, npc contact 6
+strong 600   died @4302, 6 hits        <-- IDENTICAL TICK to 300
+strong 800   died @4832, 6 hits, npc contact 5
+strong 1000  died @3243, 5 hits        <-- WORSE than the 4577 of the wrong-speed version
+weak   800   died @2964, 6 hits
+weak  1000   died @3678, 6 hits
+```
+
+Two more DPS values now collapse to an identical death tick, and strong 1000 gets worse. **The search is a net
+negative against the reviewed latch at every DPS measured, with both parameter choices.**
+
+### 125.6 The honest read
+
+The `eocHit` rule (125.1) is a real mechanism and it explains why every dash in this fight has been worthless as a
+defensive tool -- the shield pays for its immunity with the same NPC it has to survive. But **the escape search built
+on top of it is not better than the reviewed latch**, and its extra freedom keeps producing the identical-death-tick
+failure. The search also still rests on an unverified premise: that a chosen 2-D direction can be realised through
+the plan's binary `horizontal`/`vertical` commands at some modelled speed. The measured 7-8 px/tick cruise says the
+player is speed-limited, so the interesting question is not which direction to pick but **what the maximum
+achievable clearance from a locked charge is at 7-8 px/tick**, and whether that is above 85 px at all given the Boss
+commits from ~121 px.
+
+## 126. Method note added this round
+
+When a change produces an identical death tick across different DPS values, treat it as a broken invariant rather
+than a weak heuristic and revert it: the outcome has stopped depending on the fight. This has now happened with
+`CHAITE_CHARGE_NORMAL_OWNER` (122), `CHAITE_CHARGE_CLIMB_AWAY` on the weak arm (124.7), and
+`CHAITE_CHARGE_ESCAPE_SIM` + `CHAITE_CHARGE_DASH_SIDE` on the weak arm and on strong 300/600 (125.5.1).
+
+**All three new knobs are left default-OFF and none is promoted into the reviewed circuit**, because none of them
+is better than it. They are kept as documented instruments, not as fixes.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
