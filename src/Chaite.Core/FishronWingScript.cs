@@ -219,6 +219,46 @@ namespace Chaite.Core
         /// tick, so a charge that finds the player falling cannot be escaped at
         /// all; the last few hover ticks are spent making sure it never does.</summary>
         private const int PreJumpTicks = 20;
+        /// <summary>Pre-charge jump lead, made wing-aware.
+        ///
+        /// MEASURED (dense 300-DPS native traces, one per wing):
+        ///
+        ///            peak climb   median climb   altitude span   wingTimeMax
+        ///   strong     16.31         7.50           4663            180
+        ///   weak        9.91         5.08           3367            130
+        ///
+        /// The weak wing climbs at roughly two thirds the strong wing's rate (median
+        /// 5.08 against 7.50, a 1.48x deficit) while FALLING at exactly the same
+        /// 10.01. So a fixed 20-tick wind-up gives the weak wing far less altitude by
+        /// contact than it gives the strong wing, and 71 px of |dy| is what the body
+        /// box needs. This is the concrete content of the owner's note that the two
+        /// wings need two sets because their vertical mobility differs -- the shared
+        /// constant is the thing that ignores it.
+        ///
+        /// The weak wing is NOT more often wing-exhausted (wingTime == 0 on 25.6% of
+        /// ticks against the strong wing's 33.8%), so the deficit is rate rather than
+        /// budget, and the naive fix is to start the wind-up earlier in proportion
+        /// (20 * 7.50 / 5.08 = 29.5, so 30).
+        ///
+        /// THAT PROPORTIONAL SCALING IS REFUTED, AND THE TIMING IS A KNIFE EDGE.
+        ///
+        ///   weak 300, lead 20 (reviewed):  5879 / 8 / 51124
+        ///   weak 300, lead 26:             4812 / 7 / 56546
+        ///   weak 300, lead 30:             2176 / 5 / 69767   <- collapse
+        ///   weak 300, lead 35:             2176 / 5 / 69767   identical
+        ///   weak 300, lead 45:             2176 / 5 / 69767   identical
+        ///
+        /// Leads of 30, 35 and 45 all produce the SAME tick, dead at 2176, which is
+        /// the broken-invariant signature again. Extending the wind-up does not buy
+        /// altitude; it makes the player commit to a climb earlier and then fly into
+        /// the Boss's hover point, which is exactly the failure the personal-space
+        /// comment in this file already records ("a climb from a few tens of pixels
+        /// below the hover point flies straight into it"). The 20-tick lead is the
+        /// reviewed value and it stays; the wing-aware threshold exists so the
+        /// behaviour is at least expressed per wing and swimmable, but it is left at
+        /// 20 for both. See WeakPreJumpTicks.</summary>
+        private const int WeakPreJumpTicks = 20;
+
         /// <summary>Horizontal speed below which the charge branch stops
         /// honouring a neutral pattern charge and simply runs away. A charge
         /// closes at 14.7 px/tick and wing cruise is a measured 13.87, so a
@@ -2296,8 +2336,34 @@ namespace Chaite.Core
             if (state != 0 && state != 5 && state != 10) return false;
             var limit = _hoverLimit[state];
             if (limit <= 0) return false;
-            return limit - timer <= PreJumpTicks;
+            // Wing-aware lead: the weak wing climbs at about two thirds the strong
+            // wing's rate, so it needs a longer wind-up to reach the same altitude
+            // by contact. See WeakPreJumpTicks.
+            var lead = PreJumpTicks;
+            if (_dashSuppressRoute == FormulaRoute.FishronFairyWingsDash)
+                lead = WeakPreJumpLead;
+            return limit - timer <= lead;
         }
+
+        /// <summary>Weak-wing pre-charge jump lead in ticks. Default 30, derived
+        /// from the measured climb ratio (20 * 7.50 / 5.08 = 29.5). Set
+        /// <c>CHAITE_WEAK_PREJUMP</c> to sweep it; 20 reproduces the old shared
+        /// behaviour exactly.</summary>
+        private static int WeakPreJumpLead
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(WeakPreJumpVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 || value > 120)
+                    return WeakPreJumpTicks;
+                return value;
+            }
+        }
+
+        private const string WeakPreJumpVariable = "CHAITE_WEAK_PREJUMP";
 
         /// <summary>Keeps the circuit inside the geometry AI_069 reads for its
         /// own enrage test. During a charge an edge only cancels the offending

@@ -10053,6 +10053,69 @@ budget is being spent. That is consistent with 133.4 and it means the weak wing'
 vertical-mobility budgeting, not horizontal escaping -- which is exactly the axis the owner said the two
 sets should differ on.
 
+## 134. Round 148: the wing asymmetry measured properly, and the wind-up lead is a knife edge
+
+### 134.1 The wing budget: a real asymmetry, but not the one I assumed
+
+Dense native traces for both wings at 300 DPS give the first hard numbers on the owner's point that the
+two wings differ in vertical mobility:
+
+```
+              wingTimeMax   mean wingTime   wingTime==0   climb median   climb peak   descent
+strong            180           69.3          33.8%         7.50          16.31       10.01
+weak              130           62.4          25.6%         5.08           9.91       10.01
+```
+
+So the owner is right and the asymmetry is large: **the weak wing climbs at about two thirds the strong
+wing's rate (median 5.08 against 7.50, a 1.48x deficit) while falling at exactly the same 10.01 terminal
+speed**, and its `wingTimeMax` is 130 against 180.
+
+**But my previous round's guess at the mechanism was wrong, and the data says so**: the weak wing is
+*less* often wing-exhausted than the strong one (25.6% of ticks at `wingTime == 0` against 33.8%). The
+deficit is therefore **rate, not budget** -- the weak wing is not running out of wing, it simply gains
+height more slowly while the Boss closes vertically at the same speed.
+
+### 134.2 The wind-up lead is hard-coded and wing-blind
+
+`PreJumpTicks = 20` was a single shared constant, applied to both wings by
+`PredictChargImminent`. Scaling it by the measured climb ratio gives `20 * 7.50 / 5.08 = 29.5`, so a
+30-tick lead for the weak wing looked like the exact "two sets" fix the owner asked for. Tested, and it
+is a **knife edge**:
+
+```
+weak 300, lead 20 (reviewed):  5879 / 8 / 51124
+weak 300, lead 26:             4812 / 7 / 56546
+weak 300, lead 30:             2176 / 5 / 69767   <- collapse
+weak 300, lead 35:             2176 / 5 / 69767   identical
+weak 300, lead 45:             2176 / 5 / 69767   identical
+```
+
+Leads of 30, 35 and 45 produce the **same tick, dead at 2176** -- the broken-invariant signature for the
+fifth time this session. Extending the wind-up does not buy altitude; it makes the player commit to a
+climb earlier and then fly *into* the Boss's hover point, which is the exact failure this file's own
+personal-space comment records ("a climb from a few tens of pixels below the hover point flies straight
+into it"). The proportional-scaling idea is refuted, and the lead stays at 20.
+
+### 134.3 What was kept: the behaviour is now expressed per wing
+
+The wing-aware threshold was kept structurally -- `PredictChargImminent` now selects its lead by route and
+reads `CHAITE_WEAK_PREJUMP`, so the two wings *can* differ and the constant is sweepable -- but both
+values are 20, so behaviour is unchanged. Verified: nine DPS points across both arms are **byte-identical**
+to the committed baseline (strong 300 10004/8/30628 through weak 2000 2881/1/kill), and both committed
+routes still replay to their recorded results (`MATCH`).
+
+The structural change matters for the objective even though it changed no behaviour: the objective asks
+for *two* formulaic state machines, and until this round there was literally one shared number where the
+owner said the divergence lives.
+
+### 134.4 Honest position
+
+Six full-band perturbations refuted across rounds 145-148, five of which tripped the broken-invariant
+signature. The circuit is at a sharp local optimum in every direction that has been probed. Two levers
+remain genuinely untested rather than refuted: (a) taking the weak wing's clearance from the **horizontal**
+axis rather than trying to out-climb, since its horizontal rate is not degraded (measured 7-8 px/tick on
+both wings) while its vertical rate is; and (b) the memorised attack-index controller of 132.8.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
