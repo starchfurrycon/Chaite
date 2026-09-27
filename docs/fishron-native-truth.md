@@ -8669,6 +8669,74 @@ direction and facing, stamina scheduling, escape direction, altitude, pre-lock g
 pattern, leg schedule, apex refill, and hazard retirement -- which is the strongest available evidence that the
 remaining gap is not a knob but a missing qualitative behaviour.
 
+## 95. Round 134: the escape direction is correct; the dash perturbs it
+
+> **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
+> real, but §95 had it in `DecideMovement` (the policy-only hook), where it never executed. **§95.1 below is
+> unaffected and is the round's real result.**
+
+### 95.1 The hit anatomy, measured at last
+
+With the correct sizes (boss `150x100`, player `20x42`, so contact is `|dx| < 85 && |dy| < 71`), the two
+strong-wing hits resolve cleanly. At the t=2486 lock:
+
+```
+t=2473  lock forms.  dx +242.2  dy -14.9   player vx -5.85, climbing at vy ~ -7
+t=2474  the charge's ONE dash fires: vx -14.50 while the BOSS charges at +16.97
+t=2479  the dash clears the wall and reverses: vx +9.00, climb resumes at (16.1, -4.28)
+t=2486  contact: dx +1.9, dy -38.2   (needed |dy| >= 71)
+```
+
+So the script's **escape direction is already correct** -- it is climbing, and after the wall it climbs at
+`(16.1, -4.28)`, which has positive dot product on the charge normal `(11.8, 60.7)`. The owner's W-rule is being
+followed. What goes wrong is the **dash**: it is horizontal (`dashType 2`, `vx ~ 14.5`), it fires **along the
+charge axis** where 14.5 cannot outrun 16.97, and it **replaces the climb for nine frames**. The vertical escape
+is then incomplete by the time the boss arrives.
+
+### 95.2 Suppressing that dash works, and then relocates
+
+> **RETRACTED by §96.** The rule was never executing (it sat in the policy-only hook), so nothing below is a
+> measurement of dash suppression. Kept only so the retraction has something to point at.
+
+`CHAITE_DASH_SUPPRESS` suppresses a ready dash during a charge while the vertical gap is under the threshold,
+leaving those frames to the vertical escape. At 90 it **removes the t=2486 hit entirely** -- the player holds a
+sustained climb (`vy` ~ -8 to -10 through the lock) and clears the boss's altitude by 170 px. But the fight
+relocates the hits to t=3259 and t=4271, both phase-two signatures at `dy ~ 0`.
+
+Sweeping the threshold shows a **sharp optimum, not a plateau** -- the sixth such parameter:
+
+```
+suppress  =  40   2 hits        suppress  =  90   2 hits   (relocated)
+suppress  =  60   8 hits        suppress  = 120   8 hits
+suppress  = 150   7 hits        weak wing, 60     9 hits, DEAD at 5313
+```
+
+**This is the tenth trajectory-altering rule to cost more than it bought.** It is kept, **off by default**
+(`CHAITE_DASH_SUPPRESS` unset => 0 => the fixed circuit), because the mechanism is real and measured; it is not
+a fix.
+
+### 95.3 What this closes
+
+The residual hits are **not** a mis-aimed escape: the script already climbs along the charge normal, and the
+relocated hits appear wherever the clock puts them. Both loadouts are now understood to be limited by the same
+thing -- **a fixed flight budget against a faster, equally deterministic boss, inside a runway that cannot be
+lengthened**. The arena is tiles 1..400 of a 4200-tile world with the player clamped to `leftWorld + 640`
+(`BordersMovement`), so the usable corridor is about **5728 px** and the world edge bounds it; widening the arena
+is not available either.
+
+### 95.4 Status
+
+- **Measured:** the contact test is `|dx| < 85 && |dy| < 71` (boss 150x100, player 20x42), verified against all
+  three strong-wing hits.
+- **Measured:** the t=2486 escape is already along the charge normal; the failing element is the nine-frame
+  horizontal dash fired along the charge axis at `vx -14.50` against a `+16.97` charge.
+- **Measured:** `CHAITE_DASH_SUPPRESS` removes that hit and relocates the fight to `dy ~ 0` phase-two hits.
+- **Measured:** the suppress threshold is a sharp optimum (2 / 8 / 2 / 8 / 7 hits at 40 / 60 / 90 / 120 / 150),
+  the sixth such parameter and the tenth regression.
+- **Added, off by default, verified inert:** `CHAITE_DASH_SUPPRESS`; unset means the fixed circuit.
+- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
+- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
+  native zero is claimed.
 ## 120. Round 155: the low-tolerance armour set, and what it exposes
 
 ### 120.1 Why the set changed
@@ -8829,6 +8897,72 @@ sub-text is deleted. It names the action and nothing else.
 - **Still not met:** the 300 DPS floor. Both arms still die there, and neither the phase hold nor the transition
   wait changes that, because at 300 DPS the fight is ~15600 ticks against a ~4500-6000 tick Obsidian endurance.
 
+## 122. Round 157: the owner's normal rule describes the escape but cannot control it
+
+### 122.1 What was tested
+
+The owner's rule, as stated twice: **a locked charge leaves a diagonal dodge, upward when the Boss is above and
+downward when it is below**, and straight horizontal pull-away only when the lock was taken from far enough out.
+The rule was implemented as a third discriminator in `LatchChargeNormal`, replacing the projection of the player's
+velocity, exposed as `CHAITE_CHARGE_NORMAL_OWNER`. Both of the owner's clauses were implemented: a 320 px
+straight-pull-away clause and a 40 px level band.
+
+### 122.2 The rule is a good description — first, the supporting audit
+
+A lock-frame audit of every hit in the Obsidian runs, reconstructing the geometry at the true commit
+(`|boss velocity| == 16 px/tick`, visible inside the 47-tick prehit window on 14 of 18 hits), found the circuit
+**already obeying the owner's rule on 13 of 16 hits (81%)**. The three misses were instructive:
+
+```
+strong 4872  dist 172 px, Boss closing 27 px/tick vertically   -> no reaction time exists
+ph3   5186   dist  84 px, same                                 -> no reaction time exists
+weak  2489   dist 272 px, Boss below, player commanded FLAT    -> a genuine command gap
+```
+
+So the rule is a good account of what a working escape looks like. That is the interesting result.
+
+### 122.3 The rule is a bad controller — the refutation
+
+Implemented as the controller it kills both arms, and it does so **deterministically**:
+
+```
+clause 2 only (flip the vertical sign on every lock)
+  strong  600  baseline survives to cap, 6 hits  ->  DEATH at tick 2151, 5 hits
+  strong 1000  baseline kill                     ->  DEATH at tick 2151, 5 hits
+  strong 1500  baseline ZERO-HIT KILL at 3661     ->  DEATH at tick 2151, 5 hits
+
+both clauses (skip when level, pull away when far)
+  strong  600/1000/1200/1500  ->  DEATH at tick 1811, 5 hits (all four identical)
+  weak   1500  baseline 3 hits kill  ->  kill, 4 hits
+  weak   1600  baseline 2 hits kill  ->  kill, 3 hits
+```
+
+**Every strong-wing run at every DPS collapsing to one identical tick is the signature of a broken invariant, not
+of a bad heuristic**: the outcome stops depending on the fight at all. The strong wing is hit hardest precisely
+because it is the arm with the flight budget to hold a clean line, and the rule is destroying that line.
+
+### 122.4 Why
+
+The rule reads a quantity the escape must not read. `dy` at lock is measured against a Boss that is usually within
+a body length of the player, so its **sign is near-arbitrary and flips from charge to charge**. Obeying it replaces
+a coherent escape with a coin flip.
+
+This is the round's real lesson, and it generalises beyond this Boss:
+
+> A rule can be an excellent *description* of a working escape and a terrible *controller* for it. The 81%
+> agreement is evidence about the description, not a licence to promote it into the decision.
+
+Reproduce-safety: the experiment is **reverted**, and the revert was verified byte-identical to the baseline
+(strong 600 -> cap/6 hits/22748; strong 1500 -> **zero-hit kill** 3661; weak 1500 -> 3 hits kill). A comment at
+the discriminator records the refutation, and the env name is deleted so it cannot be half-restored.
+
+### 122.5 Consequence for the objective
+
+The 19% of hits that disagree with the owner's rule are **not** the binding constraint, and the last cheap
+hypothesis for the low-DPS floor is now closed. The floor stands as measured in section 117.4: at 300 DPS the kill
+needs ~15600 ticks against a measured endurance of roughly 4500-6000 ticks, and no escape-direction change moves
+that ratio, because the hits are not the result of a wrong direction.
+
 ## 123. Round 158: the arena is 320 tiles, and the band had to follow
 
 ### 123.1 The owner's constraint, finally applied
@@ -8940,137 +9074,3 @@ Two of the nine are a **missing generated fixture**, not a code fault. The remai
 recorded here rather than quietly ignored, because "the suite is green" would be a false statement and the
 acceptance evidence in this document must not be built on one.
 
-## 122. Round 157: the owner's normal rule describes the escape but cannot control it
-
-### 122.1 What was tested
-
-The owner's rule, as stated twice: **a locked charge leaves a diagonal dodge, upward when the Boss is above and
-downward when it is below**, and straight horizontal pull-away only when the lock was taken from far enough out.
-The rule was implemented as a third discriminator in `LatchChargeNormal`, replacing the projection of the player's
-velocity, exposed as `CHAITE_CHARGE_NORMAL_OWNER`. Both of the owner's clauses were implemented: a 320 px
-straight-pull-away clause and a 40 px level band.
-
-### 122.2 The rule is a good description — first, the supporting audit
-
-A lock-frame audit of every hit in the Obsidian runs, reconstructing the geometry at the true commit
-(`|boss velocity| == 16 px/tick`, visible inside the 47-tick prehit window on 14 of 18 hits), found the circuit
-**already obeying the owner's rule on 13 of 16 hits (81%)**. The three misses were instructive:
-
-```
-strong 4872  dist 172 px, Boss closing 27 px/tick vertically   -> no reaction time exists
-ph3   5186   dist  84 px, same                                 -> no reaction time exists
-weak  2489   dist 272 px, Boss below, player commanded FLAT    -> a genuine command gap
-```
-
-So the rule is a good account of what a working escape looks like. That is the interesting result.
-
-### 122.3 The rule is a bad controller — the refutation
-
-Implemented as the controller it kills both arms, and it does so **deterministically**:
-
-```
-clause 2 only (flip the vertical sign on every lock)
-  strong  600  baseline survives to cap, 6 hits  ->  DEATH at tick 2151, 5 hits
-  strong 1000  baseline kill                     ->  DEATH at tick 2151, 5 hits
-  strong 1500  baseline ZERO-HIT KILL at 3661     ->  DEATH at tick 2151, 5 hits
-
-both clauses (skip when level, pull away when far)
-  strong  600/1000/1200/1500  ->  DEATH at tick 1811, 5 hits (all four identical)
-  weak   1500  baseline 3 hits kill  ->  kill, 4 hits
-  weak   1600  baseline 2 hits kill  ->  kill, 3 hits
-```
-
-**Every strong-wing run at every DPS collapsing to one identical tick is the signature of a broken invariant, not
-of a bad heuristic**: the outcome stops depending on the fight at all. The strong wing is hit hardest precisely
-because it is the arm with the flight budget to hold a clean line, and the rule is destroying that line.
-
-### 122.4 Why
-
-The rule reads a quantity the escape must not read. `dy` at lock is measured against a Boss that is usually within
-a body length of the player, so its **sign is near-arbitrary and flips from charge to charge**. Obeying it replaces
-a coherent escape with a coin flip.
-
-This is the round's real lesson, and it generalises beyond this Boss:
-
-> A rule can be an excellent *description* of a working escape and a terrible *controller* for it. The 81%
-> agreement is evidence about the description, not a licence to promote it into the decision.
-
-Reproduce-safety: the experiment is **reverted**, and the revert was verified byte-identical to the baseline
-(strong 600 -> cap/6 hits/22748; strong 1500 -> **zero-hit kill** 3661; weak 1500 -> 3 hits kill). A comment at
-the discriminator records the refutation, and the env name is deleted so it cannot be half-restored.
-
-### 122.5 Consequence for the objective
-
-The 19% of hits that disagree with the owner's rule are **not** the binding constraint, and the last cheap
-hypothesis for the low-DPS floor is now closed. The floor stands as measured in section 117.4: at 300 DPS the kill
-needs ~15600 ticks against a measured endurance of roughly 4500-6000 ticks, and no escape-direction change moves
-that ratio, because the hits are not the result of a wrong direction.
-
-## 95. Round 134: the escape direction is correct; the dash perturbs it
-
-> **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is
-> real, but §95 had it in `DecideMovement` (the policy-only hook), where it never executed. **§95.1 below is
-> unaffected and is the round's real result.**
-
-### 95.1 The hit anatomy, measured at last
-
-With the correct sizes (boss `150x100`, player `20x42`, so contact is `|dx| < 85 && |dy| < 71`), the two
-strong-wing hits resolve cleanly. At the t=2486 lock:
-
-```
-t=2473  lock forms.  dx +242.2  dy -14.9   player vx -5.85, climbing at vy ~ -7
-t=2474  the charge's ONE dash fires: vx -14.50 while the BOSS charges at +16.97
-t=2479  the dash clears the wall and reverses: vx +9.00, climb resumes at (16.1, -4.28)
-t=2486  contact: dx +1.9, dy -38.2   (needed |dy| >= 71)
-```
-
-So the script's **escape direction is already correct** -- it is climbing, and after the wall it climbs at
-`(16.1, -4.28)`, which has positive dot product on the charge normal `(11.8, 60.7)`. The owner's W-rule is being
-followed. What goes wrong is the **dash**: it is horizontal (`dashType 2`, `vx ~ 14.5`), it fires **along the
-charge axis** where 14.5 cannot outrun 16.97, and it **replaces the climb for nine frames**. The vertical escape
-is then incomplete by the time the boss arrives.
-
-### 95.2 Suppressing that dash works, and then relocates
-
-> **RETRACTED by §96.** The rule was never executing (it sat in the policy-only hook), so nothing below is a
-> measurement of dash suppression. Kept only so the retraction has something to point at.
-
-`CHAITE_DASH_SUPPRESS` suppresses a ready dash during a charge while the vertical gap is under the threshold,
-leaving those frames to the vertical escape. At 90 it **removes the t=2486 hit entirely** -- the player holds a
-sustained climb (`vy` ~ -8 to -10 through the lock) and clears the boss's altitude by 170 px. But the fight
-relocates the hits to t=3259 and t=4271, both phase-two signatures at `dy ~ 0`.
-
-Sweeping the threshold shows a **sharp optimum, not a plateau** -- the sixth such parameter:
-
-```
-suppress  =  40   2 hits        suppress  =  90   2 hits   (relocated)
-suppress  =  60   8 hits        suppress  = 120   8 hits
-suppress  = 150   7 hits        weak wing, 60     9 hits, DEAD at 5313
-```
-
-**This is the tenth trajectory-altering rule to cost more than it bought.** It is kept, **off by default**
-(`CHAITE_DASH_SUPPRESS` unset => 0 => the fixed circuit), because the mechanism is real and measured; it is not
-a fix.
-
-### 95.3 What this closes
-
-The residual hits are **not** a mis-aimed escape: the script already climbs along the charge normal, and the
-relocated hits appear wherever the clock puts them. Both loadouts are now understood to be limited by the same
-thing -- **a fixed flight budget against a faster, equally deterministic boss, inside a runway that cannot be
-lengthened**. The arena is tiles 1..400 of a 4200-tile world with the player clamped to `leftWorld + 640`
-(`BordersMovement`), so the usable corridor is about **5728 px** and the world edge bounds it; widening the arena
-is not available either.
-
-### 95.4 Status
-
-- **Measured:** the contact test is `|dx| < 85 && |dy| < 71` (boss 150x100, player 20x42), verified against all
-  three strong-wing hits.
-- **Measured:** the t=2486 escape is already along the charge normal; the failing element is the nine-frame
-  horizontal dash fired along the charge axis at `vx -14.50` against a `+16.97` charge.
-- **Measured:** `CHAITE_DASH_SUPPRESS` removes that hit and relocates the fight to `dy ~ 0` phase-two hits.
-- **Measured:** the suppress threshold is a sharp optimum (2 / 8 / 2 / 8 / 7 hits at 40 / 60 / 90 / 120 / 150),
-  the sixth such parameter and the tenth regression.
-- **Added, off by default, verified inert:** `CHAITE_DASH_SUPPRESS`; unset means the fixed circuit.
-- **Best achieved:** strong wing `6000 / 2 hits / death FALSE`; weak wing `6000 / 4 hits / death FALSE`.
-- **Not achieved:** `hits == 0` on either loadout. The objective remains **active and incomplete**, and no
-  native zero is claimed.
