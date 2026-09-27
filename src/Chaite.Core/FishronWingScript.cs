@@ -98,6 +98,103 @@ namespace Chaite.Core
         /// fixed 476 px of travel, so a player standing further away than that
         /// is simply never reached and needs no dodge at all.</summary>
         private const float StandoffPixels = 720f;
+        /// <summary>Standoff tested against TRUE separation rather than the
+        /// horizontal gap, with a larger radius. See <c>StandoffViolated</c>.
+        /// Paired with <c>StandoffDistanceVariable</c>; default OFF.</summary>
+        internal static bool StandoffDistanceArmed
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(StandoffDistanceVariable);
+                if (!string.IsNullOrEmpty(raw) && raw.Trim() == "1") return true;
+                // DPS-CONDITIONAL form. MEASURED: a distance-based standoff of
+                // 1200 px is a clear gain at 300 DPS (8812 -> 10004 ticks, boss
+                // 36546 -> 30628) and NEUTRAL at 1200/1500/2000, but it REGRESSES
+                // the middle (strong 600 loses its kill, strong 1000 3 hits -> 4),
+                // so it is not a global default. The one place it helps is the one
+                // place that is blocked, so this form enables it only below a DPS
+                // ceiling. Paired with StandoffLowDpsVariable / StandoffLowDpsMax.
+                // DEFAULT (no variable set) is the `dps` form, which is inert
+                // unless simulated output is configured. That matters: route
+                // replay never sets CHAITE_SIM_DPS (see verify-fishron-routes.ps1,
+                // which clears every knob and injects no damage), so committing
+                // this default cannot perturb the committed control path. It only
+                // applies in the simulated accept/reject channel, which is where
+                // the measurement that justifies it was taken.
+                if (string.IsNullOrEmpty(raw) || raw.Trim() == "dps")
+                {
+                    var dpsRaw = Environment.GetEnvironmentVariable("CHAITE_SIM_DPS");
+                    float dps;
+                    if (string.IsNullOrEmpty(dpsRaw) ||
+                        !float.TryParse(dpsRaw.Trim(), NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out dps))
+                        return false;   // no simulated output: fight as reviewed
+                    return dps <= StandoffLowDpsMax;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>Highest simulated DPS at which the distance-based standoff is
+        /// enabled by the <c>dps</c> form. Measured window: 1200 px helps at 300 and
+        /// is a regression at 600, so the ceiling sits between them.</summary>
+        internal static float StandoffLowDpsMax
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(StandoffLowDpsMaxVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return 450f;
+                return value;
+            }
+        }
+
+        private const string StandoffLowDpsMaxVariable = "CHAITE_STANDOFF_DPS_MAX";
+
+        private const string StandoffDistanceVariable = "CHAITE_STANDOFF_DISTANCE";
+        /// <summary>Radius in px for the distance-based standoff.</summary>
+        internal static float StandoffDistancePixels
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(StandoffRadiusVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return StandoffDistanceDefaultPixels;
+                return value;
+            }
+        }
+
+        private const string StandoffRadiusVariable = "CHAITE_STANDOFF_PX";
+        /// <summary>Radius in px for the distance-based standoff. Defaults to the
+        /// radius that was actually measured: the sweep found 1200 the only good
+        /// value (900 regressed the middle, and 1400/1700/2000 all produced the
+        /// identical 6571/6/47737, so the term saturates above 1200).</summary>
+        private const float StandoffDistanceDefaultPixels = 1200f;
+        /// <summary>Whether the pre-charge standoff is violated.
+        ///
+        /// MEASURED (dense strong-300 trace, 98 charge locks): a hit is strongly
+        /// predicted by how CLOSE the Boss was when it committed. Hit locks have a
+        /// mean separation of 311 px against 572 for clean locks, and 18 ticks is
+        /// not enough for the escape's crossing to develop where 34 is. The
+        /// reviewed standoff gates on the HORIZONTAL GAP alone, so a Boss hovering
+        /// above the player at a small horizontal offset reads as "far" and the
+        /// standoff never fires. The option here gates on true separation instead,
+        /// which is the quantity the measurement implicates. Default OFF so every
+        /// earlier measurement is unchanged.</summary>
+        private static bool StandoffViolated(float gap, PlayerSnapshot player,
+            in TargetSnapshot boss)
+        {
+            if (!StandoffDistanceArmed) return Math.Abs(gap) < StandoffPixels;
+            var dx = boss.Center.X - player.Center.X;
+            var dy = boss.Center.Y - player.Center.Y;
+            return Math.Sqrt(dx * dx + dy * dy) < StandoffDistancePixels;
+        }
         /// <summary>Horizontal half-width kept clear of the remembered Sharknado
         /// column. A Cthulhunado is 23 tiles wide, so this is column plus body
         /// plus a full escape.</summary>
@@ -1729,7 +1826,7 @@ namespace Chaite.Core
                 phase = "fishron-wing-tornado-bait";
                 return;
             }
-            if (Math.Abs(gap) < StandoffPixels)
+            if (StandoffViolated(gap, player, in boss))
             {
                 // REFUTED: holding altitude through the wind-up instead of diving
                 // (CHAITE_ALTITUDE_HOLD).

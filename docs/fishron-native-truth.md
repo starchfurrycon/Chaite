@@ -9746,6 +9746,72 @@ where there is not enough time for the crossing to develop. Holding the Boss fur
 commit is a state-space change at the lock -- exactly what 131.2's failed command-space edit could not
 achieve -- and it targets the separation signal directly.
 
+## 132. Round 145: the first net-positive change in many rounds -- a DPS-gated standoff radius
+
+### 132.1 The change
+
+Section 131.5 implicated the pre-charge separation: hit locks commit at 311 px against 572 for clean
+locks. The reviewed standoff gates on the **horizontal gap** alone (`Math.Abs(gap) < StandoffPixels`, 720),
+so a Boss hovering above the player at a small horizontal offset reads as "far" and the standoff never
+fires. The change adds a distance-based form that gates on **true separation** instead, and it is
+DPS-gated so it only applies where it was measured to help.
+
+### 132.2 The radius sweep (strong arm, obsidian)
+
+```
+radius     300 dps              600 dps              800 dps     1200 dps
+off        8812 / 8 / 36546     6744 / 6 / KILL      5057 / 4     4437 / 1 / KILL
+ 900       7889 / 9 / 41167     6553 / 5 / death      --           --
+1200      10004 / 8 / 30628     5734 / 5 / death      5398 / 4     4441 / 3 / KILL
+1400       6571 / 6 / 47737     --                   --           --
+1700       6571 / 6 / 47737     --                   --           --
+2000       6571 / 6 / 47737     --                   --           --
+```
+
+Two things stand out. **1200 is the only good radius**: 900 regresses the low end, and 1400/1700/2000 all
+produce the *identical* 6571/6/47737, i.e. the term saturates -- past ~1400 the standoff simply always
+fires, which is a different and worse controller.
+
+And **1200 is not a global win**. It gains clearly at 300, is a regression at 600 and 1000, and is neutral
+at 1200/1500/2000. That is the familiar entanglement again (sections 122, 130.2, 131.2), but this time the
+signal was strong enough to act on anyway, because it helps **precisely the one point that is blocked**.
+
+### 132.3 DPS-gating it, and the gate must be inert for route replay
+
+The standoff is therefore enabled only when simulated output is configured and the DPS is at or below a
+ceiling (default 450, sitting between the 300 gain and the 600 regression). Verified across the band,
+`CHAITE_SIM_DPS` set and nothing else:
+
+```
+              before (this session)      after default
+strong  300   8812 / 8 / 36546           10004 / 8 / 30628     <- best 300 result ever recorded
+strong  600   6744 / 6 / 15937           6744 / 6 / 15937      identical
+strong  800   5057 / 4 / 17755           5057 / 4 / 17755      identical
+strong 1000   4573 / 3 / 10777           4573 / 3 / 10777      identical
+strong 1200   4437 / 1 / KILL            4437 / 1 / KILL       identical
+strong 2000   2881 / 0 / ZERO-HIT KILL   2881 / 0 / KILL       identical
+weak    300   5879 / 8 / 51124           5879 / 8 / 51124      identical
+weak    600   4741 / 6 / 35818           4741 / 6 / 35818      identical
+weak   1500   3656 / 4 / KILL            3656 / 4 / KILL       identical
+```
+
+**Why this is safe for the committed routes, and it was verified rather than assumed:** the gate reads
+`CHAITE_SIM_DPS`, which *only* the simulated DPS channel sets. `verify-fishron-routes.ps1` clears every
+knob and injects no damage, so the predicate returns false and the standoff stays exactly as reviewed.
+Both committed routes still replay to their recorded results (`MATCH`, strong 6000/6/False, weak
+5636/9/True), which is the control-path guarantee `CHAITE_ROUTE_FILE` exists to provide.
+
+### 132.4 Honest size of the win
+
+This is a real improvement and the first net-positive change in many rounds, but it is **not** the
+solution and must not be presented as one. Endurance at 300 DPS improves from 8812 to 10004 ticks, about
+13.5%, with the Boss left at 30628 instead of 36546. The requirement from 130.3 is to reach roughly 15600
+ticks *with hits still inside the survivable pool*, i.e. about a further 56% on top of this. Five rounds
+of negative results have now bounded where the remaining gain can come from: not the charge-escape command
+(131.2), not the wing budget (130.2), not the platform count (129.6), not the phase transition at this DPS
+(129.7). The standoff worked because it changed the *state the fight is in*, which is the direction 131.4
+predicted. That direction should be pushed further.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
