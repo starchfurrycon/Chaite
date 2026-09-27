@@ -9871,6 +9871,54 @@ measure the rule without it before optimising the side effect away.** Every atte
 heuristic in this session has lost; both genuine wins (129's tornado wind-up and 132's standoff radius)
 *added* a missing pre-condition rather than removing an existing one.
 
+### 132.7 The standoff must be continuous -- restricting it to the pre-charge window is refuted
+
+132.5 said the clamp's value is the separation it buys and the cost is tempo; 132.6 showed the tempo cost
+is load-bearing. The remaining reasonable lever was *when* it applies: only in the window where separation
+is about to matter, using the same `PredictChargImminent` predicate that made the tornado-clear fix work.
+Refuted, and by a wide margin:
+
+```
+                  continuous (kept)        pre-charge only
+strong  300       10004 / 8 / 30628         4091 / 6 / 60157
+strong  600        6744 / 6 / 15937         4091 / 6 / 42407
+strong 1200        4437 / 1 / KILL          4438 / 2 / KILL
+strong 2000        2881 / 0 / KILL          2880 / 0 / KILL
+weak    300        5879 / 8 / 51124         2870 / 6 / 66262
+weak    800        6380 / 5 / KILL          2870 / 6 / 46854
+```
+
+Strong 300 and 600 die on the same tick, 4091; weak 300 and 800 on the same tick, 2870. **The
+broken-invariant signature again, now for the fourth time this session**, on what looked like the most
+sensible refinement available. The tree was reverted and re-verified (strong 300 10004/8/30628, strong 2000
+2881/0/kill, weak 800 6380/5/kill).
+
+### 132.8 What this round establishes: the circuit is at a local optimum
+
+Three independent perturbations of the winning standoff rule -- a smoother action (132.6), a narrower
+application window (132.7), and, across the session, the wing-budget gate (130.2), the platform count
+(129.6) and the charge-escape command (131.2) -- have all **regressed the band**, and four of them broke
+the invariant by making the death tick independent of DPS. That is a consistent and informative picture:
+the shipped circuit sits at a local optimum, and it is a *sharp* one, since even changes that look like
+strict improvements to a single rule lose.
+
+Combined with the quantification in 130.3, the honest position is:
+
+* The requirement is roughly **1 hit per 1800-2200 ticks sustained**, against 1 per 1101 at the shipped
+  default and 1 per 1250 with the standoff win. The best measured dodge quality is 1 per 1250, i.e. about
+  **62-70% of the way** to the target on the rate, but the 300-DPS arm still dies.
+* Every local rule change attempted this session has failed. The two wins that did land (129's tornado
+  wind-up, 132's standoff radius) both **added a missing pre-condition** to the existing heuristic rather
+  than restructuring it.
+
+The next attempt should therefore not be another rule tweak. The evidence points to the remaining gap
+being **structural**: the circuit reacts to AI_069's group clock and desynchronises from it, and the
+technique notes (docs/fishron-technique-from-videos.md) record that phase 3 in particular is fully
+**memorisable** (`teleport -> 1 dash -> teleport -> 2 dashes -> teleport to the other side -> 3 dashes`)
+rather than reactive. A controller that tracks the attack index and answers the memorisable sequence
+directly is a different design, not a tuning of this one, and it is the only direction the evidence has
+not yet ruled out.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
