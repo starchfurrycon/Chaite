@@ -8829,6 +8829,72 @@ sub-text is deleted. It names the action and nothing else.
 - **Still not met:** the 300 DPS floor. Both arms still die there, and neither the phase hold nor the transition
   wait changes that, because at 300 DPS the fight is ~15600 ticks against a ~4500-6000 tick Obsidian endurance.
 
+## 122. Round 157: the owner's normal rule describes the escape but cannot control it
+
+### 122.1 What was tested
+
+The owner's rule, as stated twice: **a locked charge leaves a diagonal dodge, upward when the Boss is above and
+downward when it is below**, and straight horizontal pull-away only when the lock was taken from far enough out.
+The rule was implemented as a third discriminator in `LatchChargeNormal`, replacing the projection of the player's
+velocity, exposed as `CHAITE_CHARGE_NORMAL_OWNER`. Both of the owner's clauses were implemented: a 320 px
+straight-pull-away clause and a 40 px level band.
+
+### 122.2 The rule is a good description — first, the supporting audit
+
+A lock-frame audit of every hit in the Obsidian runs, reconstructing the geometry at the true commit
+(`|boss velocity| == 16 px/tick`, visible inside the 47-tick prehit window on 14 of 18 hits), found the circuit
+**already obeying the owner's rule on 13 of 16 hits (81%)**. The three misses were instructive:
+
+```
+strong 4872  dist 172 px, Boss closing 27 px/tick vertically   -> no reaction time exists
+ph3   5186   dist  84 px, same                                 -> no reaction time exists
+weak  2489   dist 272 px, Boss below, player commanded FLAT    -> a genuine command gap
+```
+
+So the rule is a good account of what a working escape looks like. That is the interesting result.
+
+### 122.3 The rule is a bad controller — the refutation
+
+Implemented as the controller it kills both arms, and it does so **deterministically**:
+
+```
+clause 2 only (flip the vertical sign on every lock)
+  strong  600  baseline survives to cap, 6 hits  ->  DEATH at tick 2151, 5 hits
+  strong 1000  baseline kill                     ->  DEATH at tick 2151, 5 hits
+  strong 1500  baseline ZERO-HIT KILL at 3661     ->  DEATH at tick 2151, 5 hits
+
+both clauses (skip when level, pull away when far)
+  strong  600/1000/1200/1500  ->  DEATH at tick 1811, 5 hits (all four identical)
+  weak   1500  baseline 3 hits kill  ->  kill, 4 hits
+  weak   1600  baseline 2 hits kill  ->  kill, 3 hits
+```
+
+**Every strong-wing run at every DPS collapsing to one identical tick is the signature of a broken invariant, not
+of a bad heuristic**: the outcome stops depending on the fight at all. The strong wing is hit hardest precisely
+because it is the arm with the flight budget to hold a clean line, and the rule is destroying that line.
+
+### 122.4 Why
+
+The rule reads a quantity the escape must not read. `dy` at lock is measured against a Boss that is usually within
+a body length of the player, so its **sign is near-arbitrary and flips from charge to charge**. Obeying it replaces
+a coherent escape with a coin flip.
+
+This is the round's real lesson, and it generalises beyond this Boss:
+
+> A rule can be an excellent *description* of a working escape and a terrible *controller* for it. The 81%
+> agreement is evidence about the description, not a licence to promote it into the decision.
+
+Reproduce-safety: the experiment is **reverted**, and the revert was verified byte-identical to the baseline
+(strong 600 -> cap/6 hits/22748; strong 1500 -> **zero-hit kill** 3661; weak 1500 -> 3 hits kill). A comment at
+the discriminator records the refutation, and the env name is deleted so it cannot be half-restored.
+
+### 122.5 Consequence for the objective
+
+The 19% of hits that disagree with the owner's rule are **not** the binding constraint, and the last cheap
+hypothesis for the low-DPS floor is now closed. The floor stands as measured in section 117.4: at 300 DPS the kill
+needs ~15600 ticks against a measured endurance of roughly 4500-6000 ticks, and no escape-direction change moves
+that ratio, because the hits are not the result of a wrong direction.
+
 ## 95. Round 134: the escape direction is correct; the dash perturbs it
 
 > **§95.2 is RETRACTED by §96**, and its conclusion is **reinstated on correct evidence by §97**: the rule is

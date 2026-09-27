@@ -241,6 +241,16 @@ namespace Chaite.Core
             get { return Environment.GetEnvironmentVariable(NoChargeDashVariable) == "1"; }
         }
 
+        // REFUTED and deliberately deleted, so nobody re-adds it: driving the
+        // vertical half of the locked-charge escape straight from the lock
+        // geometry (an experiment called CHAITE_CHARGE_NORMAL_OWNER, with a
+        // 320 px straight-pull-away clause and a 40 px level band). Every
+        // strong-wing run at every DPS died at one identical tick -- 2151 without
+        // the clauses, 1811 with them -- against a baseline where 600 survives to
+        // the cap and 1500 is a zero-hit kill. The full measurements and the
+        // reason a good description is not a good controller are recorded at the
+        // discriminator in LatchChargeNormal, which is where the rule is rejected.
+
 
 
 
@@ -1681,6 +1691,40 @@ namespace Chaite.Core
             // decides whether the nearest approach clears the body.
             var rateA = normalAX * player.Velocity.X + normalAY * player.Velocity.Y;
             var rateB = normalBX * player.Velocity.X + normalBY * player.Velocity.Y;
+            // REFUTED: taking the vertical half of the escape straight from the
+            // lock geometry (CHAITE_CHARGE_NORMAL_OWNER).
+            //
+            // The owner's rule is that a locked charge leaves a diagonal dodge --
+            // up when the Boss is above, down when it is below -- with a straight
+            // horizontal pull-away when the lock was taken from far enough out.
+            // That rule has real support in the data: a lock-frame audit of 16
+            // hits found the circuit already obeying it on 13 of them (81%), so
+            // the rule describes what a working escape usually looks like.
+            //
+            // Implementing it as the discriminator, however, kills both arms, and
+            // it does so DETERMINISTICALLY. Every strong-wing run at every DPS
+            // collapsed to an identical death at a single tick:
+            //
+            //   clause 2 only (flip the sign on every lock):
+            //     strong 600/1000/1500 -> death at tick 2151, 5 hits
+            //     (baseline: 600 survives to 6000 on 6 hits; 1500 is a ZERO-HIT kill)
+            //   both clauses (skip the flip when level, pull away when far):
+            //     strong 600/1000/1200/1500 -> death at tick 1811, 5 hits
+            //     weak 1500 -> kill, 4 hits (baseline 3); weak 1600 -> kill, 3 hits
+            //
+            // The identical tick across every DPS is the signature of a broken
+            // invariant rather than of a bad heuristic: the outcome stops
+            // depending on the fight at all. The cause is that the rule reads a
+            // quantity the escape must not read. `dy` at lock is measured against
+            // a Boss that is usually within a body length of the player, so its
+            // sign is near-arbitrary and flips from charge to charge; obeying it
+            // replaces a coherent escape with a coin flip, and the strong wing --
+            // which has the flight budget to hold a clean line -- is the one that
+            // loses most, because it was the arm actually using that line.
+            //
+            // So the 81% agreement is evidence that the rule is a good
+            // DESCRIPTION of the escape, not that it is a good CONTROLLER for it.
+            // The velocity projection below is left in place. Reverted.
             var normalX = rateA >= rateB ? normalAX : normalBX;
             var normalY = rateA >= rateB ? normalAY : normalBY;
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);
