@@ -9327,6 +9327,108 @@ cancelled by the escape branch's next command, and (b) refusing the counter-dash
 committed inside the 30-tick delay, which is where the extra hit at strong 800 and the two extra at strong 600
 probably come from.
 
+## 129. Round 161 (cont.): the tornado-clear branch had no pre-charge wind-up — the largest single fix so far
+
+### 129.1 The measurement that found it
+
+A lock audit over all **29 charge commits** of the strong-600 run, recording the player's vertical
+velocity on the exact tick the Boss committed:
+
+```
+vertical velocity AT LOCK, 29 charges:
+  min -12.81   median -6.48   max +10.01
+  already climbing (vy < -1): 19
+  FLAT (-1..1):                0
+  already falling (vy > 1):   10
+```
+
+Nineteen charges were met **already rising** at up to 12.81 px/tick, because the circuit's pre-charge
+jump gives about 20 ticks of wind-up. The ten falling ones were almost all `refill` frames with
+`wingTime 0`, where the descent is deliberate and necessary.
+
+**Exactly one exception, and it is the hit.** At `t=2236` -- the fatal lock of the strong-600 run,
+also the only charge in that run that locked from close range (122 px) -- the phase was
+`fishron-wing-tornado-clear` and the player's vertical velocity was **+2.76, i.e. already
+descending**, with `wingTime 31` available. Every other charge in the run had 300-1634 px and 20 ticks
+of wind-up.
+
+### 129.2 The cause
+
+`Cruise()`'s tornado-clear branch is the FIRST test in the method and it **returns early**:
+
+```csharp
+if (_tornadoTicksLeft > 0 && |player.X - _tornadoX| < TornadoClearance)
+{
+    horizontal = _tornadoX >= player.X ? -1 : 1;
+    vertical   = player.OnGround ? -1 : 1;   // <-- DESCENT while airborne
+    phase = "fishron-wing-tornado-clear";
+    return;                                   // <-- the pre-charge jump never runs
+}
+```
+
+So while the circuit is clearing a Sharknado column it both (a) skips the wind-up that every other
+pre-charge frame gets, and (b) actively commands a descent if airborne. A charge that commits during
+tornado-clear therefore arrives with the vertical component pointing the wrong way -- and the escape
+needs the climb.
+
+### 129.3 The fix, and the measured result
+
+The branch now defers to the same wind-up: when a charge is imminent and the player is airborne it
+holds the jump and reports `fishron-wing-tornado-clear-prejump`. Hold the jump to load the climb;
+landing refills the flight budget, so it is not paid twice.
+
+Strong wing, obsidian, 320 tiles, policy unset, formula route:
+
+```
+DPS    before (ticks/hits/bossLife)      after (ticks/hits/bossLife)
+300    4218 /  8 / 59588                 8812 /  8 / 36546     endurance x2.09, boss 1.63x closer
+600    4218 /  6 / 41203                 6744 /  6 / 15937     endurance x1.60, boss 2.59x closer
+800    5364 /  4 / 13596                 5057 /  4 / 17755     (slightly shorter, boss further)
+1000   4850 /  4 /  6166                 4573 /  3 / 10777     one hit fewer
+1200   4438 /  2 / KILL                  4437 /  1 / KILL      one hit fewer
+1500   3661 /  1 / KILL                  3661 /  1 / KILL      unchanged
+2000   2881 /  0 / KILL (zero-hit)       2881 /  0 / KILL      unchanged
+```
+
+The gain is concentrated exactly where the defect was: the low-DPS fights that die inside phase 1,
+where the lock is close and the tornado-clear branch is active. **At 300 DPS the fight now lasts
+twice as long.** The high-DPS points that already killed are untouched.
+
+Weak wing (fairy), obsidian, same conditions:
+
+```
+DPS    before                            after
+300    4218? / - / -                     5879 /  8 / 51124
+600    died @5068 7/17631 (at 800)       4741 /  6 / 35818
+800    died @5068 7/17631                6380 /  5 / KILL      <-- now a KILL
+1000   died @4600 6/10299                4038 /  5 / 19593
+1200   died @4145 5/ 5911                3702 /  5 / 14612
+1500   kill @3660 3                      3656 /  4 / KILL
+2000   kill @2881 1                      2881 /  1 / KILL
+```
+
+**At 800 DPS the weak wing now kills**, which it could not do before at any DPS below 1500.
+
+Shroomite (high-defence) tier, strong wing, confirms the direction and is the better tier as expected:
+
+```
+300    9792 / 12 / 31627
+600    6885 /  6 / 14514
+1200   4439 /  0 / ZERO-HIT KILL
+```
+
+### 129.4 What this says about the earlier diagnosis
+
+The previous rounds searched for a *new* escape strategy -- owner's normal rule, climb-away, escape
+simulation, counter-dash -- and every one was a net negative. The actual defect was not a missing
+strategy but a **missing wind-up on one branch**, caused by an early `return`. The escape the circuit
+already performs works, when it is given the same 20-tick pre-load everywhere.
+
+This is the second time in this project that a control-flow detail outranked a strategy question (the
+first being the exported-policy trap in 128.1). The lesson recorded for future rounds: when one
+charge out of many behaves differently, compare the *branch* it took against the branch the working
+charges took, before assuming the strategy is wrong.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading

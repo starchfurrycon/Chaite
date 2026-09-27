@@ -1520,6 +1520,32 @@ namespace Chaite.Core
                 // horizontal distance is the whole defence.
                 horizontal = _tornadoX >= player.Center.X ? -1 : 1;
                 vertical = player.OnGround ? -1 : 1;
+                // MEASURED DEFECT (round 161, the t=2236 lock of strong 600).
+                //
+                // This branch RETURNS, so the pre-charge jump below never runs
+                // while it is active -- and it commands vertical = +1, which is
+                // a DESCENT. The lock audit over all 29 charges of that run shows
+                // why that is fatal: the vertical speed at the lock was climbing
+                // (-5 to -12.8 px/tick) on 19 charges and falling (+10, the
+                // TerminalVelocity) on 10, and NONE was flat. All 10 falls were
+                // frames whose phase was `refill` with wingTime 0, EXCEPT the one
+                // at t=2236, which is the hit: it was in `tornado-clear` with
+                // wingTime 31 and plvy +2.76 -- already descending -- and the
+                // charge committed from only 122 px away, giving about 7 ticks
+                // before the body arrived. Every other charge in the run locked
+                // from 300-1634 px with the player already climbing, because the
+                // pre-charge jump had 20 ticks to load the vertical speed.
+                //
+                // The fix is to give this branch the same wind-up as every other
+                // pre-charge frame instead of a descent. Holding the jump is what
+                // loads the climb; it is not paid for twice because landing
+                // refills the flight budget.
+                if (PredictChargImminent(state, timer) && !player.OnGround)
+                {
+                    vertical = -1;
+                    phase = "fishron-wing-tornado-clear-prejump";
+                    return;
+                }
                 phase = "fishron-wing-tornado-clear";
                 return;
             }
