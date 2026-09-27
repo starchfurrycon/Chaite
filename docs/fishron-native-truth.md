@@ -10011,6 +10011,48 @@ lower climb rate (its vertical escape is weaker) is why `sup` refusals and the s
 it cannot afford to decline a dash or spend ticks repositioning. A weak-specific variant should keep the
 dash unconditionally and take its clearance from the horizontal axis instead.
 
+### 133.5 The weak wing given its own dash policy: also refuted, but it yields the real diagnosis
+
+Since 133.3 showed the gate is strong-arm-only, the natural next test was to give the weak wing the
+opposite policy, on the owner's own reasoning that the two wings need two sets because their vertical
+mobility differs. The gate refuses a horizontal dash when `|dy| < 60`; a low-climb wing arguably cannot
+afford that refusal. Tested with the gate effectively off (`CHAITE_DASH_SUPPRESS=1`) versus the default 60:
+
+```
+weak        default (sup 60)          sup=1 (gate off)
+  300        5879 / 8 / 51124          4321 / 7 / 59019
+  600        4741 / 6 / 35818          4321 / 7 / 40119
+  800        6380 / 5 / KILL           4675 / 5 / 22719   (loses the kill)
+ 1500        3656 / 4 / KILL           3658 / 3 / KILL
+ 2000        2881 / 1 / KILL           2881 / 1 / KILL    (identical)
+```
+
+Removing the gate is **worse everywhere except 1500**, and it loses the weak 800 kill. So the refusal rule
+is protective for the weak wing, not a handicap -- the opposite of the hypothesis. Note also that
+`sup=1/15/30` are all *identical* at weak 2000: the gate simply never binds there, which is why 133.3's
+`sup=30` weak-2000 collapse (to 1621/5/death) cannot be explained by the... be a second-order trajectory
+effect rather than a direct gate effect, and `CHAITE_NO_CHARGE_DASH=1` reproduces exactly that collapse
+(weak 300: **1621 / 5 / 72600**), which confirms the mechanism.
+
+**The real diagnosis.** Per-charge dodge quality, computed as ticks per hit, is nearly identical between
+the wings at equal DPS:
+
+```
+                 strong            weak
+  300        10004 / 8 = 1250    5879 / 8 =  735
+  600         6744 / 6 = 1124    4741 / 6 =  790
+  800         5057 / 4 = 1264    6380 / 5 = 1276   <- indistinguishable
+ 1500         3661 / 1 = 3661    3656 / 4 =  914
+ 2000         2881 / 0 = none    2881 / 1 = 2881
+```
+
+At 800 the two wings measure **1264 and 1276 ticks per hit** -- a 1% difference. At 1500 the strong wing
+is 4x better. The weak wing is therefore **not** worse at the dodge itself; its deficit is *endurance*
+(the amount of fight it survives per hit taken) and it collapses specifically once the wing's vertical
+budget is being spent. That is consistent with 133.4 and it means the weak wing's remaining problem is
+vertical-mobility budgeting, not horizontal escaping -- which is exactly the axis the owner said the two
+sets should differ on.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
