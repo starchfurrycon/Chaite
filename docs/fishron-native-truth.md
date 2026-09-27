@@ -9690,6 +9690,31 @@ is whether a command-space change can affect it at all, given that the executed 
 downstream terms; the next attempt should therefore change what the *player state* is at the lock rather
 than what is commanded after it.
 
+### 131.4 The state at the lock also predicts the hit
+
+Acting on 131.2's conclusion, the state at the charge commit was measured directly. A lock is the first
+tick the Boss's speed reaches 17; the quantity is the player's velocity component **perpendicular to the
+charge direction** at that instant -- the crossing speed the escape has to work with, since the data says
+the escape cannot build it during the 7-tick approach.
+
+```
+crossing speed at the lock, over 98 locks in strong 300:
+  locks followed by a hit within 40 ticks (n=8):   mean 3.44
+  locks NOT followed by a hit          (n=90):     mean 5.97
+  histogram: cross >= 6 -> 45   cross 2..6 -> 39   cross < 2 -> 14
+```
+
+Again a consistent separation in the right direction, and it is the same quantity that collapses in the
+arrival window (131.1). Combining the two: the failures are charges that were committed while the player
+had little crossing speed, and the escape then cannot manufacture it in seven ticks.
+
+This is the third independent signal pointing at the same quantity, and it is also the first one that is
+**not** reachable from the charge-escape code at all. The crossing speed at the lock is a consequence of
+the approach leg (the patrol and leg schedule that decides where the player is and how fast when the Boss
+commits), so steering it means changing the pre-charge approach, not the escape. That is where the next
+round should work, and section 131.2's failed command-space edit is the evidence that the post-lock side
+is the wrong place to look.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading
