@@ -9838,6 +9838,39 @@ Boss is inside 1200 px, which at arena scale is most of the time. A smoother for
 patrol's retreat direction toward keeping separation without surrendering the beat schedule -- should keep
 the dodge-quality gain and give back less tempo. That is the concrete next step.
 
+### 132.6 The smoother standoff is refuted, and it teaches why the clamp works
+
+132.5 concluded that the standoff's tempo cost was waste that a smoother form could give back: keep the
+cruise behaviour and merely flip the patrol direction away from the Boss. Tried, and it is worse
+**everywhere**:
+
+```
+                  hard clamp (kept)        patrol-flip (refuted)
+strong  300       10004 / 8 / 30628         8094 / 10 / 40100
+strong  600        5734 / 5 / 26023         5743 /  6 / 25903
+strong  800        5398 / 4 / 13180         4887 /  5 / 20018
+strong 1200        4441 / 3 / KILL          3994 /  4 / 8922
+weak    300        5879 / 8 / 51124         2576 /  6 / 67798
+weak    800        6380 / 5 / KILL          2576 /  6 / 50840
+```
+
+Weak 300 and weak 800 die on the **same tick, 2576** -- the broken-invariant signature of section 126,
+now for the third time this session. The form was reverted and the tree re-measured to confirm it
+reproduces the committed numbers exactly (strong 300 10004/8/30628, strong 600 6744/6/15937, strong 1200
+4437/1/kill, strong 2000 2881/0/kill, weak 300 5879/8/51124, weak 800 6380/5/kill).
+
+**The lesson is that the standoff's tempo cost is load-bearing, not waste.** Fleeing the Boss axis
+outright and diving is what actually buys the separation; merely reversing a patrol that was going to turn
+around anyway does not. This is the same shape as 130.2, where the "inert" wing-budget lift turned out to
+be doing positional work, and 131.2, where an already-correct command was not the thing to steer. Three
+times now, the working rule's incidental-looking side effect has been the mechanism, and "cleaning it up"
+has regressed the band.
+
+A useful heuristic falls out, and it is cheap to apply: **when a rule's side effect looks like waste,
+measure the rule without it before optimising the side effect away.** Every attempt to tidy a working
+heuristic in this session has lost; both genuine wins (129's tornado wind-up and 132's standoff radius)
+*added* a missing pre-condition rather than removing an existing one.
+
 ## 124. Round 159: why the 300 DPS floor is out of reach — measured, not assumed
 
 ### 124.1 First, a correction to this document's own earlier reading

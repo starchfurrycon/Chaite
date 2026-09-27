@@ -1828,6 +1828,39 @@ namespace Chaite.Core
             }
             if (StandoffViolated(gap, player, in boss))
             {
+                // REFUTED, AND IT REFUTES THE "SMOOTHER STANDOFF" IDEA THAT THE
+                // TEMPO ANALYSIS (132.5) SUGGESTED.
+                //
+                // The reasoning looked sound: the standoff's hard clamp produces
+                // MORE charges (98 -> 109) while improving the hit rate per charge
+                // (8.2% -> 7.3%), so almost all of its gain is cancelled by the
+                // fight getting slower, and a form that keeps the cruise behaviour
+                // and merely flips the patrol away from the Boss should keep the
+                // dodge quality and give back the tempo.
+                //
+                // It does not. Keeping the patrol horizontal and only biasing its
+                // direction was worse EVERYWHERE, and it broke the band invariant:
+                //
+                //                  hard clamp (kept)        patrol-flip
+                //   strong  300    10004 / 8 / 30628         8094 / 10 / 40100
+                //   strong  600     5734 / 5 / 26023         5743 /  6 / 25903
+                //   strong  800     5398 / 4 / 13180         4887 /  5 / 20018
+                //   strong 1200     4441 / 3 / KILL          3994 /  4 / 8922
+                //   weak    300     5879 / 8 / 51124         2576 /  6 / 67798
+                //   weak    800     6380 / 5 / KILL          2576 /  6 / 50840
+                //
+                // Weak 300 and weak 800 die on the SAME tick, 2576 -- the
+                // broken-invariant signature of section 126 again, for the third
+                // time this session.
+                //
+                // The lesson is that the standoff's tempo cost is LOAD-BEARING, not
+                // waste. Fleeing the Boss axis outright and diving is what actually
+                // buys the separation; merely reversing a patrol that was going to
+                // turn around anyway does not. This is the same shape as 130.2 (the
+                // inert wing-budget lift was doing positional work) and 131.2 (the
+                // already-correct command was not the thing to steer): the working
+                // rule's incidental-looking side effects are the mechanism.
+                //
                 // REFUTED: holding altitude through the wind-up instead of diving
                 // (CHAITE_ALTITUDE_HOLD).
                 //
