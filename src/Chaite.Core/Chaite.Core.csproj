@@ -61,6 +61,7 @@
     <Compile Include="FormulaRouteCatalog.cs" />
     <Compile Include="FormulaScriptController.cs" />
     <Compile Include="FishronWingScript.cs" />
+    <Compile Include="TornadoEscape.cs" />
     <Compile Include="FishronChilletScript.cs" />
     <Compile Include="FishronFormulaStateContract.cs" />
     <Compile Include="FishronThreatCatalog.cs" />
