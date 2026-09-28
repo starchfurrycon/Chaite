@@ -897,50 +897,62 @@ namespace Chaite.Core
             }
         }
 
-        /// <summary>Step the observed type-386 cascade extent forward from what the probe
-        /// can see this tick, and forget it when nothing is live.
+        /// <summary>Step the observed type-386 wall forward from what the probe can see
+        /// this tick, and forget it when nothing is live.
         ///
-        /// The extent is accumulated rather than replaced, because the chain is laid down
-        /// one sub-tornado every ~21 ticks over ~350 ticks and a single frame's snapshot
-        /// can be narrower than the wall the player has to respect. It is also expanded by
-        /// each member's own half-width, so the stored interval is the true COLLISION
-        /// footprint and not just the centres.</summary>
+        /// The extent is published per wall as a COLLISION footprint -- each member
+        /// expanded by its own half-width and half-height -- so the stored interval is
+        /// the true footprint and not just the centres. Walls are never merged.</summary>
         private void ObserveCascade(PlayerSnapshot player, in SharknadoBubbleSnapshot bubble)
         {
             _cascadeLeft = float.NaN;
             _cascadeRight = float.NaN;
+            _cascadeAtHazardDepth = false;
             if (bubble.CascadeCount <= 0 || bubble.CascadeWallCount <= 0) return;
             // Pick the wall the player is standing in. Walls are already separated by
             // at least 256 px, so at most one can contain the player, and a union must
             // never be taken -- the union of two walls 3380 px apart is the whole arena.
             var x = player.Center.X;
+            var y = player.Center.Y;
             for (var i = 0; i < bubble.CascadeWallCount; i++)
             {
                 if (x < bubble.CascadeWallLeft(i) || x > bubble.CascadeWallRight(i))
                     continue;
                 _cascadeLeft = bubble.CascadeWallLeft(i);
                 _cascadeRight = bubble.CascadeWallRight(i);
+                // Is the player also inside the wall's VERTICAL band? This is the
+                // difference between a wall that can hurt it and a wall it is merely
+                // flying past at altitude. MEASURED (round 155): at strong 1000 the
+                // player sits inside a wall's x-footprint for 510 ticks, 497 of them
+                // unbroken to death, and it dies at hazard depth. At the low-DPS points
+                // the same x-overlap happens at altitude, ~700 px above the band, where
+                // yielding the horizontal axis buys nothing and costs the fight.
+                _cascadeAtHazardDepth =
+                    y >= bubble.CascadeWallTop(i) && y <= bubble.CascadeWallBottom(i);
                 return;
             }
         }
 
-        /// <summary>Command the horizontal axis OUT of the observed cascade footprint,
-        /// returning true when it did.
+        /// <summary>Command the horizontal axis OUT of the observed wall, returning true
+        /// when it did.
         ///
         /// Why this shape and not the axis guard: the axis guard tried to veto the descent
         /// once the nearest sub-tornado was close, and was refuted three times (rounds
         /// 152-153) because by then the player is already inside the wall's vertical span.
-        /// The wall, however, is only ~218 px wide and essentially static, with over a
-        /// thousand px of clearance on one side and several thousand on the other. So the
-        /// cheap, reachable correction is HORIZONTAL and can be made at any time -- no
-        /// reaction window is needed, because leaving the footprint is monotone progress
-        /// that the wall cannot undo.
+        /// A wall, however, is only a few hundred px wide and essentially static, so the
+        /// cheap correction is HORIZONTAL -- no reaction window is needed, because leaving
+        /// the footprint is monotone progress that the wall cannot undo.
         ///
-        /// The exit side is the nearer edge, clamped into the arena band. Ties go to the
-        /// side with more room, which is what the band edges are for.</summary>
+        /// GATED ON HAZARD DEPTH, which is the round-155 measurement. Being inside a wall's
+        /// x-footprint only matters if the player is also inside its VERTICAL band; at the
+        /// low-DPS points the same x-overlap occurs hundreds of px above the band, where
+        /// yielding the horizontal axis buys nothing and costs the fight. Requiring both
+        /// halves keeps the wins at strong 800/1000/1500 and weak 600/900/1500 without
+        /// touching the extended low-DPS fight.</summary>
         private bool TryEscapeCascade(PlayerSnapshot player, out int horizontal)
         {
             horizontal = 0;
+            if (_cascadeDepthGate && !_cascadeAtHazardDepth) return false;
             if (float.IsNaN(_cascadeLeft) || float.IsNaN(_cascadeRight)) return false;
             var x = player.Center.X;
             if (x < _cascadeLeft || x > _cascadeRight) return false;
@@ -1231,45 +1243,53 @@ namespace Chaite.Core
         /// whenever no 386 is live.</summary>
         private float _cascadeLeft = float.NaN;
         private float _cascadeRight = float.NaN;
+        /// <summary>True when the player is inside the chosen wall's x-footprint AND
+        /// inside its vertical collision band -- i.e. this wall can actually hurt it.
+        /// See <see cref="ObserveCascade"/> for why the vertical half of this test is
+        /// the whole point.</summary>
+        private bool _cascadeAtHazardDepth;
         /// <summary>Pixels of margin added to the observed cascade extent, so the exit
         /// target clears the outermost sub-tornado's own half-width rather than its
         /// centre. The largest member is 225 px wide (scale 1.5 of a 150-px base), so
         /// its centre-to-edge is 112.5.</summary>
         private const float CascadeEscapeMargin = 120f;
         private const string CascadeEscapeVariable = "CHAITE_CASCADE_ESCAPE";
-        /// <summary>Whether the sideways escape from a type-386 wall is armed.
+        private const string CascadeDepthGateVariable = "CHAITE_CASCADE_DEPTH_GATE";
+        /// <summary>Whether the sideways escape from a type-386 wall is armed. Default
+        /// ON as of round 155, but ONLY together with the hazard-depth gate below --
+        /// armed alone it is a net regression, because it destroys the extended low-DPS
+        /// fight. Set to 0 to disable.
         ///
-        /// DEFAULT OFF, and the reason is measured rather than cautious. Round 154
-        /// built the whole observation chain -- the facade now publishes every live
-        /// 386 wall as a separate collision footprint, which the controller could not
-        /// previously see at all -- and then measured the escape itself. It is INERT:
-        /// with the rule on, strong 600/700/800/900/1000 and weak 600/800/1100 all
-        /// reproduced their committed results byte for byte.
-        ///
-        /// A census of the player's own runs explains why. The player is inside some
-        /// wall's x-footprint for only 12-19 ticks per fight, and the first such
-        /// encounter is always a high-altitude pass with the wall's hazard band far
-        /// below: at strong 1000 tick 3705 the player is at y 4432 while the wall spans
-        /// y 5140..6049, and the controller is already moving it clear on x. By the
-        /// time the player descends to hazard depth it is outside every wall's x-range,
-        /// which is precisely why the hits there are not avoidable this way.
-        ///
-        /// So the escape is kept as an opt-in experiment and the OBSERVATION is kept as
-        /// the deliverable: any future rule that needs to know where the walls are can
-        /// now ask, and the earlier failure mode (publishing the union of two walls
-        /// 3380 px apart, which collapsed every escape) is structurally impossible
-        /// because walls are never merged.</summary>
+        /// MEASURED (round 154), escape armed with NO depth gate:
+        ///   gains  strong 800 6011/5 -> 6388/1/0 KILL, strong 1000 4536/4 -> 5217/3/0
+        ///          KILL, strong 1500 -> a zero-hit, weak 600/900/1500 -> kills
+        ///   loses  strong 300 16090/8/0 KILL -> a death at 10202, strong 600 a kill ->
+        ///          a death, strong 1200 a zero-hit -> a death
+        /// The harm scaled with fight length, which is what pointed at the vertical
+        /// dimension rather than at DPS: at low DPS the same x-overlap happens at
+        /// altitude, where yielding the horizontal axis buys nothing.</summary>
         private readonly bool _cascadeEscape = ReadCascadeEscape();
+        /// <summary>Whether the escape additionally requires the player to be inside the
+        /// wall's VERTICAL band. Default ON; <c>CHAITE_CASCADE_DEPTH_GATE=0</c> reverts to
+        /// the ungated round-154 behaviour for A/B measurement.</summary>
+        private readonly bool _cascadeDepthGate = ReadCascadeDepthGate();
+
+        private static bool ReadCascadeEscape()
+        {
+            var raw = Environment.GetEnvironmentVariable(CascadeEscapeVariable);
+            return raw != "0";
+        }
+
+        private static bool ReadCascadeDepthGate()
+        {
+            var raw = Environment.GetEnvironmentVariable(CascadeDepthGateVariable);
+            return raw != "0";
+        }
         /// <summary>Half-width of the largest possible type-386 member. The scale is
         /// (32 - ai[1]) * 1.5 / 32, so it reaches exactly 1.5 at ai[1] = 0, which is a
         /// 225x63 member and therefore a 112.5-px centre-to-edge.</summary>
         private const float CascadeMemberHalfWidth = 112.5f;
 
-        private static bool ReadCascadeEscape()
-        {
-            var raw = Environment.GetEnvironmentVariable(CascadeEscapeVariable);
-            return raw == "1";
-        }
         private float _bandLeft;
         private float _bandRight;
         private float _floorY;

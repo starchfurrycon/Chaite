@@ -317,9 +317,10 @@ namespace Chaite.Plugin
         private readonly PlayerSnapshot _identityScratch = new PlayerSnapshot();
         private int _sightFrame;
         private int _sightQueryBudget;
-        /// <summary>Scratch for the live type-386 member centre x, reused every tick
-        /// so grouping the Sharknado walls allocates nothing.</summary>
+        /// <summary>Scratch for the live type-386 member centre x and y, reused every
+        /// tick so grouping the Sharknado walls allocates nothing.</summary>
         private readonly float[] _cascadeXBuffer = new float[256];
+        private readonly float[] _cascadeYBuffer = new float[256];
         private TargetSightQueryState _sightQueryState;
         private int _destroyerMotionFrame;
         private long _grappleFrameSequence;
@@ -1975,6 +1976,7 @@ namespace Chaite.Plugin
             // made every escape degenerate.
             var cascadeCount = 0;
             var cascadeXs = _cascadeXBuffer;
+            var cascadeYs = _cascadeYBuffer;
             var cascadeN = 0;
             for (var i = 0; i < projectiles.Length; i++)
             {
@@ -2009,7 +2011,12 @@ namespace Chaite.Plugin
                 if (projectileType == FishronThreatCatalog.ProjectileCthulhunadoType)
                 {
                     cascadeCount++;
-                    if (cascadeN < cascadeXs.Length) cascadeXs[cascadeN++] = center.X;
+                    if (cascadeN < cascadeXs.Length)
+                    {
+                        cascadeXs[cascadeN] = center.X;
+                        cascadeYs[cascadeN] = center.Y;
+                        cascadeN++;
+                    }
                 }
                 bool isBeam = projectileType == 455;
                 var ai = isBeam || trajectory != ThreatTrajectory.Linear
@@ -2112,33 +2119,35 @@ namespace Chaite.Plugin
             if (cascadeCount > 0)
             {
                 snapshot.SharknadoBubble.CascadeCount = cascadeCount;
-                PublishCascadeWalls(cascadeXs, cascadeN, ref snapshot.SharknadoBubble);
+                PublishCascadeWalls(cascadeXs, cascadeYs, cascadeN,
+                    ref snapshot.SharknadoBubble);
             }
 
             RefreshWeaponSpecificTargetObservation(player, snapshot.Weapon);
         }
 
         /// <summary>Group live type-386 member centres into contiguous walls and publish
-        /// each wall's collision footprint, nearest-first is not required -- the
-        /// controller picks the wall containing the player.
+        /// each wall's collision footprint AND its vertical band. "Nearest-first" is not
+        /// required -- the controller picks the wall containing the player.
         ///
         /// A wall is a maximal run whose neighbours are no more than
-        /// <see cref="SharknadoBubbleSnapshot.CascadeGap"/> apart. Members are sorted
-        /// first, so this is a single linear pass. Each footprint is padded by
-        /// <see cref="SharknadoBubbleSnapshot.CascadeMemberHalfWidth"/> because the
-        /// largest member is 225 px wide (scale 1.5 of a 150-px base) and a centre bound
-        /// is not a collision bound.
+        /// <see cref="SharknadoBubbleSnapshot.CascadeGap"/> apart. Members are sorted by
+        /// x first, so this is a single linear pass; the y buffer is sorted in lockstep
+        /// by <see cref="Array.Sort{TKey,TValue}"/> so each run can also report its
+        /// vertical span. Both bounds are padded by the largest member's half-extent
+        /// (112.5 x 31.5 for scale 1.5 of a 150x42 base) because a centre bound is not a
+        /// collision bound.
         ///
         /// The bubble is passed by REFERENCE deliberately: SharknadoBubbleSnapshot is a
         /// struct, so the first version of this took a copy and silently discarded every
         /// wall it computed -- the escape rule then never saw a wall and was inert for a
         /// whole round. Keep this `ref`.</summary>
-        private static void PublishCascadeWalls(float[] centres, int count,
-            ref SharknadoBubbleSnapshot bubble)
+        private static void PublishCascadeWalls(float[] centres, float[] centreYs,
+            int count, ref SharknadoBubbleSnapshot bubble)
         {
             bubble.CascadeWallCount = 0;
             if (count <= 0) return;
-            Array.Sort(centres, 0, count);
+            Array.Sort(centres, centreYs, 0, count);
             var walls = 0;
             var runStart = 0;
             for (var i = 1; i <= count; i++)
@@ -2153,23 +2162,40 @@ namespace Chaite.Plugin
                         SharknadoBubbleSnapshot.CascadeMemberHalfWidth;
                     var right = centres[i - 1] +
                         SharknadoBubbleSnapshot.CascadeMemberHalfWidth;
+                    var top = float.MaxValue;
+                    var bottom = float.MinValue;
+                    for (var k = runStart; k < i; k++)
+                    {
+                        if (centreYs[k] < top) top = centreYs[k];
+                        if (centreYs[k] > bottom) bottom = centreYs[k];
+                    }
+                    top -= SharknadoBubbleSnapshot.CascadeMemberHalfHeight;
+                    bottom += SharknadoBubbleSnapshot.CascadeMemberHalfHeight;
                     switch (walls)
                     {
                         case 0:
                             bubble.CascadeWallLeft0 = left;
                             bubble.CascadeWallRight0 = right;
+                            bubble.CascadeWallTop0 = top;
+                            bubble.CascadeWallBottom0 = bottom;
                             break;
                         case 1:
                             bubble.CascadeWallLeft1 = left;
                             bubble.CascadeWallRight1 = right;
+                            bubble.CascadeWallTop1 = top;
+                            bubble.CascadeWallBottom1 = bottom;
                             break;
                         case 2:
                             bubble.CascadeWallLeft2 = left;
                             bubble.CascadeWallRight2 = right;
+                            bubble.CascadeWallTop2 = top;
+                            bubble.CascadeWallBottom2 = bottom;
                             break;
                         default:
                             bubble.CascadeWallLeft3 = left;
                             bubble.CascadeWallRight3 = right;
+                            bubble.CascadeWallTop3 = top;
+                            bubble.CascadeWallBottom3 = bottom;
                             break;
                     }
                     walls++;

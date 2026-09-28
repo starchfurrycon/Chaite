@@ -316,15 +316,35 @@ namespace Chaite.Core
         /// <summary>Half-width of the largest possible type-386 member, used to turn a
         /// centre bound into a collision footprint.</summary>
         public const float CascadeMemberHalfWidth = 112.5f;
+        /// <summary>Half-height of the largest possible type-386 member. Base height 42
+        /// at scale 1.5 is 63, so a 31.5-px centre-to-edge. Used to turn the members'
+        /// y-centre span into a vertical collision band.</summary>
+        public const float CascadeMemberHalfHeight = 31.5f;
         public int CascadeWallCount;
         public float CascadeWallLeft0;
         public float CascadeWallRight0;
+        public float CascadeWallTop0;
+        public float CascadeWallBottom0;
         public float CascadeWallLeft1;
         public float CascadeWallRight1;
+        public float CascadeWallTop1;
+        public float CascadeWallBottom1;
         public float CascadeWallLeft2;
         public float CascadeWallRight2;
+        public float CascadeWallTop2;
+        public float CascadeWallBottom2;
         public float CascadeWallLeft3;
         public float CascadeWallRight3;
+        public float CascadeWallTop3;
+        public float CascadeWallBottom3;
+
+        public float CascadeWallTop(int index) =>
+            index == 0 ? CascadeWallTop0 : index == 1 ? CascadeWallTop1 :
+            index == 2 ? CascadeWallTop2 : CascadeWallTop3;
+
+        public float CascadeWallBottom(int index) =>
+            index == 0 ? CascadeWallBottom0 : index == 1 ? CascadeWallBottom1 :
+            index == 2 ? CascadeWallBottom2 : CascadeWallBottom3;
 
         public float CascadeWallLeft(int index) =>
             index == 0 ? CascadeWallLeft0 : index == 1 ? CascadeWallLeft1 :
