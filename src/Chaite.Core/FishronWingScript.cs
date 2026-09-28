@@ -670,6 +670,63 @@ namespace Chaite.Core
 
         private const string ChargeEscapeSimVariable = "CHAITE_CHARGE_ESCAPE_SIM";
 
+        private const string WeakAltitudeCeilingVariable =
+            "CHAITE_WEAK_ALTITUDE_CEILING";
+
+        /// <summary>Weak-wing altitude ceiling in world pixels: below this y the
+        /// cruise vertical is turned into a climb while the flight budget lasts.
+        /// Zero (the default) disables the rule and reproduces the reviewed
+        /// circuit byte for byte.</summary>
+        private static float WeakAltitudeCeilingPixels
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(
+                    WeakAltitudeCeilingVariable);
+                float value;
+                if (!string.IsNullOrEmpty(raw) &&
+                    float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) && value > 0f)
+                    return value;
+                return 0f;
+            }
+        }
+
+        /// <summary>Weak-wing altitude ceiling (round 178). Forces a climb while
+        /// the player is deeper than the ceiling and still has flight budget.
+        ///
+        /// MEASURED (round 178, from the no-hit video's own HUD readout): the
+        /// video's player holds y 218..275 tiles -- a band only 57 tiles tall --
+        /// while our engine player ocillates over 315..497 tiles, which is
+        /// almost exactly the Boss's own band of 256..500 tiles. So the circuit
+        /// and the Boss occupy the same altitude range and chase each other
+        /// inside it, which is why the tornadoes (spawned at the Boss centre)
+        /// land on the player: round 176 measured the weak wing's tornado band
+        /// as y 6285..7973 with the player's median at 6718, i.e. inside it.
+        ///
+        /// Round 177's floor lifted the player only to 383 tiles, still inside
+        /// the Boss band, and measured net -3. This rule instead pushes the
+        /// player above the Boss band, which is the qualitative difference the
+        /// video shows and the previous altitude levers never tested.
+        ///
+        /// It never touches the locked-charge escape, never touches a frame that
+        /// is already climbing, and never fires with an empty bar. Default OFF:
+        /// an unset variable returns before any write.</summary>
+        private void ApplyWeakAltitudeCeiling(PlayerSnapshot player,
+            bool chargeEscape, ref int vertical, ref string phase)
+        {
+            var ceiling = WeakAltitudeCeilingPixels;
+            if (ceiling <= 0f) return;
+            if (_dashSuppressRoute != FormulaRoute.FishronFairyWingsDash) return;
+            if (chargeEscape) return;
+            if (player.OnGround) return;
+            if (vertical < 0) return;
+            if (player.WingTime <= 0) return;
+            if (player.Center.Y <= ceiling) return;
+            vertical = -1;
+            phase = "fishron-wing-weak-altitude-ceiling";
+        }
+
         /// <summary>True when the locked-charge escape direction is chosen by
         /// forward-simulating the frozen charge against candidate 2-D directions
         /// instead of by projecting the player's own past velocity. Default OFF.
@@ -1933,6 +1990,11 @@ namespace Chaite.Core
             // A latched escape lives only as long as the episode that set it,
             // so the next close pass chooses its side from its own geometry.
             if (phase != PersonalSpacePhase) _personalSpaceLatched = false;
+
+            // Round 178: hold the weak wing above the Boss's own altitude band,
+            // which is what the no-hit video does and what no previous altitude
+            // lever tested. See ApplyWeakAltitudeCeiling.
+            ApplyWeakAltitudeCeiling(player, dash, ref vertical, ref phase);
 
             // A trained policy for this route replaces only the movement
             // decision. Route, form and mount admission above are untouched,
