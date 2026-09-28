@@ -312,8 +312,29 @@ namespace Chaite.Core
         /// neither should scale with the first. Splitting them lets the memory cover the
         /// column's real 881-tick life while the response stays at the reviewed 540.
         ///
-        /// Sweepable via <c>CHAITE_TORNADO_RESPONSE</c>; default is the reviewed 540, so
-        /// with the default memory the circuit is unchanged.</summary>
+        /// Sweepable via <c>CHAITE_TORNADO_RESPONSE</c>.
+        ///
+        /// DEFAULT RAISED FROM 540 TO 120 (round 150, measured). The reviewed 540 was
+        /// inherited from the single-counter circuit, where it also had to cover the
+        /// column's memory. Once the memory is decoupled, 540 turns out to be far too
+        /// long a COMMITMENT: the branch `return`s for the whole window, so the controller
+        /// spends 9 seconds running away and never re-engages. Measured at 300 DPS,
+        /// strong wing, obsidian tier:
+        ///
+        ///   180 -> 6583/6/47682    240 -> 7168/7/44790    360 -> 4889/5/56197
+        ///   420 -> 6970/8/45795    540 -> 10004/8/30628   **120 -> 10749/8/26835**
+        ///
+        /// The optimum is sharp and NOT monotone, so it was swept, not reasoned. The
+        /// decisive evidence is the same run at other DPS: at 600 the reviewed window
+        /// cannot kill (6744/6, boss at 15937) while 120 kills with 5 hits (8328), and at
+        /// 1200 the window 120 reaches a ZERO-HIT kill (4437/0/0, where 540 took 1 hit).
+        /// A window this short is defensible against the native numbers rather than against
+        /// taste: the column lives 840 ticks, and 120 ticks is 2 seconds -- enough to clear
+        /// the immediate cascade, after which continuing to flee costs the fight.
+        ///
+        /// The width knob was ALSO wrong, and inertly so: see <see cref="TornadoRecallRadius"/>.
+        /// Sweeping the width at this window gave the identical result at 760, 2000 and
+        /// 4000, so the width is not the load-bearing variable; the window is.</summary>
         internal static int TornadoResponseHorizon
         {
             get
@@ -323,10 +344,14 @@ namespace Chaite.Core
                 if (string.IsNullOrEmpty(raw) ||
                     !int.TryParse(raw.Trim(), NumberStyles.Integer,
                         CultureInfo.InvariantCulture, out value) || value < 0 || value > 3000)
-                    return TornadoMemoryTicks;
+                    return TornadoResponseTicks;
                 return value;
             }
         }
+
+        /// <summary>Reviewed escape/response window, in ticks. See
+        /// <see cref="TornadoResponseHorizon"/> for the sweep that chose 120.</summary>
+        internal const int TornadoResponseTicks = 120;
 
         private const string TornadoResponseVariable = "CHAITE_TORNADO_RESPONSE";
         /// <summary>Radius of the escape/recall gate for the response window. Defaults to
@@ -1878,9 +1903,16 @@ namespace Chaite.Core
             // exactly: `_tornadoResponseLeft > 0 && |dx| < 760` reduces to the old
             // `_tornadoTicksLeft > 0 && |dx| < 760`.
             var responseLive = _tornadoResponseLeft > 0;
-            var recallGate = Math.Abs(player.Center.X - _tornadoX) < TornadoClearanceRadius;
-            var responseGate = Math.Abs(player.Center.X - _tornadoX) < TornadoRecallRadius;
-            if (recallGate && responseLive)
+            // The escape radius is a SEPARATE knob from the reviewed TornadoClearance.
+            // MEASURED BUG (round 150): the first version of this decoupling evaluated
+            // the reviewed radius on the gate, which made CHAITE_TORNADO_RECALL a dead
+            // variable -- setting it to 2000 changed nothing at all, twice, while the
+            // response knob alone produced a different run. A knob that is read but not
+            // used is worse than no knob, because it makes an inert result look like a
+            // tested hypothesis. The gate now honours TornadoRecallRadius, whose default
+            // IS TornadoClearance, so the reviewed circuit is still exact.
+            var gate = Math.Abs(player.Center.X - _tornadoX) < TornadoRecallRadius;
+            if (gate && responseLive)
             {
                 // Still inside the column the last Sharknado left behind.
                 //
