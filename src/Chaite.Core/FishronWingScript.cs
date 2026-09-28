@@ -2453,7 +2453,8 @@ namespace Chaite.Core
                     phase = "fishron-wing-charge-counter-dash";
                 }
                 else if (_chargeNormalSequence >= 0 &&
-                    ChargeTicksSinceLock < RouteDashDelay(_dashSuppressRoute))
+                    ChargeTicksSinceLock < RouteDashDelay(_dashSuppressRoute) &&
+                    ChargeTicksToContact(player, boss) > DashTtcTicks)
                 {
                     // still too early: hold the proposal, spend nothing
                 }
@@ -2855,6 +2856,56 @@ namespace Chaite.Core
             var dy = boss.Center.Y - player.Center.Y;
             return (float)Math.Sqrt(dx * dx + dy * dy);
         }
+
+        /// <summary>Ticks until the charging body reaches the player, from the
+        /// closing speed, or a large sentinel when the boss is not closing.
+        /// Shared with the counter-dash gate so both read the same quantity.</summary>
+        private static float ChargeTicksToContact(PlayerSnapshot player,
+            in TargetSnapshot boss)
+        {
+            var dx = boss.Center.X - player.Center.X;
+            var dy = boss.Center.Y - player.Center.Y;
+            var distance = (float)Math.Sqrt(dx * dx + dy * dy);
+            var closing = (float)Math.Sqrt(
+                boss.Velocity.X * boss.Velocity.X +
+                boss.Velocity.Y * boss.Velocity.Y);
+            return closing > 0.01f ? distance / closing : 9999f;
+        }
+
+        /// <summary>Time-to-contact at which the charge dash is released, in ticks,
+        /// when <c>CHAITE_DASH_TTC</c> is set. Negative disables it.
+        ///
+        /// WHY (round 160, dense native trace of the weak wing at 600 DPS): all six
+        /// contacts happened 10 to 48 ticks after the previous dash, and in the six
+        /// ticks before EVERY one of them the circuit did not request a dash at
+        /// all. Dash spacing is a hard 58 ticks -- 34 of 52 gaps are exactly 58 --
+        /// which is the same as the charge period, so each charge gets exactly one
+        /// dash. Two of the six contacts (t=1367 and t=3317) are explained directly
+        /// by that: the dash fired 14 and 10 ticks early, so the 15-tick eocDash
+        /// window had already closed when the body arrived.
+        ///
+        /// A fixed post-lock delay cannot cover both, because the weak wing's
+        /// closing geometry varies more than the strong wing's. This gate replaces
+        /// the trigger INSTANT only: the dash keeps the escape branch's direction,
+        /// unlike CHAITE_COUNTER_DASH, which steers AT the boss and has been
+        /// refuted repeatedly (see the counter-dash notes above).
+        ///
+        /// Default -1 reproduces the reviewed fixed-delay circuit exactly.</summary>
+        private static float DashTtcTicks
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(DashTtcVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return -1f;
+                return value;
+            }
+        }
+
+        private const string DashTtcVariable = "CHAITE_DASH_TTC";
 
         /// <summary>AI_069 chooses the next projectile attack from ai[3] when a
         /// hover ends, so the value while hovering names the attack that is
