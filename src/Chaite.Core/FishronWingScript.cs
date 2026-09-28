@@ -171,11 +171,33 @@ namespace Chaite.Core
         }
 
         private const string StandoffRadiusVariable = "CHAITE_STANDOFF_PX";
-        /// <summary>Radius in px for the distance-based standoff. Defaults to the
-        /// radius that was actually measured: the sweep found 1200 the only good
-        /// value (900 regressed the middle, and 1400/1700/2000 all produced the
-        /// identical 6571/6/47737, so the term saturates above 1200).</summary>
-        private const float StandoffDistanceDefaultPixels = 1200f;
+        /// <summary>Radius in px for the distance-based standoff.
+        ///
+        /// RAISED 1200 -> 1600 (round 151, measured A/B over the whole band). The
+        /// earlier note justified 1200 by saying the term "saturates above 1200", but
+        /// that reading came from a sweep of the MIDDLE of the band, where the standoff
+        /// is in fact inert. Swept properly at the low end it does not saturate:
+        ///
+        ///   strong 300   1200 -> 11528/8/... (no-kill)   1600 -> **16090/8/0 KILL**
+        ///   strong 1800  12889 no-kill   2000 -> 11903   2400+ -> 9794 (all collapse)
+        ///   weak   300   800/1000/1200/1400/1800/2200 -> 8778/9456/9456/8777/8777/8777,
+        ///                none of which kill: the weak wing is radius-INDEPENDENT here
+        ///
+        /// A full A/B of reviewed-1200 against 1600 over ten DPS points returned
+        /// IDENTICAL results at 600, 700, 800, 900, 1000, 1100, 1200, 1500 and 2000, and
+        /// a +5341-tick gain at 300 (10749/8/26835 no-kill -> 16090/8/0 KILL). So 1600 is
+        /// a strict improvement: it changes exactly one point in the band, and at that
+        /// point it converts the failure into a kill.
+        ///
+        /// That single point is the one the objective needs. At 300 DPS the sim deals
+        /// 5 damage per tick against lifeMax 78000, so a kill needs 15600 ticks of
+        /// survival; the old behaviour died at 10749 (section 140). 16090 clears it.
+        ///
+        /// The radius is DPS-gated (see <see cref="StandoffDistanceArmed"/>), so it only
+        /// takes effect below <see cref="StandoffLowDpsMax"/>. Above that the reviewed
+        /// horizontal-gap standoff runs unchanged, which is why the other nine points
+        /// are byte-identical.</summary>
+        private const float StandoffDistanceDefaultPixels = 1600f;
         /// <summary>Whether the pre-charge standoff is violated.
         ///
         /// MEASURED (dense strong-300 trace, 98 charge locks): a hit is strongly
