@@ -83,36 +83,77 @@ converted into climb saves some points and destroys others, for a negative net.
 
 **Not met.** Goal stays **active**.
 
-## Next round — one specific, never-refuted form
+## ★ The "move the strong wing's cycle earlier" idea was **refuted by its own caveat check**
 
-The cycle-shape difference **cannot** be fixed by adding a refill (refuted above). The remaining form:
+I proposed moving the strong wing's fall→refill→peak-climb cycle earlier for the weak wing, and flagged one
+caveat to verify first: *are the strong wing's terminal-velocity stretches deliberate, or incidental?*
 
-> **Move the strong wing's cycle *earlier*** — in the safe pre-charge window, and while the budget is
-> **still full**, deliberately fall to terminal velocity to take a complete apex refill, instead of the weak
-> wing's continuous gentle burn.
+**They are incidental — the premise fails.** Frames at terminal fall speed (+10.01) at dps 300:
 
-Why this is distinct from everything already refuted:
+| | terminal frames / total | share |
+|---|---|---|
+| strong | **6211 / 15939** | **39.0%** |
+| weak | **940 / 5840** | **16.1%** |
 
-* **Not** `CHAITE_APEX_REFILL` — that inserts a refill *into the existing climb*; this *replaces* the climb
-  with the strong-wing cycle. (Round 174 refuted the former.)
-* **Not** `_refillGuardBudget > 0` — that converts climb→descend only **when the budget is already empty**,
-  and §104.2 refuted it because "there is no window where the refill is free." This form acts while the
-  budget is **full**, so it is not the same window.
-* **Not** "raise altitude" — §166 refuted that because the hover follows the player. This form's *net*
-  altitude change is roughly zero (fall, then re-climb).
-* **Not** a 1–2 tick timing knob — §173.4's chaotic-sensitivity rule does not apply; this changes the cycle
-  *phase*, which is a large structural change rather than a timing nudge.
+Strong's terminal frames **by phase**:
 
-**Caveat to check first**: the strong wing's fall stretches may be a *consequence* of the script's own
-horizontal reconnaissance rather than a deliberate vertical plan. **Verify by reading which branch produces
-the strong wing's +10.01 stretches before building the weak-wing variant** — if it is incidental, this
-lever is not actionable and the next step must be re-planned.
+| frames | phase |
+|---|---|
+| **2770** | **`fishron-wing-refill`** |
+| 810 | `fishron-wing-bubble-line` |
+| 570 | `fishron-wing-charge-horizontal` |
+| 535 | `fishron-wing-charge-ascend` |
+| 459 | `fishron-wing-tornado-clear` |
+| 409 | `fishron-wing-sharknado-exit` |
+
+And the stretches start at `wingTime` **0**: `t=1015 len=235 wt 0→0`, `t=1507 len=237 wt 0→0`.
+
+**So the strong wing's cycling is simply the existing "budget exhausted → forced descent → refill at apex"
+mechanism firing repeatedly in a long fight — not a strategy it chooses.**
+
+### ★ The decisive consequence
+
+**The weak wing's cycle shape is an *effect* of dying early, not a *cause* of it.** Strong gets 31 refills
+to weak's 20 because its run lasts **2.7× longer** (15938 vs 5839 ticks), giving it more chances to drain
+the bar and fall. The weak wing therefore **cannot** adopt the strong wing's shape — that would demand
+**more cycles in less time** while climbing slower (−9.91 vs −16.52), which is **not physically available**.
+
+## What is actually left
+
+Cumulatively across rounds 173–174:
+
+1. The weak wing does **not** lack dashes (rates equal).
+2. It does **not** lack `wingTime` budget (mean 77.5, and `WT==0` **less** often than strong).
+3. It does **not** miss apex refills (both refill 100% at apex).
+4. Its cycle shape is a **result, not a cause**.
+5. Adding a refill is **net negative** (+1/−5).
+
+**The one position with measurement support that nothing has refuted**: the weak wing's binding constraint
+is its **climb rate (−9.91 vs −16.52)** — an intrinsic wing property the script cannot change.
+
+**This is not a proof of impossibility.** It means the **script-level levers are essentially exhausted**.
+
+## Next round — gather evidence, do not sweep more parameters
+
+Confirm whether **every** low-band (300–800) weak hit occurs in a state where climbing was **genuinely
+unavailable** (`wingTime ≈ 0` and/or the escape direction's vertical component infeasible). Then either:
+
+* a **real script error** is found (worth fixing), or
+* a **quantitative boundary** is established and reported honestly to the owner — rather than spending
+  further rounds on exhausted levers.
+
+§171.3 already established that every weak death is the pool emptying with **no "failed without being hit"
+case**; this round would close the loop on *whether the hits were avoidable*.
 
 ## Do NOT re-attempt (cumulative, new this round)
 
+* **Moving the strong wing's fall→refill→peak-climb cycle earlier for the weak wing** — refuted this round:
+  the strong wing's cycling is incidental (2770 of its 39% terminal-fall frames are ordinary `refill`
+  phase), and the weak wing cannot fit more cycles into a shorter fight.
 * `CHAITE_APEX_REFILL` on the weak wing (measured +1/−5).
 * "The weak wing misses apex refills" as a hypothesis — **refuted**: both wings refill 100% at apex.
 * "The weak wing lacks `wingTime` budget" — refuted: it holds *more* mean budget and is at zero *less* often.
+* "The weak wing's cycle shape is the cause" — refuted: it is an effect of the shorter run.
 * Round 173: weak `CHAITE_WEAK_DASH_DELAY` 0–3; **any timing knob moving only 1–2 ticks after the lock**;
   "the weak wing under-dashes".
 * Round 172: per-wing single-axis escape.
