@@ -112,6 +112,24 @@ namespace Chaite.Core
         private readonly List<ThreatSnapshot> _relevantThreats = new List<ThreatSnapshot>(1000);
         private readonly List<ThreatSnapshot> _relevantBeams = new List<ThreatSnapshot>(48);
         private readonly int _horizonTicks;
+        /// <summary>Diagnostic count of frames on which the formula path
+        /// rejected a chosen escape because its sweep met a hostile
+        /// projectile. Read by the probe; never read by the planner.</summary>
+        internal int LastFormulaProjectileVetoCount { get; private set; }
+        /// <summary>True when the formula path is allowed to reject a chosen
+        /// escape whose sweep meets a hostile projectile. Default OFF:
+        /// <c>CHAITE_FISHRON_PROJECTILE_VETO=1</c> arms it. Unset, the
+        /// reviewed circuit is reproduced byte-for-byte.</summary>
+        internal static bool FormulaProjectileVetoArmed
+        {
+            get
+            {
+                return Environment.GetEnvironmentVariable(
+                    FormulaProjectileVetoVariable) == "1";
+            }
+        }
+        private const string FormulaProjectileVetoVariable =
+            "CHAITE_FISHRON_PROJECTILE_VETO";
         private readonly int _stepTicks;
         private int _gravityCooldown;
         private bool _gravityReleasePending;
@@ -848,6 +866,43 @@ namespace Chaite.Core
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
             plan.ToggleMount = script.ToggleMount;
+            // PROJECTILE-AWARE ESCAPE VETO.
+            //
+            // MEASURED (round 175, dense native trace): the weak wing's hit at
+            // tick 3258 is a direct collision with a STATIONARY type-384
+            // tornado. The wall sits at x 1470, y 6806.3 with a 150x42 box and
+            // vx 0.01, while the player is at 1469.4, 6803.1: a centre distance
+            // of 3.4 px. Eight ticks earlier the player was at y 6845.1, i.e.
+            // BELOW the wall whose bottom edge is 6827.3, and therefore safe;
+            // it then climbed at vy -4.8..-5.5 while dashing left at
+            // -14.5..-12.1 and flew from below the wall straight into it. The
+            // same shape recurs at weak 3218, weak dps800 3460, and strong
+            // 14022/14062.
+            //
+            // The cause is that FishronWingScript.cs contains zero references
+            // to threats or projectiles: the escape direction is chosen from
+            // the Boss alone. The planner already computes the projectile risk
+            // (PrepareThreats / ImmediateRisk / ProjectileSafetyMargin /
+            // SweptIntersects) and already feeds it into ScoreCandidate on the
+            // generic path, but this formula branch overwrites the result and
+            // RiskScore is only ever written, never read.
+            //
+            // So this adds the missing pre-condition rather than rewriting the
+            // direction: when the chosen (Horizontal, Vertical) sweep meets a
+            // hostile projectile, withdraw the commit that carries the player
+            // furthest per tick (the dash, 14.5 px/tick against a 7-8 cruise)
+            // and ask the circuit to re-decide next tick with a real lead.
+            // Default OFF so the reviewed circuit is byte-identical when unset.
+            if (FormulaProjectileVetoArmed &&
+                FormulaEscapeMeetsProjectile(snapshot, script))
+            {
+                plan.Dash = false;
+                LastFormulaProjectileVetoCount++;
+            }
+            else if (!FormulaProjectileVetoArmed)
+            {
+                LastFormulaProjectileVetoCount = 0;
+            }
             if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
             ApplyConsumables(snapshot, ref plan);
@@ -855,8 +910,45 @@ namespace Chaite.Core
             return plan;
         }
 
-        private static bool TryGetFishronEnrage(CombatSnapshot snapshot,
-            int npcKey, out DukeFishronNativeEnrageObservation observation)
+        /// <summary>True when the formula script's chosen escape carries the
+        /// player into a hostile projectile within the immediate horizon. The
+        /// sweep mirrors <see cref="PrepareThreats"/> and
+        /// <see cref="ImmediateRisk"/>: the player is carried by the commanded
+        /// direction for <c>ImmediateThreatTicks</c> ticks (the locked charge
+        /// lasts about 28, so this covers the escape window), and any non-beam
+        /// projectile is tested with the same <c>ProjectileSafetyMargin</c>.
+        /// </summary>
+        private bool FormulaEscapeMeetsProjectile(CombatSnapshot snapshot,
+            in FormulaScriptOutput script)
+        {
+            if (snapshot?.Player == null || snapshot.Threats == null) return false;
+            var player = snapshot.Player;
+            var ticks = Math.Max(1, Math.Min(_horizonTicks,
+                _settings.ImmediateThreatTicks));
+            var margin = _settings.ProjectileSafetyMargin;
+            var earlier = player.BoundsAt(player.Position);
+            var later = player.BoundsAt(player.Position +
+                player.Velocity * ticks);
+            for (var i = 0; i < snapshot.Threats.Count; i++)
+            {
+                var threat = snapshot.Threats[i];
+                if (threat.Kind != ThreatKind.Projectile) continue;
+                if (threat.Geometry != ThreatGeometry.Body) continue;
+                var aliveUntil = threat.TimeLeft > 0
+                    ? Math.Min(ticks, threat.TimeLeft) : ticks;
+                if (aliveUntil <= 0) continue;
+                var future = threat.Trajectory == ThreatTrajectory.Linear
+                    ? threat.BoundsAt(aliveUntil)
+                    : threat.BoundsAt(0);
+                if (SweptIntersects(earlier, later,
+                        threat.BoundsAt(0).Inflated(margin),
+                        future.Inflated(margin)))
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool TryGetFishronEnrage(CombatSnapshot snapshot,            int npcKey, out DukeFishronNativeEnrageObservation observation)
         {
             observation = default(DukeFishronNativeEnrageObservation);
             if (snapshot?.PriorityBoss == null) return false;
