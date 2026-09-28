@@ -2553,6 +2553,38 @@ namespace Chaite.Core
                 // Vertical -1 is what raises controlJump (see output.Jump =
                 // vertical < 0), and wing ascent is slow, so the jump has to be
                 // spent early rather than at contact.
+                //
+                // ROUND 157 MEASUREMENT -- the descent is KEPT, and here is the
+                // evidence that stopped it from being changed.
+                //
+                // The failing strong-300 run has SEVEN contacts and every one is
+                // the Boss's BODY, not the wall: five during a real charge (states
+                // 0/1) and three late, in states 5/6/7, i.e. exactly this branch.
+                // The dense pre-hit trace at those three reads:
+                //
+                //   t=9210..9219  player vy +9.2..+10.0, vx -0.4..-2.5   state 7
+                //   t=9271..9274  player vy +10.0,      vx -0.1..+0.6    state 7
+                //   t=9311..9318  player vy -8.9..-9.8  (climbing, too late) state 5
+                //
+                // +10.0 is terminal descent, the Boss is climbing, and vx is near
+                // zero -- so the player is falling into a rising Boss without the
+                // horizontal speed the owner requires. That made the hard-coded
+                // `vertical = 1` look like a plain defect, and it was changed to
+                // descend only while the Boss is above the player.
+                //
+                // IT IS WORSE. Measured, obsidian, 24k cap:
+                //              descend always (kept)   descend only if Boss above
+                //   strong 300   9697 / 7 / 32136          11341 / 7 / 23915
+                //   weak   300   8777 / 8 / 36712           4121 / 6 / 60019
+                // The strong arm survives longer but still dies with the same seven
+                // contacts; the weak arm collapses to less than half its damage.
+                // This is the fourth time vertical suppression has been tried and
+                // refuted (unconditional suppression, the colocation-lift gate, the
+                // weak-wing gate removal, and now this conditional form), so the
+                // descending trajectory of this branch is load-bearing: the bubble
+                // line is laid along the Boss axis and staying under it is what
+                // keeps the crossing honest. Do not retry this without a mechanism
+                // that explains why all four failed.
                 vertical = player.OnGround ? -1 : 1;
                 phase = "fishron-wing-bubble-line";
                 return;
