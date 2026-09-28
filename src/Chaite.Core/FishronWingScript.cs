@@ -466,6 +466,70 @@ namespace Chaite.Core
         /// *opposite* to the normal, i.e. back across the locked line.</summary>
         private int _chargeNormalHorizontal;
         private int _chargeNormalVertical;
+        /// <summary>Separation at the instant the charge locked, in px. Kept because the
+        /// owner's dodge rule is distance-dependent and the lock is the ONLY moment it
+        /// can be measured: the Boss's aim is frozen then, so this number never changes
+        /// for the rest of the episode.</summary>
+        private float _chargeLockDistance;
+        /// <summary>Take the lock distance above this and the diagonal dodge is replaced
+        /// by a straight horizontal pull-away.
+        ///
+        /// THE OWNER'S RULE, VERBATIM: "猪鲨的冲刺是锁定后再进行的，理应向法线躲避（猪鲨开始
+        /// 锁定冲刺时比玩家高则需要斜上移动，比玩家低则斜向下移动），除非距离已经够远才能直接
+        /// 水平拉远！" The first two clauses are already what the locked normals do -- see
+        /// <see cref="LatchChargeNormal"/>. The third clause, the DISTANCE EXCEPTION, was
+        /// documented there as intent but never implemented: nothing read the lock
+        /// distance after computing it.
+        ///
+        /// IMPLEMENTED, SWEPT, AND REFUTED AS A BAND RULE (round 151). Faithfully built
+        /// (drop the diagonal to `vertical = 0`, i.e. hold altitude and pull straight
+        /// away, whenever the lock separation exceeded the threshold) and swept:
+        ///
+        ///   strong 300   off 10749/8/26835   ->  400 9132/8/34986   550 **11061/7/25251**
+        ///   strong 600   off  8328/5/KILL    ->  400 5879/6/24602   550  6993/6/13401
+        ///   strong 800   off  6011/5/5015    ->  400 6389/4/KILL    550  5480/4/12091
+        ///   strong 1000  off  4536/4/11408   ->                        550  4647/3/9489
+        ///   strong 1200  off  4437/0/0       ->                        550  4440/1/0
+        ///   strong 2000  off  2881/0/0       ->                        550  2880/0/0
+        ///   weak   300   off  9456/9/33297   ->  400 2086/7/70251   550  4071/7/60305
+        ///   weak   600   off  4924/6/34027   ->                        550  4071/7/42655
+        ///   weak   800   off  5287/5/14595   ->  400 2086/7/57376   550  3739/7/35333
+        ///   weak  2000   off  2881/1/0       ->                        550  2881/0/0
+        ///
+        /// Three readings decide it. (1) The `550` optimum is a KNIFE EDGE, not a
+        /// plateau: on the strong wing 600 -> 8876 and 700 -> 5929, and 400 collapses two
+        /// weak points to tick 2086. (2) Even at its own optimum it is a NARROW win: it
+        /// buys one hit at strong 300 and the weak-2000 no-hit, but STRICTLY LOSES the
+        /// strong-600 kill (6993/6 with the boss at 13401, against a clean kill) and
+        /// drives weak 300/600/800 from 9456/4924/5287 down to 4071/4071/3739. (3) At
+        /// 400, two configurations from opposite wings die on the SAME tick 2086 -- the
+        /// broken-invariant signature (section 126), which says the rule replaced
+        /// fight-specific evasion with a trajectory that no longer depends on the fight.
+        ///
+        /// This is the fourth consecutive command-space redirection to fail (exact
+        /// perpendicular, along-the-charge, pre-lock facing, now the distance exception),
+        /// and it matches the two recorded wins: 129 and 132 both ADDED a missing
+        /// pre-condition, while every one of these REDIRECTED a command that was already
+        /// right. Left default-OFF so the measurement is preserved and repeatable.
+        ///
+        /// Note the owner's rule is not WRONG in its own terms -- for the one measured
+        /// point it helps, it helps exactly as described. It is simply not true of the
+        /// whole band, which is what the objective needs.</summary>
+        internal static float LockRunAwayDistance
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(LockRunAwayVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return 0f;
+                return value;
+            }
+        }
+
+        private const string LockRunAwayVariable = "CHAITE_LOCK_RUN_AWAY";
         /// <summary>The charge sequence the normal signs belong to, so a new
         /// lock re-latches and the rest of the episode reuses them. Starts at -1
         /// and is only read as "a lock is in force" once a lock has happened, so
@@ -1630,7 +1694,17 @@ namespace Chaite.Core
             // and strong boss damage collapsed to 9, i.e. the circuit mostly
             // stopped engaging. The recoil direction is not the thing to steer.
             // Reverted.
-            switch (_chargeBeat)
+            // The owner's distance exception applies to the WHOLE escape, not just beat
+            // 0: taken from far enough out, the diagonal beats 1 and 2 buy clearance the
+            // player does not need while spending altitude it does, so hold the altitude
+            // and let the horizontal pull-away do the work.
+            if (LockRunAwayDistance > 0f && _chargeLockDistance >= LockRunAwayDistance &&
+                _chargeNormalSequence >= 0)
+            {
+                vertical = 0;
+                phase = "fishron-wing-charge-run-away";
+            }
+            else switch (_chargeBeat)
             {
                 case 0:
                     // Beat 0 is the horizontal beat, which used to ask for no
@@ -2338,6 +2412,12 @@ namespace Chaite.Core
             var dx = player.Center.X - boss.Center.X;
             var dy = player.Center.Y - boss.Center.Y;
             var lockDistance = (float)Math.Sqrt(dx * dx + dy * dy);
+            _chargeLockDistance = lockDistance;
+            // The owner's distance exception. Taken from far enough out, the diagonal
+            // costs altitude the player needs later and buys clearance it does not, so
+            // the straight horizontal pull-away is the better dodge. Default OFF.
+            var runAwayDistance = LockRunAwayDistance;
+            var runAway = runAwayDistance > 0f && lockDistance >= runAwayDistance;
             if (lockDistance <= 0.01f)
             {
                 _chargeNormalHorizontal = 0;
@@ -2517,7 +2597,9 @@ namespace Chaite.Core
                 normalY = bestY;
             }
             _chargeNormalHorizontal = Math.Abs(normalX) < 0.2f ? 0 : (normalX > 0f ? 1 : -1);
-            _chargeNormalVertical = Math.Abs(normalY) < 0.2f ? 0 : (normalY > 0f ? 1 : -1);
+            _chargeNormalVertical = runAway
+                ? 0
+                : (Math.Abs(normalY) < 0.2f ? 0 : (normalY > 0f ? 1 : -1));
         }
 
         /// <summary>Candidate escape directions for the locked-charge dodge, in
