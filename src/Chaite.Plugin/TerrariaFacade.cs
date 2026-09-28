@@ -2112,7 +2112,7 @@ namespace Chaite.Plugin
             if (cascadeCount > 0)
             {
                 snapshot.SharknadoBubble.CascadeCount = cascadeCount;
-                PublishCascadeWalls(cascadeXs, cascadeN, snapshot.SharknadoBubble);
+                PublishCascadeWalls(cascadeXs, cascadeN, ref snapshot.SharknadoBubble);
             }
 
             RefreshWeaponSpecificTargetObservation(player, snapshot.Weapon);
@@ -2127,9 +2127,14 @@ namespace Chaite.Plugin
         /// first, so this is a single linear pass. Each footprint is padded by
         /// <see cref="SharknadoBubbleSnapshot.CascadeMemberHalfWidth"/> because the
         /// largest member is 225 px wide (scale 1.5 of a 150-px base) and a centre bound
-        /// is not a collision bound.</summary>
+        /// is not a collision bound.
+        ///
+        /// The bubble is passed by REFERENCE deliberately: SharknadoBubbleSnapshot is a
+        /// struct, so the first version of this took a copy and silently discarded every
+        /// wall it computed -- the escape rule then never saw a wall and was inert for a
+        /// whole round. Keep this `ref`.</summary>
         private static void PublishCascadeWalls(float[] centres, int count,
-            SharknadoBubbleSnapshot bubble)
+            ref SharknadoBubbleSnapshot bubble)
         {
             bubble.CascadeWallCount = 0;
             if (count <= 0) return;
