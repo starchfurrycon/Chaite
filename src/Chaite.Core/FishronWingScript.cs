@@ -564,6 +564,20 @@ namespace Chaite.Core
         /// resets the locked-charge state.</summary>
         internal bool _counterDashSpent;
 
+        /// <summary>Horizontal input to force on this tick so that a dash issued on
+        /// the NEXT tick travels in the intended direction. See
+        /// <see cref="PerpDashSign"/> and the reverse-engineering note there: the
+        /// dash reads the player's facing, facing is derived from velocity.X after
+        /// the movement step, and the input is only consulted when it OPPOSES
+        /// facing. So the input must be set one tick early. 0 means no override.
+        /// </summary>
+        internal int _dashAimHorizontal;
+
+        /// <summary>Intended dash direction recorded on the tick the dash is issued,
+        /// held for one tick so the aim override above can be applied before the
+        /// engine reads facing. 0 means idle.</summary>
+        internal int _dashAimPending;
+
         /// <summary>Closed-loop leg schedule, in charges per one-direction leg.
         ///
         /// Why this knob exists, measured rather than reasoned: the reviewed
@@ -1646,6 +1660,20 @@ namespace Chaite.Core
                     out phase);
             }
 
+            // Apply the dash-aim armed on the previous tick, BEFORE anything else
+            // reads the horizontal. This is the one-frame-early input described at
+            // the PerpDashSign comment: it steers this tick's facing so that a dash
+            // issued this tick can be aimed by the reversal branch. Cleared
+            // unconditionally so a missed aim can never leak into a later tick.
+            // The pending flag is cleared here, before ChargeEscape may set it
+            // again for the following tick.
+            _dashAimPending = 0;
+            if (_dashAimHorizontal != 0)
+            {
+                horizontal = _dashAimHorizontal;
+                _dashAimHorizontal = 0;
+            }
+
             // Keep the observed type-386 cascade extent current, then use it to step
             // sideways out of the wall before anything else looks at the horizontal.
             //
@@ -2487,32 +2515,49 @@ namespace Chaite.Core
                 else
                 {
                     dash = true;
-                    // PERPENDICULAR DASH (round 162). See PerpDashSign: the dash
-                    // otherwise runs along the escape branch, which measured 58 of
-                    // 70 dashes pointing AWAY from an oncoming boss and only 1
-                    // perpendicular. Leaving the charge LINE is the dodge, so the
-                    // perpendicular axis is spent here instead. This changes the
-                    // DIRECTION only -- the timing gates above are untouched, and
-                    // the default -1 leaves the reviewed circuit exact.
+                    // PERPENDICULAR DASH (round 162). See PerpDashSign. The dash
+                    // measures 58 of 70 take-offs pointing AWAY from an oncoming
+                    // boss and only 1 perpendicular, so leaving the charge LINE --
+                    // the owner's stated dodge -- was never happening.
+                    //
+                    // The direction cannot be set on this tick. Decompiled:
+                    //
+                    //   Player.DoCommonDashHandle
+                    //       int num2 = direction;                    // facing
+                    //       int num3 = controlRight - controlLeft;
+                    //       int num4 = num2;
+                    //       if (num3 == -num2) num4 = num3;           // REVERSAL only
+                    //       dir = num4;
+                    //   Player dash == 2
+                    //       velocity.X = 14.5f * (float)dir2;
+                    //   Player movement
+                    //       position += velocity;
+                    //       if (velocity.X < 0f) direction = -1;
+                    //       else if (velocity.X > 0f) direction = 1;
+                    //
+                    // Two consequences. The override only ever REVERSES relative
+                    // to facing (num3 == -num2 makes num4 == num3 == -num2), so an
+                    // input matching the desired direction is IGNORED. And facing
+                    // is assigned from velocity.X after the movement step, so the
+                    // facing this tick's dash read was settled last tick.
+                    //
+                    // Therefore the aim has to be armed one tick early: set the
+                    // input to the NEGATIVE of the desired direction now, so next
+                    // tick's facing settles on the opposite side, and the dash
+                    // tick's input then equals -facing -- the reversal branch --
+                    // yielding dir = desired.
                     var perp = PerpDashSign;
                     if (perp >= 0f && _chargeNormalSequence >= 0)
                     {
                         var bx = boss.Center.X - player.Center.X;
                         var by = boss.Center.Y - player.Center.Y;
-                        // Two perpendicular directions to the boss-to-player axis;
-                        // take the requested one. When the axis is degenerate, keep
-                        // the escape branch's horizontal rather than guessing.
                         if (bx * bx + by * by > 1f)
                         {
                             var px = -by;
-                            var py = bx;
-                            if (perp > 0.5f)
-                            {
-                                px = by;
-                                py = -bx;
-                            }
-                            horizontal = px > 0f ? 1 : (px < 0f ? -1 : 0);
-                            vertical = py > 0f ? 1 : (py < 0f ? -1 : 0);
+                            if (perp > 0.5f) px = by;
+                            _dashAimPending = px > 0f ? 1 : (px < 0f ? -1 : 0);
+                            _dashAimHorizontal = -_dashAimPending;
+                            horizontal = _dashAimHorizontal;
                         }
                     }
                 }
