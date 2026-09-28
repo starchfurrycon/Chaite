@@ -1071,8 +1071,15 @@ namespace Chaite.Core
         private const string TornadoAxisGuardVariable = "CHAITE_TORNADO_AXIS_GUARD";
         /// <summary>Default for <see cref="TornadoAxisGuardVariable"/>: on.</summary>
         internal const bool TornadoAxisGuardDefault = true;
-        /// <summary>Half-height of a fully grown type-386 column, plus the player's own
-        /// half-height (42). 31 + 42 = 73. The full 63 px column plus the player box.</summary>
+        /// <summary>Vertical margin at which the guard treats the player as about to
+        /// enter a column's band. Half-height of a fully grown sub-tornado (31) plus the
+        /// player's own half-height (42) is 73, which is the true contact margin.
+        ///
+        /// MEASURED (round 153): widening this to 400 changed NOTHING -- byte-identical
+        /// at strong 300/600/700/800/900/1000/1100 and weak 600/800/1100. That proves the
+        /// binding constraint is not the margin but the guard's "closing horizontally"
+        /// requirement, which the guard's own predicate rarely satisfies in the wreck
+        /// window. Kept at the true contact margin.</summary>
         private const float TornadoAxisGuardVerticalMargin = 73f;
         /// <summary>How close, horizontally, a column must be for the guard to look at it.
         ///
@@ -1101,7 +1108,22 @@ namespace Chaite.Core
         /// So the reach stays at the column's own half-width. The guard is then a
         /// conservative rule that helps the weak low band (weak 800 gains a kill) and
         /// does not fix 700/800/1000 -- which is stated plainly rather than papered
-        /// over. Fixing those three needs the descent cut BEFORE the lock, not a veto.</summary>
+        /// over. Fixing those three needs the descent cut BEFORE the lock, not a veto.
+        ///
+        /// WHAT ROUND 153 ADDED, and why this rule shape is now abandoned. Type 386 is
+        /// NOT a single column: the Boss lays a CASCADE of 25 sub-tornadoes along its
+        /// charge path. Measured at tick 4048 of strong 1000 they spanned x 1330..1485
+        /// and y 5140..6049 with scales 0.375..1.5 and sizes 56x15 .. 225x63 -- a WALL
+        /// roughly perpendicular to the charge, straddling the whole band, not a point
+        /// hazard. The player is killed while DESCENDING through that wall: from y 5967
+        /// down to 5568, ending level with a sub-tornado whose top edge is 10 px below
+        /// them. No per-frame axis veto can fix that, because by the time any single
+        /// sub-tornado is the nearest one the player is already inside the wall's
+        /// vertical span. Refuted three times this round: unconditional suppression
+        /// (strong 300 -7218 ticks), reach 600 (two kills lost, targets still
+        /// byte-identical), and margin 400 (byte-identical everywhere). The rule shape is
+        /// exhausted; the next attempt must be geometric -- keep the player clear of the
+        /// cascade's BAND, not of its nearest member.</summary>
         private const float TornadoAxisGuardHorizontalReach = 125f;
         /// <summary>Upper end of the simulated-DPS band where the axis guard earns its
         /// place, and the reason it is gated at all.
