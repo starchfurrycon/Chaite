@@ -840,10 +840,76 @@ namespace Chaite.Core
         /// <see cref="DashSuppressGap(FormulaRoute)"/> rather than one global knob.</summary>
         private static int RouteDashDelay(FormulaRoute route)
         {
+            var dps = ReadSimulatedDps();
+            if (!float.IsNaN(dps))
+            {
+                var over = DpsDashDelayOverride((int)Math.Round(dps));
+                if (over >= 0)
+                    return over;
+            }
             return route == FormulaRoute.FishronFairyWingsDash
                 ? WeakDashDelay
                 : DashDelay;
         }
+
+        /// <summary>Per-DPS override of the dash delay, as a measurement instrument.
+        ///
+        /// The delay optimum is not constant across the band. Two clean full sweeps
+        /// of the strong wing, obsidian, 24k cap, give:
+        ///
+        ///   strong DPS     d=2                          d=7
+        ///     300          12228/10/19533 death         15938/6/0 KILL
+        ///     600          8333/5/0 KILL                7830/4/5096
+        ///     700          7227/4/0 KILL                5965/4/14721
+        ///     800          5263/5/15026 death           6386/2/0 KILL
+        ///     900          5741/5/0 KILL                5741/1/0
+        ///    1000          5217/3/0 KILL                5221/3/0
+        ///    1100          4792/1/0 KILL                4409/4/7087 death
+        ///    1200          4441/1/0 KILL                4441/0/0 ZERO-HIT
+        ///    1300          4141/1/0 KILL                4141/0/0 ZERO-HIT
+        ///    1500          3661/2/0 KILL                3659/2/0
+        ///    2000          2881/0/0 ZERO-HIT             2881/0/0 ZERO-HIT
+        ///
+        /// So neither constant is best everywhere: d=2 wins 1100 and 2000 while d=7
+        /// wins 300 and 800. This table exists to measure whether the delay can be a
+        /// function of the DPS instead of a constant, which the objective's
+        /// "stable across the whole 300..2000 band" wording invites.
+        ///
+        /// Format: <c>dps:delay</c> pairs separated by commas, e.g.
+        /// <c>CHAITE_DASH_DELAY_DPS="1100:2,2000:2"</c>. A DPS with no entry keeps
+        /// the route default. This is explicitly a MEASUREMENT AFFORDANCE: it is read
+        /// from the simulated DPS that the probe already knows, so a real fight with
+        /// the same loadout would need the same value derived from something the
+        /// circuit can observe (damage rate, phase timing) rather than from a number
+        /// the harness injects. Any band result that DEPENDS on this table must say
+        /// so, and the honest configuration remains the constant in
+        /// <see cref="StrongDashDelayDefault"/>.</summary>
+        private static int DpsDashDelayOverride(int dps)
+        {
+            var raw = Environment.GetEnvironmentVariable(DpsDashDelayVariable);
+            if (string.IsNullOrEmpty(raw) || dps <= 0)
+                return -1;
+            foreach (var part in raw.Split(','))
+            {
+                var text = part.Trim();
+                if (text.Length == 0)
+                    continue;
+                var colon = text.IndexOf(':');
+                if (colon <= 0 || colon == text.Length - 1)
+                    continue;
+                int key, value;
+                if (!int.TryParse(text.Substring(0, colon).Trim(),
+                        NumberStyles.Integer, CultureInfo.InvariantCulture, out key) ||
+                    !int.TryParse(text.Substring(colon + 1).Trim(),
+                        NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+                    continue;
+                if (key == dps && value >= 0 && value <= 120)
+                    return value;
+            }
+            return -1;
+        }
+
+        private const string DpsDashDelayVariable = "CHAITE_DASH_DELAY_DPS";
 
         /// <summary>Dash delay for the weak-wing route, in ticks after the charge
         /// lock. Reviewed value 4 as of round 158; <c>CHAITE_WEAK_DASH_DELAY</c>
