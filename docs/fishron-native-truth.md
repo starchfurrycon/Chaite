@@ -12763,3 +12763,90 @@ ttc 门控是在**延迟之上再叠加一个条件**，所以它只会把冲刺
 然后在**方向被读取之前的那一帧**设置 facing。
 
 **这是一个明确的、下一步该做的逆向任务**，而不是又一次参数扫描。
+
+### 161.9 ★ 冲刺方向的真正决定因素（原生 decompile 已确认）——本轮最重要的结果
+
+按 §161.8 的下一步做了逆向，直接反编译 `Terraria.Player`，得到两条决定性事实。
+
+**(1) 冲刺方向由 `DoCommonDashHandle` 决定，而它优先读 facing：**
+
+```csharp
+private void DoCommonDashHandle(out int dir, out bool dashing, ...)
+{
+    dir = 0; dashing = false;
+    ...
+    int num = 0;
+    bool flag = Settings.DashControl == Settings.DashPreference.AllowDoubleTap;
+    if (controlDash && !CCed && releaseDash)      // 冲刺键
+    {
+        int num2 = direction;                     // <-- facing
+        int num3 = controlRight.ToInt() - controlLeft.ToInt();
+        int num4 = num2;
+        if (num3 == -num2)                        // 仅当输入与 facing 相反
+            num4 = num3;
+        num = num4;
+    }
+    if ((controlRight && releaseRight && flag) || num == 1) { dir = 1; dashing = true; ... }
+    else if ((controlLeft && releaseLeft && flag) || num == -1) { dir = -1; ... }
+}
+```
+
+调用方（`dash == 2`，即克苏鲁之盾）：
+
+```csharp
+DoCommonDashHandle(out var dir2, out var dashing2);
+if (dashing2) { velocity.X = 14.5f * (float)dir2; ... eocDash = 15; }
+```
+
+**(2) facing（`direction`）由 `velocity.X` 在移动结算之后赋值：**
+
+```csharp
+position += velocity;
+ghostFrameCounter++;
+if (velocity.X < 0f) direction = -1;
+else if (velocity.X > 0f) direction = 1;
+```
+
+### 161.10 由此得到的两个结论
+
+**结论 A：`if (num3 == -num2) num4 = num3;` 的实际含义是"反转"，不是"指定"。**
+当 `num3 = -num2` 时 `num4 = num3 = -num2`，也就是说**方向被写成 facing 的反向**。
+这条分支**永远不能把冲刺导向 facing 的同一侧**。而我的 `CHAITE_PERP_DASH` 恰恰
+把输入设成了"与期望方向同号"——正好落在**被忽略**的那一侧（`num3 == num2 ≠ -num2`）。
+**所以我的实现从原理上就不可能产生法线冲刺**，§161.6 的"0 次垂直"由此得到完全解释。
+
+**结论 B：facing 滞后一帧。** `direction` 在 `position += velocity` 之后由 `velocity.X` 赋值，
+所以第 N 帧读到的 facing 反映的是**第 N-1 帧结算后的水平速度**。
+在冲刺帧（第 N 帧）改水平输入，只影响第 N 帧结算后的 facing，对第 N 帧的 `DoCommonDashHandle` **无效**。
+这正是 §161.7 观测到"输入翻转了但冲刺方向没变"的原因。
+
+### 161.11 正确的目标方向（为下一轮准备，已可确定）
+
+由 `num = (num3 == -num2) ? num3 : facing`：
+
+| 期望冲刺方向 D | `controlRight - controlLeft` | 理由 |
+|---|---|---|
+| D = +1 | **−1**（若 facing = +1） | num3 ≠ -num2，走 `num = num3 = -1` ✗ |
+| D = +1 | +1（若 facing = −1） | num3 = +1 = -(-1) ⇒ `num = num3 = +1` ✓ |
+
+整理为一条可实现的规则：**在冲刺帧，令 `horizontal = -desiredDir` 当且仅当
+`facing == desiredDir`；否则令 `horizontal` 与 facing 相反。**
+等价地：**目标是让"输入落在 facing 的反侧"，此时冲刺才会转向输入方向**；
+而由于 facing 滞后一帧，**必须在冲刺帧的前一帧就把输入设好**，
+使冲刺帧的 facing 落在期望方向的**反侧**。
+
+**更简单、也更可靠的实现**：在冲刺帧**前一帧**把 `horizontal` 设为 **`-desiredDir`**，
+这样冲刺帧的 facing = `-desiredDir`，于是 `controlRight-controlLeft = -(-desiredDir) = desiredDir`
+正好等于 `-facing`，命中反转分支，`dir = desiredDir`。**这是唯一能让冲刺转向的路径。**
+
+### 161.12 状态
+
+本轮**未能**产出可用的法线冲刺，但把"为什么不能"从一个观测（§161.7）
+推进到了一条**已被原生代码证明、且可直接实现**的规则（§161.11）。
+这比继续在时机参数上扫描有价值得多，因为它同时解释了 §158/§161 的**全部**零和结果：
+线路从未控制过冲刺方向，而方向由 facing 这一滞后量决定。
+
+**下一轮的第一件事**：按 §161.11 实现"冲刺前一帧设 `horizontal = -desiredDir`"，
+用一个"冲刺方向是否真为期望方向"的占比作为**机制自检指标**（期望：接近 100%）。
+只有当这个指标先达到接近 100%，法线躲避的**行为**才算真正被测过；
+在那之前，任何关于"法线躲避有没有用"的结论都是无效的。
