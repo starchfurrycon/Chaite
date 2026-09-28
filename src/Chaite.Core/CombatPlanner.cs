@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 
 namespace Chaite.Core
 {
@@ -849,27 +848,6 @@ namespace Chaite.Core
             plan.Drop = script.Vertical > 0;
             plan.Dash = script.Dash;
             plan.ToggleMount = script.ToggleMount;
-            // TORNADO ESCAPE (round 169). This is the path a Fishron formula
-            // route actually takes, and it is the only place the script's
-            // decision can be corrected. The script reads nothing but the Boss,
-            // and the round-168 native damage census showed about half of all
-            // contacts are the 384/386 tornado PROJECTILES, which it cannot see.
-            // This layer may only touch the HORIZONTAL axis, and only while a
-            // tornado box is already about to overlap the player; it returns 0
-            // otherwise, so nothing changes whenever no tornado is on top of the
-            // player. Inert unless CHAITE_TORNADO_ESCAPE=1.
-            if (!plan.Dash)
-            {
-                var tornado = TornadoEscape.HorizontalEscape(
-                    snapshot.Player, snapshot.Threats);
-                if (tornado != 0)
-                {
-                    plan.Horizontal = tornado;
-                    plan.PhaseId = script.Phase == null
-                        ? TornadoEscape.Phase
-                        : script.Phase + "-tornado-escape";
-                }
-            }
             if (!ApplyPlannedOutput(snapshot, target, script.Fire, ref plan, out reason))
                 return UnsupportedOutputRoutePlan(plan, reason);
             ApplyConsumables(snapshot, ref plan);
