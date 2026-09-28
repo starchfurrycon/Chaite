@@ -2485,7 +2485,37 @@ namespace Chaite.Core
                     // it starves the fight as well. Reverted.
                 }
                 else
+                {
                     dash = true;
+                    // PERPENDICULAR DASH (round 162). See PerpDashSign: the dash
+                    // otherwise runs along the escape branch, which measured 58 of
+                    // 70 dashes pointing AWAY from an oncoming boss and only 1
+                    // perpendicular. Leaving the charge LINE is the dodge, so the
+                    // perpendicular axis is spent here instead. This changes the
+                    // DIRECTION only -- the timing gates above are untouched, and
+                    // the default -1 leaves the reviewed circuit exact.
+                    var perp = PerpDashSign;
+                    if (perp >= 0f && _chargeNormalSequence >= 0)
+                    {
+                        var bx = boss.Center.X - player.Center.X;
+                        var by = boss.Center.Y - player.Center.Y;
+                        // Two perpendicular directions to the boss-to-player axis;
+                        // take the requested one. When the axis is degenerate, keep
+                        // the escape branch's horizontal rather than guessing.
+                        if (bx * bx + by * by > 1f)
+                        {
+                            var px = -by;
+                            var py = bx;
+                            if (perp > 0.5f)
+                            {
+                                px = by;
+                                py = -bx;
+                            }
+                            horizontal = px > 0f ? 1 : (px < 0f ? -1 : 0);
+                            vertical = py > 0f ? 1 : (py < 0f ? -1 : 0);
+                        }
+                    }
+                }
             }
             // LAST, so it overrides every branch above including the personal-space
             // latch and the counter-dash. Neither of those is a reason to fly into a
@@ -2906,6 +2936,43 @@ namespace Chaite.Core
         }
 
         private const string DashTtcVariable = "CHAITE_DASH_TTC";
+
+        /// <summary>When set, the charge dash runs PERPENDICULAR to the charge
+        /// line instead of along the escape branch's direction. Negative disables.
+        ///
+        /// WHY (round 162, dense native trace of the weak wing at 600 DPS):
+        /// measuring the dash velocity against the boss-to-player axis at every
+        /// take-off gives 58 dashes AWAY from the boss, 11 toward, and only 1
+        /// perpendicular. The samples show the axiom behind that: at t=1353 the
+        /// dash is (+14.18, +3.49) while the boss-to-player vector is (+186, +93)
+        /// and SHRINKING (156, 127, 99 on the following ticks). The dash points at
+        /// where the boss was, the boss closes head-on, and the two travel toward
+        /// each other -- which is exactly why the 15-tick eocDash expires before
+        /// the body arrives, measured as 0 of 6 contacts covered.
+        ///
+        /// The owner's governing description of this fight is to dodge along the
+        /// NORMAL: leaving the charge line is the whole dodge, so displacement
+        /// perpendicular to the charge beats displacement along it. Dashing away
+        /// cannot work for the reason already recorded above -- the body arrives
+        /// faster than the player can leave along that axis -- and dashing toward
+        /// it is the refuted counter-dash. The normal is the untried axis.
+        ///
+        /// Default -1 reproduces the reviewed circuit exactly.</summary>
+        private static float PerpDashSign
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(PerpDashVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value < 0f)
+                    return -1f;
+                return value;
+            }
+        }
+
+        private const string PerpDashVariable = "CHAITE_PERP_DASH";
 
         /// <summary>AI_069 chooses the next projectile attack from ai[3] when a
         /// hover ends, so the value while hovering names the attack that is
