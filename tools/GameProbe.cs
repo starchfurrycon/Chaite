@@ -4570,6 +4570,34 @@ public static class ChaiteGameProbe
         if (pendingShieldTrace != null)
         {
             pendingShieldTrace["lifeAfterFrame"]=p.statLife;
+            // Boss pose at the dash frame. The dash DIRECTION is what the circuit
+            // has never been able to verify: shield-events is the only complete
+            // dash record and carried no boss pose, while prehit only samples a
+            // 47-tick window before each contact, so only ~10% of dashes could be
+            // compared against the charge axis. Publishing the pose here makes the
+            // comparison possible for every dash. Observation only -- nothing in
+            // the control path reads these fields.
+            if(Game.npc!=null)
+            {
+                for(int i=0;i<Game.npc.Length;i++)
+                {
+                    var bossNpc=Game.npc[i];
+                    if(bossNpc==null || !bossNpc.active || !IsExpectedRoot(bossNpc)) continue;
+                    pendingShieldTrace["bossX"]=bossNpc.Center.X;
+                    pendingShieldTrace["bossY"]=bossNpc.Center.Y;
+                    pendingShieldTrace["bossVx"]=bossNpc.velocity.X;
+                    pendingShieldTrace["bossVy"]=bossNpc.velocity.Y;
+                    pendingShieldTrace["bossAi0"]=bossNpc.ai[0];
+                    pendingShieldTrace["bossSlot"]=bossNpc.whoAmI;
+                    // The player's own centre, so the boss-to-player axis is fully
+                    // determined by this record alone. Without it the dash direction
+                    // can only be compared to the axis for the ~10% of dashes that
+                    // happen to fall inside a prehit contact window.
+                    pendingShieldTrace["playerX"]=p.Center.X;
+                    pendingShieldTrace["playerY"]=p.Center.Y;
+                    break;
+                }
+            }
             File.AppendAllText(Path.Combine(Root,"shield-events.jsonl"),Json(pendingShieldTrace)+Environment.NewLine,new UTF8Encoding(false));
             pendingShieldTrace=null;
         }
