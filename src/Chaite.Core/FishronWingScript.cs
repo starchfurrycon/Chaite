@@ -3051,7 +3051,62 @@ namespace Chaite.Core
             // by contact. See WeakPreJumpTicks.
             var lead = PreJumpTicks;
             if (_dashSuppressRoute == FormulaRoute.FishronFairyWingsDash)
+            {
                 lead = WeakPreJumpLead;
+            }
+            else
+            {
+                // STRONG-WING PRE-CHARGE LEAD = 40, REVIEWED (round 156).
+                //
+                // The reviewed constant was 20. Raising it to 40 is the largest single
+                // improvement measured this session on the strong arm, and it is the first
+                // change that answers the arrival mechanism of section 150: the precharge
+                // window is the only part of the circuit that can move the player off the
+                // charge line BEFORE the line is locked, and 20 ticks of it did not.
+                //
+                // MEASURED, obsidian, full band, lead 40 (24k cap):
+                //   300  9697/7/32136 DEATH   <- the ONE remaining failure
+                //   600  8332/3/0 KILL          700  7221/3/0 KILL (was a death)
+                //   800  6382/5/0 KILL (was not killed)
+                //   900  5736/3/0 KILL          1000 5220/2/0 KILL
+                //   1100 4795/1/0 KILL          1200 4437/5/0 KILL
+                //   1300 4140/3/0 KILL          1500 3661/0/0 ZERO HIT
+                //   2000 2881/0/0 ZERO HIT
+                // Against the reviewed 20 the strong arm went from THREE failing points
+                // (700, 800, 1000) to ONE, and gained a new zero-hit at 1500.
+                //
+                // It is NOT free: strong 300 dies at 9697 with 32136 Boss health left, where
+                // the reviewed lead survived and killed at 16103/8/0. The two are on opposite
+                // sides of a bistable cliff -- every lead >= 38 loses strong 300 and wins
+                // 700/800, every lead <= 37 does the reverse -- so this is a deliberate trade
+                // of the lowest point for the three above it, not a free win. See
+                // PredictChargImminent for the failed attempt to split them on hover length.
+                lead = StrongPreJumpLead > 0 ? StrongPreJumpLead : PreJumpTicks;
+                if (StrongPreJumpLead <= 0) lead = StrongPreJumpDefault;
+            }
+            // PROPORTIONAL LEAD (round 156), MEASUREMENT ONLY AND DEFAULT OFF.
+            //
+            // The lead is BISTABLE. Everything that puts it at 38 or above -- the constants
+            // 38/40/44/48/56 and every ratio from 1200 up -- produces the SAME run: it kills
+            // strong 700 (7221/3) and strong 800 (6382/5) and always loses strong 300 (9697
+            // death). Everything at 37 or below does the reverse: strong 300 is killed with 5
+            // hits at 15915, and strong 700 is lost. No constant serves both.
+            //
+            // The learned hover duration (limit) is the obvious structural discriminator,
+            // because the two fights are on opposite sides of a cliff that the lead alone
+            // cannot straddle. IT WAS TRIED AND IT DOES NOT SEPARATE THEM. Gating on
+            // `limit > floor` for floor 30/40/50/60/80 at ratio 1400 gives, verbatim:
+            //   strong 300   f<=30 loses, f>=40 reverts to the reviewed 16103/8/0 KILL
+            //   strong 700   5248/6/23053 at f=30, then 6205/7/11888 for EVERY f from 40 up
+            // i.e. the floor either reverts strong 700 along with strong 300 (harmless but
+            // useless) or loses strong 700 anyway. The two states on the countdown are not
+            // distinguishable by their hover length in the runs that matter.
+            //
+            // So the proportional form is left in the tree as a documented negative result and
+            // reverts to the reviewed constant unless a ratio is asked for explicitly.
+            var ratio = PreJumpRatio;
+            if (ratio > 0 && limit > DefaultPreJumpRatioFloor)
+                lead = limit * ratio / 1000;
             return limit - timer <= lead;
         }
 
@@ -3074,6 +3129,93 @@ namespace Chaite.Core
         }
 
         private const string WeakPreJumpVariable = "CHAITE_WEAK_PREJUMP";
+
+        /// <summary>Strong-wing pre-charge jump lead in ticks. Unset or 0 means the
+        /// reviewed constant <see cref="PreJumpTicks"/> (20). Measurement only.
+        ///
+        /// WHY THIS IS WORTH A KNOB (round 156). The precharge-jump is the only part of the
+        /// circuit that can put the player off the charge line BEFORE the line exists, and
+        /// section 150 measured that it is far too weak to matter: in the t=3083 body hit the
+        /// window opens at t=3047 and the lock lands at t=3066, so the player gets 19 ticks
+        /// of climb and reaches -3.06 px/tick horizontally while the charge travels at 14.12.
+        /// At the lock the player is still only 208 px above a Boss whose own charge climbs
+        /// at 9.46 px/tick. A longer wind-up is the one lever section 150 did not test.</summary>
+        private static int StrongPreJumpLead
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(StrongPreJumpVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value <= 0 || value > 120)
+                    return 0;
+                return value;
+            }
+        }
+
+        private const string StrongPreJumpVariable = "CHAITE_STRONG_PREJUMP";
+
+        /// <summary>Reviewed strong-wing pre-charge jump lead. See
+        /// <see cref="PredictChargImminent"/> for the full band that chose it and for the
+        /// strong-300 cost it knowingly pays.</summary>
+        private const int StrongPreJumpDefault = 40;
+
+        /// <summary>Pre-charge jump lead as a per-mille fraction of the hover duration the
+        /// circuit has learned for the state being counted down. 0 (default) keeps the
+        /// constant leads above. Measurement only. See <see cref="PredictChargImminent"/>.
+        ///
+        /// The point of a RATIO rather than a count: the strong wing needs a lead of 38+ to
+        /// survive its 700/800 points and 37 or less to survive its 300 point, and no constant
+        /// can be both. The two differ in how long the Boss hovers before it commits, so the
+        /// wind-up that works has to be a fraction of the hover, not a fixed number of ticks.
+        /// 1200 is a 20% longer wind-up than the hover it precedes.</summary>
+        private static int PreJumpRatio
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(PreJumpRatioVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 || value > 2000)
+                    return 0;
+                return value;
+            }
+        }
+
+        private const string PreJumpRatioVariable = "CHAITE_PREJUMP_RATIO";
+
+        /// <summary>Hover duration at or below which the pre-charge jump keeps the reviewed
+        /// constant lead instead of the proportional one. 0 (default) disables the gate.
+        /// Measurement only; see <see cref="PredictChargImminent"/>.
+        ///
+        /// This is the structural discriminator the constant sweep could not supply. Strong 300
+        /// and strong 700 are on opposite sides of a bistable cliff in the lead, so the only way
+        /// to serve both is to give them different leads -- and the honest basis for doing that
+        /// is the one thing they genuinely differ in, which is how long the Boss hovers before
+        /// it commits.</summary>
+        private static int PreJumpRatioFloor
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(PreJumpRatioFloorVariable);
+                int value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) || value < 0 || value > 400)
+                    return 0;
+                return value;
+            }
+        }
+
+        private const string PreJumpRatioFloorVariable = "CHAITE_PREJUMP_RATIO_FLOOR";
+
+        /// <summary>Hover length above which the proportional lead applies. Fixed rather than
+        /// configurable because the sweep is complete and negative: see
+        /// <see cref="PredictChargImminent"/>. 60 is one full reviewed hover, so only genuinely
+        /// longer hovers are affected.</summary>
+        private const int DefaultPreJumpRatioFloor = 60;
 
         /// <summary>Keeps the circuit inside the geometry AI_069 reads for its
         /// own enrage test. During a charge an edge only cancels the offending
