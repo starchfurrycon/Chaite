@@ -858,6 +858,99 @@ namespace Chaite.Core
             return value;
         }
 
+        private static bool ReadTornadoAxisGuard()
+        {
+            var raw = Environment.GetEnvironmentVariable(TornadoAxisGuardVariable);
+            if (string.IsNullOrEmpty(raw)) return TornadoAxisGuardDefault;
+            return raw.Trim() != "0";
+        }
+
+        /// <summary>Simulated DPS read for the axis-guard ceiling, or NaN when no
+        /// simulated output is configured. Duplicated from the standoff reader rather
+        /// than shared because the two gates must stay independently switchable.</summary>
+        private static float ReadSimulatedDps()
+        {
+            var raw = Environment.GetEnvironmentVariable("CHAITE_SIM_DPS");
+            float dps;
+            if (string.IsNullOrEmpty(raw) ||
+                !float.TryParse(raw.Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out dps))
+                return float.NaN;
+            return dps;
+        }
+
+        /// <summary>Highest simulated DPS at which the axis guard runs. See
+        /// <see cref="TornadoAxisGuardDefaultMaxDps"/> for the measured band. With no
+        /// simulated output the fight is the reviewed one that produced every earlier
+        /// measurement except the low-DPS band, so the guard stays on.</summary>
+        private static float TornadoAxisGuardMaxDps
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(TornadoAxisGuardMaxDpsVariable);
+                float value;
+                if (string.IsNullOrEmpty(raw) ||
+                    !float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) || value <= 0f)
+                    return TornadoAxisGuardDefaultMaxDps;
+                return value;
+            }
+        }
+
+        /// <summary>Suppress a command that would drive the player deeper into the
+        /// vertical band of a remembered Sharknado column.
+        ///
+        /// WHY THIS IS A MISSING PRE-CONDITION AND NOT A REDIRECT. A type-386 column is
+        /// 225 px wide but only 63 px tall (width 150 x scale, height 42 x scale, scale
+        /// capped at 1.5), and it never moves vertically. The circuit already knows the
+        /// column's horizontal half and routes around it, but nothing in the sprint,
+        /// descend or bait branches knew its VERTICAL half, so a descent onto the
+        /// column's own y met it head-on. Measured strong 1000: the player descends from
+        /// y 5912 to y 5589 while the column sits at 5592, and the four hits arrive 40
+        /// ticks apart. The guard does not change which way the player flees; it only
+        /// refuses the one axis that is about to intersect.
+        ///
+        /// It is deliberately NOT an "inside the box" rule -- the existing box branch at
+        /// line 2073 already handles that case and must keep priority, because once the
+        /// player is inside, leaving by the cheaper axis is correct. This guard only
+        /// fires while the player is still clear on the vertical axis, which is exactly
+        /// the window where the descent is still free to be cancelled.
+        ///
+        /// The horizontal denominator is capped at the column's own half-width so that a
+        /// distant column cannot veto a descent: the guard is about columns the player is
+        /// horizontally inside-or-near, not about columns in general.</summary>
+        private void ApplyTornadoAxisGuard(PlayerSnapshot player, ref int vertical)
+        {
+            if (!_tornadoAxisGuard || _tornadoTicksLeft <= 0 || vertical == 0) return;
+            // MEASURED (round 152): the guard is DESTRUCTIVE under the extended
+            // distance standoff and only under it. With the low-DPS standoff armed
+            // (1600 px) the circuit deliberately holds a wide separation from the
+            // Boss, which also parks it nearer the columns, so the guard fires often
+            // and strong 300 falls from 16090 (a kill) to 10626. With the reviewed
+            // standoff the guard is neutral at 700/800/1000 and helpful elsewhere
+            // (weak 600 4924 -> 6130, weak 800 -> a new kill). The two rules are
+            // solving the same problem -- keep away from the columns -- so running
+            // both double-counts it. The standoff wins where it is armed.
+            if (StandoffDistanceArmed) return;
+            var dps = ReadSimulatedDps();
+            if (!float.IsNaN(dps) && dps > TornadoAxisGuardMaxDps) return;
+            var dx = player.Center.X - _tornadoX;
+            if (Math.Abs(dx) >= TornadoAxisGuardHorizontalReach) return;
+            // Only the APPROACH matters. Vertical-plus-closing is what the measured
+            // deaths had; vertical alone is how the circuit gains altitude anywhere
+            // else in the fight, and vetoing that everywhere cost strong 300 7218
+            // ticks. If the player is opening the horizontal gap, a descent is not
+            // "into" the column even while it is near.
+            if (dx * player.Velocity.X >= 0f) return;
+            // Positive Y is downward. Descending moves toward a column below the player.
+            var movingToward = vertical > 0
+                ? player.Center.Y < _tornadoY
+                : player.Center.Y > _tornadoY;
+            if (!movingToward) return;
+            if (Math.Abs(player.Center.Y - _tornadoY) <= TornadoAxisGuardVerticalMargin) return;
+            vertical = 0;
+        }
+
         /// <summary>Per-charge horizontal pattern for the closed loop, one entry
         /// per charge within an attack group.
         ///
@@ -958,6 +1051,50 @@ namespace Chaite.Core
         private float _tornadoX;
         private float _tornadoY;
         private int _tornadoTicksLeft;
+        /// <summary>Whether the tornado-axis guard runs. See <see cref="ApplyTornadoAxisGuard"/>.
+        ///
+        /// ENABLED BY DEFAULT (round 152). The evidence is the strong-1000 death, whose
+        /// four hits arrive at ticks 4048/4088/4128/4168 -- exactly 40 apart, four in a
+        /// row -- and every one is the same column. The window shows the player
+        /// descending at vy -7.5 to -10.0 from y 5912 onto the column's own y, 5592, while
+        /// closing horizontally from 528 px to 87 px, until the player enters the column
+        /// box at tick 4046. The column is 225 px WIDE but only 63 px TALL, so the descent
+        /// is what kills, and the controller was commanding it from three different
+        /// branches at once: <c>charge-descend</c> (default beat -> vertical +1),
+        /// <c>tornado-bait</c> (line 2218) and <c>precharge-jump</c>. None of them knew
+        /// about the column's vertical half.
+        ///
+        /// Strong 800 died the same way (hits at 5606 and 5646, 40 apart, column 4-141 px
+        /// away), and strong 600 -- which KILLS -- never had a column closer than 71 px
+        /// but was never descending onto it. So the discriminator is not the distance
+        /// alone, it is "descending into the column's vertical extent".</summary>
+        private const string TornadoAxisGuardVariable = "CHAITE_TORNADO_AXIS_GUARD";
+        /// <summary>Default for <see cref="TornadoAxisGuardVariable"/>: on.</summary>
+        internal const bool TornadoAxisGuardDefault = true;
+        /// <summary>Half-height of a fully grown type-386 column, plus the player's own
+        /// half-height (42). 31 + 42 = 73. The full 63 px column plus the player box.</summary>
+        private const float TornadoAxisGuardVerticalMargin = 73f;
+        /// <summary>How close, horizontally, a column must be for the denominator to
+        /// count. At 225 px the column's own half-width is 112.</summary>
+        private const float TornadoAxisGuardHorizontalReach = 125f;
+        /// <summary>Upper end of the simulated-DPS band where the axis guard earns its
+        /// place, and the reason it is gated at all.
+        ///
+        /// MEASURED (round 152, obsidian, 320 tiles, 2 rows, both arms):
+        ///   weak   600   4924/6 no-kill -> 6130/6 (longer life, same hits)
+        ///   weak   800   5287/5 no-kill -> **6381/3 KILL (new)**
+        ///   weak   900   no-kill -> no-kill (unchanged)
+        ///   weak  1100   **4788/3 KILL -> 3875/6 DEATH**
+        ///   weak  1200   3082/8 -> 3065/8
+        ///   strong 300/600/700/800/1000/1100/1200/1500/2000: unchanged
+        ///
+        /// So the guard is a genuine gain in the weak low band and a genuine loss
+        /// above ~1000 (at 1100 the reviewed circuit already has the kill). The
+        /// ceiling sits at the top of the measured-gain band. As with the standoff,
+        /// this is DPS-conditional, not a claim that the rule is universally correct.</summary>
+        private const float TornadoAxisGuardDefaultMaxDps = 900f;
+        private const string TornadoAxisGuardMaxDpsVariable = "CHAITE_TORNADO_AXIS_GUARD_DPS_MAX";
+        private readonly bool _tornadoAxisGuard = ReadTornadoAxisGuard();
         /// <summary>Separate from the recall horizon. See <see cref="TornadoResponseHorizon"/>.
         /// The ESCAPE branch and the jump suppression it implies are gated on this, while
         /// mere RECALL of where the column landed is gated on <c>_tornadoTicksLeft</c>.</summary>
@@ -1966,6 +2103,11 @@ namespace Chaite.Core
                 else
                     dash = true;
             }
+            // LAST, so it overrides every branch above including the personal-space
+            // latch and the counter-dash. Neither of those is a reason to fly into a
+            // column: the column's contact damage lands on its own and does not care
+            // why the player was descending.
+            ApplyTornadoAxisGuard(player, ref vertical);
         }
 
         /// <summary>Everything that is not a charge.
@@ -1990,6 +2132,7 @@ namespace Chaite.Core
             phase = null;
             if (_tornadoTicksLeft > 0) _tornadoTicksLeft--;
             if (_tornadoResponseLeft > 0) _tornadoResponseLeft--;
+            ApplyTornadoAxisGuard(player, ref vertical);
             var gap = boss.Center.X - player.Center.X;
             // DECOUPLED (round 150). The escape branch runs for the RESPONSE window
             // while the column is merely RECALLED for the longer memory horizon, so
