@@ -1,149 +1,83 @@
-# Round 149-150 handoff
+# Round 150-151 handoff
 
 ## HEAD
-`77eb22d` — all pushed. Worktree clean except untracked `tmp/`.
+`109bf9c` — all pushed. Worktree clean except untracked `tmp/`.
 
-## Round 150 additions
+## THE TWO RESULTS OF ROUND 150
 
-### The column is a self-cloning CASCADE, not one box
-At each late hit there are **~12 type-386 projectiles within 250 px**, nearest 36 px, widths cascading
-175, 168, 161, ... 63. `aiStyle 64` re-spawns itself at a decremented `ai[1]`, which drives `scale`. All
-hostile, all 50 damage, each alive the full 840-tick `timeLeft`.
+### 1. The escape WINDOW was the load-bearing tornado knob, not its width
+`CHAITE_TORNADO_RESPONSE` default **raised 540 -> 120** (`TornadoResponseTicks`).
 
-### Corrected diagnostic
-Round 149's geometry script measured `dx = player.X - col[0].x`; `col[0]` was an arbitrary cascade
-fragment, not the column. Real geometry: player x **2474**, column spawn x **2476** — the player stands at
-the spawn point, and the gate reads **759, 771, 731 px** against its 760 boundary. So the gate is sized
-~right; the player missed clearance by 1–11 px.
+The decoupling left a defect: the gate evaluated `TornadoClearanceRadius` (760) while
+`TornadoRecallRadius` was computed but never used, so `CHAITE_TORNADO_RECALL` was a **dead variable** —
+`=2000` changed nothing, twice, while `RESPONSE` alone moved the run. Located by putting base /
+recall-only / response-only / both in ONE sweep. Fixed the gate to honour `TornadoRecallRadius`
+(default is still `TornadoClearance`, so the reviewed circuit is byte-identical).
 
-### The decoupling is implemented and the gate PASSED
-Three separate knobs now: `CHAITE_TORNADO_MEMORY` (recall, 540), `CHAITE_TORNADO_RESPONSE` (escape +
-jump suppression, 540), `CHAITE_TORNADO_RECALL` (gate radius, 760).
+Then the sweep showed the width is irrelevant (760 / 2000 / 4000 all **identical**; natural `|dx|`
+already exceeds every candidate), and the WINDOW is what matters. Decoupled from the memory, 540 is far
+too long a commitment — the branch `return`s for its whole length, so the controller flees for 9 s and
+never re-engages:
+
 ```
-strong 300  memory 540 / response 540   10004 / 8 / 30628   baseline
-strong 300  memory 881 / response 540   10004 / 8 / 30628   BYTE-IDENTICAL  <- gate passed
-strong 300  memory 881 / response 700    6969 / 8 / 45782   collapse
+strong, obsidian, 300 DPS
+  180 -> 6583/6/47682      240 -> 7168/7/44790     360 -> 4889/5/56197
+  420 -> 6970/8/45795      540 -> 10004/8/30628    **120 -> 10749/8/26835**
 ```
-**The RESPONSE window is load-bearing; the memory horizon is inert.** This re-attributes round 149's
-"memory sweep": it was a *response* sweep, because one counter carried both meanings. Conclusion unchanged
-(540 optimal), mechanism now correct.
 
-### Also confirmed
-- `CHAITE_SIM_BUBBLE_BREAK` at 1.0 / 0.5 / 0.0 → **byte-identical**, so bubble breaking is not simulated.
-  Quantitatively confirms the owner's "bubbles are nearly no threat".
-- The colocation-lift **wing-budget gate was already tried and refuted** (§ in-file: strong 300 8812→7340,
-  strong 600 lost its kill). Do not re-attempt.
-- `CHAITE_REFILL_GUARD` default 0 is already at its optimum (§104.2).
+Sharp and NON-MONOTONE, so it was swept, not reasoned. Decisive evidence is the same window elsewhere:
 
-### Damage split, strong 300 (892 total)
-- 524 before tick 9125 — 5 hits, **no tornado present**
-- 368 inside the tornado window — 3 hits
-So the tornado owns **3 of 8** hits, not 4 as round 135.5 estimated from correlation.
-
-## THE TORNADO HAZARD IS CLOSED
-`penetrate = -1` (indestructible), self-cloning cascade, outlives memory by 341 ticks, and both 760 and 540
-sit at sharp optima. Every lever measured: box (loose+tight) inert, wall-pin inert (removed), radius
-1200/1600/2200/3000 → 7867/4679/3658/3658, response 560..1600 → all 6969/8/45782, memory 881 inert.
-
-## Verified invariants (re-check every round)
-```
-strong 300 10004/8/30628   strong 600 6744/6/15937   strong 800 5057/4/17755
-strong 1000 4573/3/10777   strong 1200 4437/1/KILL   strong 1500 3661/1/KILL
-strong 2000 2881/0/ZERO-HIT KILL
-weak 300 5879/8/51124      weak 600 4741/6/35818     weak 800 6380/5/KILL
-weak 1500 3656/4/KILL      weak 2000 2881/1/KILL
-```
-Routes both MATCH (strong 6000/6/False, weak 5636/9/True). Default and `MEMORY=881 RESPONSE=540`
-both reproduce byte-identically.
-
-## Run method
-Unset `CHAITE_POLICY_FILE` and `CHAITE_POLICY_FORMAT`. Then `CHAITE_ARMOR_TIER=obsidian`,
-`CHAITE_SIM_DPS=<dps>`, `CHAITE_SIM_DPS_FULL_TILES=400`, `CHAITE_SIM_DPS_ZERO_TILES=401`,
-`CHAITE_SIM_BUBBLE_BREAK=0.95`, `CHAITE_PROBE_DENSE_FRAMES=1`. `-WallSeconds` must be 15..900.
-Route + `-FormulaRoute` always together.
-
-## Traps
-- `verify-fishron-routes.ps1` now clears the full env (fixed r149) — keep it that way.
-- Parse `result.json` for `bossLifeRemaining`; the printed header is capital-B `Boss life left`, so a
-  lowercase PowerShell `-match` parse silently yields empty and makes every row look like `DIFF`.
-- An identical death tick across different DPS/params = broken invariant.
-- Tests: 749 pass / 9 fail, PRE-EXISTING. Never claim green.
-- **Do not re-try**: colocation-lift wing gate, refill guard > 0, soft standoff, pre-charge-only standoff,
-  platform rows 0/1, exact-perpendicular escape, `CHAITE_DASH_DELAY` 2-8, global `CHAITE_DASH_SUPPRESS`,
-  weak prejump lead 30/35/45, any tornado knob.
-
-
-## The big measured result this round
-Tornado ablation via `CHAITE_SIM_RETIRE_PROJECTILE` (with a byte-identical null control):
-
-| config | default | retire 386 (tornado) |
+| DPS | 540 (old default) | 120 |
 |---|---|---|
-| strong 300 | 10004 / 8 / 30628 dies | **16077 / 9 / 0 ACCEPTED KILL** |
-| weak 300 | 5879 / 8 / 51124 dies | **5879 / 8 / 51124 byte-identical** |
-| strong 600 | 6744 / 6 / 15937 dies | 8333 / 4 / 0 KILL |
-| weak 800 | 6380 / 5 / KILL | 6367 / 4 / KILL |
+| 600 | 6744/6/15937 (cannot kill) | **8328/5/KILL** |
+| 1200 | 4437/1/KILL | **4437/0/ZERO-HIT KILL** |
 
-Two conclusions:
-1. The column is the **dominant** hazard for the strong wing: removing it flips strong 300 from death to
-   accepted kill. Retiring the tornado is diagnostic only (not a legitimate change) but proves the damage
-   is real and sufficient.
-2. The weak wing is **completely tornado-independent** — byte-identical. The two wings fail through
-   different hazards. This is the measured basis for the owner's "two state machines" requirement.
+**Regression-checked**: route channel still `REPRODUCED ... MATCH` (strong 6000/6/55, weak 5636/9/102),
+because it is gated on `CHAITE_SIM_DPS`, which route replay never sets.
 
-## Every tornado-family lever is refuted
+### 2. The demo video reconstructed by OCR of the game's own HUD text
+Owner's round-150 direction. **Do not track sprites — read the Depth Meter.** It prints absolute world
+coordinates as text, giving an exact trajectory with no vision model:
+
 ```
-lever                          strong 300
-default (radius 760, mem 540)  10004 / 8 / 30628
-CHAITE_TORNADO_BOX=1 (loose)   10004 / 8 / 30628  byte-identical, never fires
-CHAITE_TORNADO_BOX=1 (tight)   10004 / 8 / 30628  byte-identical, never fires
-radius 1200 / 1600 / 2200 / 3000   7867 / 4679 / 3658 / 3658
-CHAITE_TORNADO_WALLPIN=1       10004 / 8 / 30628  byte-identical (REMOVED, was a coord misread)
-memory 560..1600               ALL 6969 / 8 / 45782
+数字条 x 1061..1148, y 442..459 (1280x720)  ->  "3880以西" = world x 3880 tiles
 ```
-Memory 560 (just +20) is already past the cliff. Cause is a **coupling**: the `tornado-clear` branch
-`return`s, so it suppresses the pre-charge jump below it, and `PreJumpTicks = 20` is exactly that jump's
-wind-up.
 
-## NEXT ROUND: the memory/response decoupling test
-`tornado-clear` couples three things that should be separate:
-- **memory** — how long the column is remembered (`_tornadoTicksLeft`)
-- **response** — how long the escape branch runs (currently the same)
-- **jump gate** — whether the branch suppresses `PreJumpTicks`
+1 Hz over 232 frames -> **218 points**. Measured "W走位": **major turns every ~11 s**
+(11,10,9,11,14,11,12,9,11,11,10,12,11,11,11,11), east end **x ≈ 3990..4093**, west end **x ≈ 3553..3648**
+— a **full ~530-tile arena crossing per leg**, at 50–55 tiles/s, hugging the surface (depth 218–305).
+Current circuit escapes only **760 px (47 tiles)**: an order of magnitude smaller than the real
+technique, which is why widening it did not help — width was never the variable.
 
-The column lives **881** ticks but the memory is **540**, so 341 ticks of the episode are unmodelled. The
-nesting odds are:
-- chance the jump suppression (not the escape) causes the collapse: high
-- chance recalling the column after its escape window closes is free: high
-- chance it wins: moderate
+**Abandoned**: 10 Hz digit template matching. The HUD font's strokes fragment under thresholding and
+connected components split one digit into several boxes; validation never exceeded 0.9%. 1 Hz is enough
+for turn structure.
 
-**Exact test:** split the two windows, then sweep only the recall horizon with the response window pinned
-at the reviewed 540:
-- add `CHAITE_TORNADO_RESPONSE` (default = 540) gating the **escape + jump-suppression** branch
-- let `CHAITE_TORNADO_MEMORY` (default 540, sweep to 881) control only the **recall**
-- first confirm `MEMORY=881 RESPONSE=540` is **byte-identical** to `540/540`; if it is not, the split is
-  wrong and must be reconsidered rather than tuned
-- then sweep response 540..881 with memory 881
+## Objective status (honest)
+- **300 DPS floor: STILL UNMET.** strong `10749/8/26835` (dies), weak `9456/9/33297` (dies).
+- Owner's relaxed bar ("stable survival-kill 300–2000") **not met**: strong kills at 600 but **dies at
+  800/1000** (non-monotone — a parameter-sensitive regime, not a robust policy), zero-hit from 1200.
+  weak dies at 300/600/800, kills at 2000 only.
+- **No no-hit claim below 1200 (strong); none at all for weak.**
 
-## Verified invariants (re-check every round)
-Full band on obsidian, 320 tiles, 2 rows, standoff default ON:
-```
-strong 300 10004/8/30628   strong 600 6744/6/15937   strong 800 5057/4/17755
-strong 1000 4573/3/10777   strong 1200 4437/1/KILL   strong 1500 3661/1/KILL
-strong 2000 2881/0/ZERO-HIT KILL
-weak 300 5879/8/51124      weak 600 4741/6/35818     weak 800 6380/5/KILL
-weak 1500 3656/4/KILL      weak 2000 2881/1/KILL
-```
-Routes: both MATCH (strong 6000/6/False, weak 5636/9/True).
+## UI
+Not regressed. `UiTheme` (`a5f45b8`, 9/25) landed **after** `805243e` (9/23); frameless
+`FormBorderStyle.None`, no rectangles, gradient hairlines; `Chaite.Manager.exe` (9/27 18:42) post-dates
+`UiTheme.cs` and `MainForm.cs`. Visible text is only short functional labels.
+
+## Next lever (not yet tried and NOT refuted)
+The video says the real dodge is a **full-arena run**, while the circuit's locked-charge beats
+(`_chargeBeat` 0/1/2) already implement *something* like the owner's perpendicular rule. What is missing
+is the owner's third clause: **only run straight away when the lock distance is already large**. Every
+attempt to re-steer the *command* failed (exact-perpendicular, along-the-charge, pre-lock facing — all
+refuted with numbers in-file); the file's own recorded lesson is that both genuine wins **added a missing
+pre-condition** rather than redirecting an existing command. So the next attempt should add the
+distance-gated horizontal pull-out as a new precondition, not re-aim the existing normal.
 
 ## Run method
-Unset `CHAITE_POLICY_FILE` and `CHAITE_POLICY_FORMAT`. Then `CHAITE_ARMOR_TIER=obsidian`,
+Unset `CHAITE_POLICY_FILE` AND `CHAITE_POLICY_FORMAT`; then `CHAITE_ARMOR_TIER=obsidian`,
 `CHAITE_SIM_DPS=<dps>`, `CHAITE_SIM_DPS_FULL_TILES=400`, `CHAITE_SIM_DPS_ZERO_TILES=401`,
-`CHAITE_SIM_BUBBLE_BREAK=0.95`, `CHAITE_PROBE_DENSE_FRAMES=1`. `-WallSeconds` must be 15..900.
-Route + `-FormulaRoute` always together.
-
-## Traps
-- `verify-fishron-routes.ps1` now clears the full env (fixed this session) — keep it that way.
-- Parse `result.json` for `bossLifeRemaining`; the printed header is capital-B `Boss life left`, so a
-  lowercase PowerShell `-match` parse silently yields empty and makes every row look like `DIFF`.
-- An identical death tick across different DPS = broken invariant.
-- Tests: 749 pass / 9 fail, PRE-EXISTING. Never claim green.
+`CHAITE_SIM_BUBBLE_BREAK=0.95`; `CHAITE_PROBE_DENSE_FRAMES=1` before `run-native-acceptance.ps1`.
+Route + `-FormulaRoute` always together. `-WallSeconds` 15..900.
+**Verify by parsing `artifacts/<run>/result.json`** (`ticks`/`hits`/`bossLifeRemaining`) — PowerShell
+`Select-String` on the printed verdict is case-sensitive in pwsh 7 and has silently produced false DIFFs.
