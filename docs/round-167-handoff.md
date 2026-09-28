@@ -55,12 +55,17 @@ Round 164's "10/14" was a **sample**, not the range. Full native re-measurement 
 1600→1, 1750→2, 2000→0) — the signature of the chaotic trajectory and the phase-transition fork,
 meaning the remaining points are **reachable**, not systematically out of range.
 
-### 3. ★ Weak wing: **5/26**, and the gap is *not* a matter of one or two contacts
+### 3. ★ Weak wing: **6/28**, and the gap is *not* a matter of one or two contacts
 
-| wing | kills | failing life-left |
-|---|---|---|
-| **strong** | **19/28 = 68%** | **3480 – 21642 (4.5% – 27.7%)** |
-| **weak** | **5/26 = 19%** | **4344 – 51366 (5.6% – 65.9%)** |
+| wing | kills | low-DPS (≤800) | high-DPS (≥900) | failing life-left |
+|---|---|---|---|---|
+| **strong** | **19/28 = 68%** | **9/16** | **10/12** | **3480 – 21642 (4.5% – 27.7%)** |
+| **weak** | **6/28 = 21%** | **0/16** | **6/12** | **1808 – 51366 (2.3% – 65.9%)** |
+
+**Both arms are weakest at low DPS** — but the strong wing is near acceptance there (9/16) while the
+weak wing is at **zero (0/16)**.
+
+Weak 2000 kills (2880 ticks, 2 hits); weak 1750 dies with only **1808** boss health left.
 
 **At identical dps 300:**
 
@@ -71,13 +76,21 @@ meaning the remaining points are **reachable**, not systematically out of range.
 
 **The strong wing survives 2.7× as long at the same DPS and kills; the weak wing dies at 1/2.7 of the
 way through.** The weak wing's contacts are **4–9** against the strong's **1–6**, and it fails at
-**every** low-DPS point (300–800).
+**every** low-DPS point (300–800) — **0/16**.
 
 ### 4. ★ The weak wing's bottleneck is ENDURANCE, not dodge quality
 
 The **only** difference between the arms is the wings: strong `wingTimeMax 180`, climb peak **16.52**;
 weak `wingTimeMax 130`, climb peak **9.91**. Low DPS ⇒ long fight ⇒ more exposure, and the weak wing
 cannot endure it. So it needs contacts cut from **6–9 down to ≤3** — nearly a halving. **Structural.**
+
+**The two failure kinds are different in nature:**
+
+* **Low-DPS failures = endurance** (dragged to death). Weak fails at 20–66% boss health remaining.
+* **High-DPS failures = near-misses.** Failures within 8000 boss HP:
+  strong **600→5096, 625→3480, 1100→7087, 1125→4500**;
+  weak **1750→1808, 1100→4344, 1125→4997, 1050→5338, 1600→6516**.
+  These need only a few dozen more ticks of life, or one or two fewer contacts.
 
 ## Recommended next steps
 
