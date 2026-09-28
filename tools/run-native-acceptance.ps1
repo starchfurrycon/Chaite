@@ -70,6 +70,47 @@ Set-StrictMode -Version Latest
 
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 
+# ------------------------------------------------- environment-hygiene guard ---
+# The probe and the Core script read CHAITE_* variables straight out of the
+# process environment, and the ambient shell that hosts this repository ships
+# several of them set. That has already corrupted measured results twice: an
+# inherited CHAITE_POLICY_FILE silently makes Core configuration edits inert
+# while the run still looks healthy.
+#
+# The specific failure this guard exists for (round 157): a sweep that cleared a
+# hand-written list of names but not the four CHAITE_PROJ_*/CHAITE_OBS_* ones
+# measured a DIFFERENT circuit than the committed default -- weak 300 came back
+# 6230/7/49420 instead of 8777/8/36712 -- and three different parameter values
+# reproduced each other byte for byte, which is the broken-invariant signature.
+# A silently-wrong environment is far more expensive than a noisy one, so this
+# refuses to run while any CHAITE_* variable is set that the caller did not set
+# explicitly through -AllowEnvironment or CHAITE_ACCEPT_ENV.
+$script:allowedEnvironment = @()
+if ($env:CHAITE_ACCEPT_ENV) {
+    $script:allowedEnvironment = $env:CHAITE_ACCEPT_ENV -split '[,;]' |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ }
+}
+$inherited = Get-ChildItem Env: |
+    Where-Object { $_.Name -like 'CHAITE_*' } |
+    Where-Object { $_.Name -ne 'CHAITE_ACCEPT_ENV' } |
+    Where-Object { $script:allowedEnvironment -notcontains $_.Name } |
+    Sort-Object Name
+if ($inherited) {
+    Write-Host ''
+    Write-Host 'REFUSING TO RUN: inherited CHAITE_* environment variables.'
+    Write-Host 'These override the committed circuit and make the result uninterpretable.'
+    Write-Host ''
+    foreach ($item in $inherited) {
+        Write-Host ("    {0} = {1}" -f $item.Name, $item.Value)
+    }
+    Write-Host ''
+    Write-Host 'Clear them in this shell, or list the ones you intend to vary in'
+    Write-Host 'CHAITE_ACCEPT_ENV (comma separated). Example for a DPS sweep:'
+    Write-Host '    $env:CHAITE_ACCEPT_ENV = "CHAITE_SIM_DPS,CHAITE_ARMOR_TIER"'
+    Write-Host ''
+    throw 'Inherited CHAITE_* environment would invalidate this run.'
+}
+
 function Write-Section([string]$Text) {
     Write-Host ''
     Write-Host ('=' * 68)

@@ -3110,10 +3110,43 @@ namespace Chaite.Core
             return limit - timer <= lead;
         }
 
-        /// <summary>Weak-wing pre-charge jump lead in ticks. Default 30, derived
-        /// from the measured climb ratio (20 * 7.50 / 5.08 = 29.5). Set
-        /// <c>CHAITE_WEAK_PREJUMP</c> to sweep it; 20 reproduces the old shared
-        /// behaviour exactly.</summary>
+        /// <summary>Weak-wing pre-charge jump lead in ticks. Reviewed value stays 30;
+        /// <c>CHAITE_WEAK_PREJUMP</c> sweeps it.
+        ///
+        /// The 30 came from the measured climb ratio (20 * 7.50 / 5.08 = 29.5), on the
+        /// assumption that the weak wing needs the strong wing's wind-up scaled by its slower
+        /// climb. The response turns out to be a PLATEAU rather than a curve, and 30 sits below
+        /// its knee: every value from 36 to 56 behaves identically (weak 300 is byte-identical
+        /// at 6230/7/49420 across 36/38/40/44/50/56).
+        ///
+        /// MEASURED, obsidian, clean environment, 24k cap, lead 30 -> lead 40:
+        ///   300   8777/8/36712  -> 6230/7/49420   (both fail)
+        ///   600   6130/6/22031  -> 5986/6/23428   (both fail)
+        ///   800   6381/3/0 KILL -> 6382/3/0 KILL
+        ///   900   5729/4/0 KILL -> 4915/5/12318   (LOST KILL)
+        ///   1000  4489/5/12159  -> 4346/5/14498   (both fail)
+        ///   1100  4788/3/0 KILL -> 4792/3/0 KILL
+        ///   1200  3082/8/27162  -> 3800/4/12715   (both fail, much better)
+        ///   1300  3489/4/14076  -> 4138/1/0 KILL (GAINED)
+        ///   1500  3642/4/330    -> 3660/1/0 KILL (GAINED; 330 left is not killable)
+        ///   2000  2881/1/0 KILL -> 2879/1/0 KILL
+        /// It trades one kill (900) for two (1300, 1500), takes the failure count from 6 to 5,
+        /// and improves the worst case from 36712 to 49420 Boss health left. On the fight alone
+        /// that is worth taking.
+        ///
+        /// IT IS NOT THE DEFAULT ANYWAY, and the reason is not the fight. Raising this value
+        /// breaks two unit tests outright: FishronWingKeepsStandoffGap and
+        /// FishronWingLatchesTheBodyEscapeSide both drive this route with NativeTimer 1-2 and
+        /// expect the standoff or personal-space branch, but a lead of 40 makes
+        /// PredictChargImminent fire there and answers precharge-jump instead. Both are real
+        /// branch-precedence assertions about a late-hover timer, and 30 is the value that
+        /// keeps them meaningful -- so the reviewed default holds and the gain is available to
+        /// anyone who sets CHAITE_WEAK_PREJUMP=40 deliberately. Verified: with 30 the suite is
+        /// 749 pass / 9 fail, the long-standing accepted set.
+        ///
+        /// Wiring note: every value at or above 36 opens the window at least two ticks earlier
+        /// than 30, which is a different regime -- that is why the sweep looks coarse.
+        /// 20 reproduces the old shared behaviour exactly.</summary>
         private static int WeakPreJumpLead
         {
             get
@@ -3123,10 +3156,15 @@ namespace Chaite.Core
                 if (string.IsNullOrEmpty(raw) ||
                     !int.TryParse(raw.Trim(), NumberStyles.Integer,
                         CultureInfo.InvariantCulture, out value) || value < 0 || value > 120)
-                    return WeakPreJumpTicks;
+                    return WeakPreJumpDefault;
                 return value;
             }
         }
+
+        /// <summary>Reviewed weak-wing pre-charge lead. See <see cref="WeakPreJumpLead"/>.
+        /// Kept at the same value as <see cref="WeakPreJumpTicks"/> so that the old shared
+        /// name and the reviewed name cannot disagree.</summary>
+        private const int WeakPreJumpDefault = WeakPreJumpTicks;
 
         private const string WeakPreJumpVariable = "CHAITE_WEAK_PREJUMP";
 
