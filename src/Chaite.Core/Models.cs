@@ -281,6 +281,58 @@ namespace Chaite.Core
         /// along the launch line. A descent-phase bubble moves at about one
         /// pixel per tick, so the split is unambiguous.</summary>
         public bool Launched;
+        /// <summary>Number of live type-386 sub-tornadoes observed this tick, and
+        /// their combined COLLISION x-extent (each member expanded by its own
+        /// half-width, so these are footprint edges and not centre bounds).
+        ///
+        /// MEASURED (round 154): type 386 is not one projector. A single Sharknado
+        /// lays a chain of up to 25 sub-tornadoes -- a narrow, near-static vertical
+        /// wall. At strong 1000 tick 4128 the whole wall occupied x 1315..1533 out
+        /// of an arena 16..5120 wide, while spanning y 5140..6049. The controller
+        /// had no visibility of that wall at all, which is why it kept descending
+        /// straight through it. Zero count means no 386 was live, and the extent
+        /// fields are then meaningless.</summary>
+        public int CascadeCount;
+        public float CascadeLeft;
+        public float CascadeRight;
+        /// <summary>Contiguous 386 walls alive this tick, each as a collision
+        /// footprint in world x. A wall is a maximal run of members whose neighbours are
+        /// separated by more than <see cref="Models.SharknadoBubbleSnapshot.CascadeGap"/>.
+        ///
+        /// WHY SEVERAL WALLS AND NOT ONE EXTENT. A single Sharknado lays one wall, but
+        /// several walls can be alive at once. Measured (round 154) in the player's own
+        /// runs: strong 600 held two walls whose centres were 3380 px apart and strong
+        /// 900 two 3492 px apart. Publishing their union makes the "wall" span nearly
+        /// the whole arena, so the controller can never be outside it and the escape
+        /// degenerates -- that is exactly how the first attempt destroyed the strong 600
+        /// and strong 900 kills. The controller needs to answer only: which wall am I
+        /// standing in, and which way is out.</summary>
+        public const int MaxCascadeWalls = 4;
+        /// <summary>Centre-to-centre separation above which two type-386 members belong
+        /// to different walls. The largest member is 225 px wide, so anything past 256
+        /// leaves at least a member-width of clear air and cannot be one contiguous
+        /// barricade.</summary>
+        public const float CascadeGap = 256f;
+        /// <summary>Half-width of the largest possible type-386 member, used to turn a
+        /// centre bound into a collision footprint.</summary>
+        public const float CascadeMemberHalfWidth = 112.5f;
+        public int CascadeWallCount;
+        public float CascadeWallLeft0;
+        public float CascadeWallRight0;
+        public float CascadeWallLeft1;
+        public float CascadeWallRight1;
+        public float CascadeWallLeft2;
+        public float CascadeWallRight2;
+        public float CascadeWallLeft3;
+        public float CascadeWallRight3;
+
+        public float CascadeWallLeft(int index) =>
+            index == 0 ? CascadeWallLeft0 : index == 1 ? CascadeWallLeft1 :
+            index == 2 ? CascadeWallLeft2 : CascadeWallLeft3;
+
+        public float CascadeWallRight(int index) =>
+            index == 0 ? CascadeWallRight0 : index == 1 ? CascadeWallRight1 :
+            index == 2 ? CascadeWallRight2 : CascadeWallRight3;
     }
 
     public sealed class ArenaSnapshot

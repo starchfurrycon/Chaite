@@ -897,6 +897,71 @@ namespace Chaite.Core
             }
         }
 
+        /// <summary>Step the observed type-386 cascade extent forward from what the probe
+        /// can see this tick, and forget it when nothing is live.
+        ///
+        /// The extent is accumulated rather than replaced, because the chain is laid down
+        /// one sub-tornado every ~21 ticks over ~350 ticks and a single frame's snapshot
+        /// can be narrower than the wall the player has to respect. It is also expanded by
+        /// each member's own half-width, so the stored interval is the true COLLISION
+        /// footprint and not just the centres.</summary>
+        private void ObserveCascade(PlayerSnapshot player, in SharknadoBubbleSnapshot bubble)
+        {
+            _cascadeLeft = float.NaN;
+            _cascadeRight = float.NaN;
+            if (bubble.CascadeCount <= 0 || bubble.CascadeWallCount <= 0) return;
+            // Pick the wall the player is standing in. Walls are already separated by
+            // at least 256 px, so at most one can contain the player, and a union must
+            // never be taken -- the union of two walls 3380 px apart is the whole arena.
+            var x = player.Center.X;
+            for (var i = 0; i < bubble.CascadeWallCount; i++)
+            {
+                if (x < bubble.CascadeWallLeft(i) || x > bubble.CascadeWallRight(i))
+                    continue;
+                _cascadeLeft = bubble.CascadeWallLeft(i);
+                _cascadeRight = bubble.CascadeWallRight(i);
+                return;
+            }
+        }
+
+        /// <summary>Command the horizontal axis OUT of the observed cascade footprint,
+        /// returning true when it did.
+        ///
+        /// Why this shape and not the axis guard: the axis guard tried to veto the descent
+        /// once the nearest sub-tornado was close, and was refuted three times (rounds
+        /// 152-153) because by then the player is already inside the wall's vertical span.
+        /// The wall, however, is only ~218 px wide and essentially static, with over a
+        /// thousand px of clearance on one side and several thousand on the other. So the
+        /// cheap, reachable correction is HORIZONTAL and can be made at any time -- no
+        /// reaction window is needed, because leaving the footprint is monotone progress
+        /// that the wall cannot undo.
+        ///
+        /// The exit side is the nearer edge, clamped into the arena band. Ties go to the
+        /// side with more room, which is what the band edges are for.</summary>
+        private bool TryEscapeCascade(PlayerSnapshot player, out int horizontal)
+        {
+            horizontal = 0;
+            if (float.IsNaN(_cascadeLeft) || float.IsNaN(_cascadeRight)) return false;
+            var x = player.Center.X;
+            if (x < _cascadeLeft || x > _cascadeRight) return false;
+            var leftTarget = _cascadeLeft - CascadeEscapeMargin;
+            var rightTarget = _cascadeRight + CascadeEscapeMargin;
+            var leftRoom = leftTarget - _bandLeft;
+            var rightRoom = _bandRight - rightTarget;
+            // Pick the reachable exit; when both are reachable take the wider one.
+            if (leftRoom > 0f && rightRoom > 0f)
+            {
+                horizontal = leftRoom >= rightRoom ? -1 : 1;
+                return true;
+            }
+            if (leftRoom > 0f) { horizontal = -1; return true; }
+            if (rightRoom > 0f) { horizontal = 1; return true; }
+            // Neither exit fits inside the band. Fall back to the wider side of the
+            // band, which is still strictly better than sitting in the wall.
+            horizontal = x - _bandLeft <= _bandRight - x ? -1 : 1;
+            return true;
+        }
+
         /// <summary>Suppress a command that would drive the player deeper into the
         /// vertical band of a remembered Sharknado column.
         ///
@@ -1147,6 +1212,64 @@ namespace Chaite.Core
         /// The ESCAPE branch and the jump suppression it implies are gated on this, while
         /// mere RECALL of where the column landed is gated on <c>_tornadoTicksLeft</c>.</summary>
         private int _tornadoResponseLeft;
+        /// <summary>Observed x-extent of the live type-386 CASCADE.
+        ///
+        /// MEASURED (round 154): type 386 is not one projector. A single Sharknado lays a
+        /// chain of up to 25 sub-tornadoes, and the chain is a narrow vertical WALL --
+        /// at strong 1000 tick 4128 the whole thing occupied x 1315..1533, i.e. 218 px of
+        /// an arena that is 16..5120 wide, while spanning y 5140..6049 (909 px) with
+        /// per-instance sizes from 56x15 to 225x63. So there were 1300 px of clearance on
+        /// one side and 3646 px on the other.
+        ///
+        /// The measured failure is then embarrassingly simple: the player sits INSIDE that
+        /// 218 px x-range for 390 ticks (strong 1000) and descends through the wall,
+        /// whereas strong 900 -- which kills -- is never inside the band at all (its two
+        /// chains sit at x 968..988 and 4287..4290 and the player runs between them).
+        /// Nothing was stepping sideways out of a narrow, essentially static column.
+        ///
+        /// These track the observed extent so the escape has a direction. They are reset
+        /// whenever no 386 is live.</summary>
+        private float _cascadeLeft = float.NaN;
+        private float _cascadeRight = float.NaN;
+        /// <summary>Pixels of margin added to the observed cascade extent, so the exit
+        /// target clears the outermost sub-tornado's own half-width rather than its
+        /// centre. The largest member is 225 px wide (scale 1.5 of a 150-px base), so
+        /// its centre-to-edge is 112.5.</summary>
+        private const float CascadeEscapeMargin = 120f;
+        private const string CascadeEscapeVariable = "CHAITE_CASCADE_ESCAPE";
+        /// <summary>Whether the sideways escape from a type-386 wall is armed.
+        ///
+        /// DEFAULT OFF, and the reason is measured rather than cautious. Round 154
+        /// built the whole observation chain -- the facade now publishes every live
+        /// 386 wall as a separate collision footprint, which the controller could not
+        /// previously see at all -- and then measured the escape itself. It is INERT:
+        /// with the rule on, strong 600/700/800/900/1000 and weak 600/800/1100 all
+        /// reproduced their committed results byte for byte.
+        ///
+        /// A census of the player's own runs explains why. The player is inside some
+        /// wall's x-footprint for only 12-19 ticks per fight, and the first such
+        /// encounter is always a high-altitude pass with the wall's hazard band far
+        /// below: at strong 1000 tick 3705 the player is at y 4432 while the wall spans
+        /// y 5140..6049, and the controller is already moving it clear on x. By the
+        /// time the player descends to hazard depth it is outside every wall's x-range,
+        /// which is precisely why the hits there are not avoidable this way.
+        ///
+        /// So the escape is kept as an opt-in experiment and the OBSERVATION is kept as
+        /// the deliverable: any future rule that needs to know where the walls are can
+        /// now ask, and the earlier failure mode (publishing the union of two walls
+        /// 3380 px apart, which collapsed every escape) is structurally impossible
+        /// because walls are never merged.</summary>
+        private readonly bool _cascadeEscape = ReadCascadeEscape();
+        /// <summary>Half-width of the largest possible type-386 member. The scale is
+        /// (32 - ai[1]) * 1.5 / 32, so it reaches exactly 1.5 at ai[1] = 0, which is a
+        /// 225x63 member and therefore a 112.5-px centre-to-edge.</summary>
+        private const float CascadeMemberHalfWidth = 112.5f;
+
+        private static bool ReadCascadeEscape()
+        {
+            var raw = Environment.GetEnvironmentVariable(CascadeEscapeVariable);
+            return raw == "1";
+        }
         private float _bandLeft;
         private float _bandRight;
         private float _floorY;
@@ -1324,6 +1447,21 @@ namespace Chaite.Core
                 Cruise(player, in boss, state, input.NativeSequence,
                     input.NativeTimer, out horizontal, out vertical,
                     out phase);
+            }
+
+            // Keep the observed type-386 cascade extent current, then use it to step
+            // sideways out of the wall before anything else looks at the horizontal.
+            //
+            // MEASURED (round 154): the wall is ~218 px wide in an arena 5104 px wide,
+            // so unlike the axis guard -- which had to win a reaction race against the
+            // descent -- this correction is a monotone horizontal walk the wall cannot
+            // undo. That is why it is applied unconditionally rather than as a veto.
+            ObserveCascade(player, in bubble);
+            int cascadeHorizontal;
+            if (_cascadeEscape && TryEscapeCascade(player, out cascadeHorizontal))
+            {
+                horizontal = cascadeHorizontal;
+                phase = phase + "-cascade-exit";
             }
 
             // Budget guard: with an empty bar and both feet off the ground the

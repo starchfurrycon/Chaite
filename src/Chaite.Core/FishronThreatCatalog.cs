@@ -30,6 +30,16 @@ namespace Chaite.Core
         /// <summary>Sharknado bolt: 30x30, 300-tick lifetime, travels down and
         /// outwards from the Boss centre before it lands.</summary>
         public const int SharknadoBoltType = 385;
+        /// <summary>Cthulhunado: the sub-tornado family a Sharknado lays along the
+        /// Boss's charge path. Base 150x42 with scale <c>(32 - ai[1]) * 1.5 / 32</c>,
+        /// so individual members range from 56x15 to 225x63.
+        ///
+        /// MEASURED (round 154): up to 25 exist at once and together form a narrow,
+        /// near-static vertical WALL -- at strong 1000 tick 4128 they occupied
+        /// x 1315..1533 (218 px of a 5104 px arena) while spanning y 5140..6049.
+        /// Naming note: 373 is the Sharknado-GENERATING bubble, while this 386 is the
+        /// damage-dealing tornado the generated chain is made of.</summary>
+        public const int ProjectileCthulhunadoType = 386;
 
         public const int DetonatingBubbleLife = 1;
         public const int SharknadoBubbleLife = 100;

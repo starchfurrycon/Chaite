@@ -317,6 +317,9 @@ namespace Chaite.Plugin
         private readonly PlayerSnapshot _identityScratch = new PlayerSnapshot();
         private int _sightFrame;
         private int _sightQueryBudget;
+        /// <summary>Scratch for the live type-386 member centre x, reused every tick
+        /// so grouping the Sharknado walls allocates nothing.</summary>
+        private readonly float[] _cascadeXBuffer = new float[256];
         private TargetSightQueryState _sightQueryState;
         private int _destroyerMotionFrame;
         private long _grappleFrameSequence;
@@ -1965,6 +1968,14 @@ namespace Chaite.Plugin
             ReadPriorityBossNpcContext(snapshot);
 
             var projectiles = _projectiles();
+            // The Sharknado's type-386 chain is published as SEPARATE contiguous walls,
+            // never as one merged extent: several walls can be alive at once and their
+            // union is the whole arena. Measured round 154: strong 600 held two walls
+            // 3380 px apart and strong 900 two 3492 px apart, so an all-union footprint
+            // made every escape degenerate.
+            var cascadeCount = 0;
+            var cascadeXs = _cascadeXBuffer;
+            var cascadeN = 0;
             for (var i = 0; i < projectiles.Length; i++)
             {
                 var projectile = projectiles[i];
@@ -1992,6 +2003,14 @@ namespace Chaite.Plugin
                 var position = new Vec2(_positionX(projectile), _positionY(projectile));
                 var center = new Vec2(position.X + _width(projectile) * .5f, position.Y + _height(projectile) * .5f);
                 var velocity = new Vec2(_velocityX(projectile), _velocityY(projectile));
+                // Collect the type-386 member centres BEFORE the threat gate: the gate
+                // may drop individual members, but the wall the player has to step out
+                // of is the run of every live member.
+                if (projectileType == FishronThreatCatalog.ProjectileCthulhunadoType)
+                {
+                    cascadeCount++;
+                    if (cascadeN < cascadeXs.Length) cascadeXs[cascadeN++] = center.X;
+                }
                 bool isBeam = projectileType == 455;
                 var ai = isBeam || trajectory != ThreatTrajectory.Linear
                     ? _projectileAi(projectile) : null;
@@ -2087,7 +2106,72 @@ namespace Chaite.Plugin
                 snapshot.Threats.Add(threat);
             }
 
+            // Publish the type-386 members as separate contiguous walls. Collected
+            // before the ordinary threat gate, so it survives that gate dropping
+            // individual members.
+            if (cascadeCount > 0)
+            {
+                snapshot.SharknadoBubble.CascadeCount = cascadeCount;
+                PublishCascadeWalls(cascadeXs, cascadeN, snapshot.SharknadoBubble);
+            }
+
             RefreshWeaponSpecificTargetObservation(player, snapshot.Weapon);
+        }
+
+        /// <summary>Group live type-386 member centres into contiguous walls and publish
+        /// each wall's collision footprint, nearest-first is not required -- the
+        /// controller picks the wall containing the player.
+        ///
+        /// A wall is a maximal run whose neighbours are no more than
+        /// <see cref="SharknadoBubbleSnapshot.CascadeGap"/> apart. Members are sorted
+        /// first, so this is a single linear pass. Each footprint is padded by
+        /// <see cref="SharknadoBubbleSnapshot.CascadeMemberHalfWidth"/> because the
+        /// largest member is 225 px wide (scale 1.5 of a 150-px base) and a centre bound
+        /// is not a collision bound.</summary>
+        private static void PublishCascadeWalls(float[] centres, int count,
+            SharknadoBubbleSnapshot bubble)
+        {
+            bubble.CascadeWallCount = 0;
+            if (count <= 0) return;
+            Array.Sort(centres, 0, count);
+            var walls = 0;
+            var runStart = 0;
+            for (var i = 1; i <= count; i++)
+            {
+                var split = i == count ||
+                    centres[i] - centres[i - 1] >
+                        SharknadoBubbleSnapshot.CascadeGap;
+                if (!split) continue;
+                if (walls < SharknadoBubbleSnapshot.MaxCascadeWalls)
+                {
+                    var left = centres[runStart] -
+                        SharknadoBubbleSnapshot.CascadeMemberHalfWidth;
+                    var right = centres[i - 1] +
+                        SharknadoBubbleSnapshot.CascadeMemberHalfWidth;
+                    switch (walls)
+                    {
+                        case 0:
+                            bubble.CascadeWallLeft0 = left;
+                            bubble.CascadeWallRight0 = right;
+                            break;
+                        case 1:
+                            bubble.CascadeWallLeft1 = left;
+                            bubble.CascadeWallRight1 = right;
+                            break;
+                        case 2:
+                            bubble.CascadeWallLeft2 = left;
+                            bubble.CascadeWallRight2 = right;
+                            break;
+                        default:
+                            bubble.CascadeWallLeft3 = left;
+                            bubble.CascadeWallRight3 = right;
+                            break;
+                    }
+                    walls++;
+                }
+                runStart = i;
+            }
+            bubble.CascadeWallCount = walls;
         }
 
         /// <summary>
