@@ -1074,8 +1074,34 @@ namespace Chaite.Core
         /// <summary>Half-height of a fully grown type-386 column, plus the player's own
         /// half-height (42). 31 + 42 = 73. The full 63 px column plus the player box.</summary>
         private const float TornadoAxisGuardVerticalMargin = 73f;
-        /// <summary>How close, horizontally, a column must be for the denominator to
-        /// count. At 225 px the column's own half-width is 112.</summary>
+        /// <summary>How close, horizontally, a column must be for the guard to look at it.
+        ///
+        /// MEASURED, and the reason this is 125 and not more. The guard was written for
+        /// the strong-1000 death, where the player descends onto a column's own y. It
+        /// turns out 125 px is too SHORT to catch that descent: the player is always
+        /// already inside the 73 px vertical margin by the time it is within 125 px
+        /// (at tick 4044 dx is 124.9 and dy only -33.5), so the "still clear vertically"
+        /// clause never holds there and the guard is a no-op in its own target window.
+        ///
+        /// Widening the reach to 600 does make it fire in that window -- the vertical
+        /// separation passes 73 px at tick ~4014, when the horizontal gap is still
+        /// ~360 px -- but it is far MORE destructive than doing nothing:
+        ///
+        ///   strong 600   8328/5/0 KILL        -> 6606/4/17309 no-kill
+        ///   strong 700   6205/7/11888         -> 6321/4/10540
+        ///   strong 900   5739/3/0 KILL        -> 4634/5/16568 no-kill
+        ///   weak   600   4924/6               -> 3542/7/47957
+        ///   weak   800   5287/5 no-kill       -> 3542/7/37954
+        ///   weak   900   4439/5               -> 3665/8/31102
+        ///
+        /// The apex of that trade is exactly the "one axis vetoed globally" failure
+        /// already recorded twice this round: at 600 px the guard touches a large
+        /// fraction of the fight and vetoes descents the circuit needs.
+        ///
+        /// So the reach stays at the column's own half-width. The guard is then a
+        /// conservative rule that helps the weak low band (weak 800 gains a kill) and
+        /// does not fix 700/800/1000 -- which is stated plainly rather than papered
+        /// over. Fixing those three needs the descent cut BEFORE the lock, not a veto.</summary>
         private const float TornadoAxisGuardHorizontalReach = 125f;
         /// <summary>Upper end of the simulated-DPS band where the axis guard earns its
         /// place, and the reason it is gated at all.
