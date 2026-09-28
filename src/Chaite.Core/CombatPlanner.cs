@@ -855,7 +855,8 @@ namespace Chaite.Core
             return plan;
         }
 
-        private static bool TryGetFishronEnrage(CombatSnapshot snapshot,            int npcKey, out DukeFishronNativeEnrageObservation observation)
+        private static bool TryGetFishronEnrage(CombatSnapshot snapshot,
+            int npcKey, out DukeFishronNativeEnrageObservation observation)
         {
             observation = default(DukeFishronNativeEnrageObservation);
             if (snapshot?.PriorityBoss == null) return false;
