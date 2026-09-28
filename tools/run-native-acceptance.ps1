@@ -73,42 +73,80 @@ $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 # ------------------------------------------------- environment-hygiene guard ---
 # The probe and the Core script read CHAITE_* variables straight out of the
 # process environment, and the ambient shell that hosts this repository ships
-# several of them set. That has already corrupted measured results twice: an
-# inherited CHAITE_POLICY_FILE silently makes Core configuration edits inert
-# while the run still looks healthy.
+# several of them set. That has already corrupted measured results: an inherited
+# CHAITE_POLICY_FILE silently makes Core configuration edits inert while the run
+# still looks healthy.
 #
-# The specific failure this guard exists for (round 157): a sweep that cleared a
+# The specific failure this exists for (round 157): a sweep that cleared a
 # hand-written list of names but not the four CHAITE_PROJ_*/CHAITE_OBS_* ones
 # measured a DIFFERENT circuit than the committed default -- weak 300 came back
 # 6230/7/49420 instead of 8777/8/36712 -- and three different parameter values
 # reproduced each other byte for byte, which is the broken-invariant signature.
-# A silently-wrong environment is far more expensive than a noisy one, so this
-# refuses to run while any CHAITE_* variable is set that the caller did not set
-# explicitly through -AllowEnvironment or CHAITE_ACCEPT_ENV.
-$script:allowedEnvironment = @()
-if ($env:CHAITE_ACCEPT_ENV) {
-    $script:allowedEnvironment = $env:CHAITE_ACCEPT_ENV -split '[,;]' |
-        ForEach-Object { $_.Trim() } | Where-Object { $_ }
-}
-$inherited = Get-ChildItem Env: |
+#
+# Two layers, because the two categories cost different things:
+#
+#   * REFUSE on the variables that replace the controller outright. With a policy
+#     file loaded, every edit to Chaite.Core is inert and the run measures a policy
+#     binary instead of the reviewed circuit. Nothing legitimate sets these for an
+#     acceptance run, so this is a hard error.
+#   * RECORD everything else. The tuning knobs (simulated DPS, armour tier, the
+#     lead values, dense frames) are set deliberately by sweeps and by the other
+#     tools in this directory, so refusing on them would block correct work -- but
+#     then the only way to tell two runs apart afterwards is what was written down.
+#     The full inherited set is printed and appended to the run record.
+$fatalEnvironment = @('CHAITE_POLICY_FILE', 'CHAITE_POLICY_FORMAT')
+# @() around the pipeline matters: under Set-StrictMode -Version Latest a single
+# matching variable yields a bare string, and .Count does not exist on it.
+$inherited = @(Get-ChildItem Env: |
     Where-Object { $_.Name -like 'CHAITE_*' } |
-    Where-Object { $_.Name -ne 'CHAITE_ACCEPT_ENV' } |
-    Where-Object { $script:allowedEnvironment -notcontains $_.Name } |
-    Sort-Object Name
-if ($inherited) {
+    Sort-Object Name)
+$fatal = @($inherited | Where-Object { $fatalEnvironment -contains $_.Name })
+if ($fatal.Count -gt 0) {
     Write-Host ''
-    Write-Host 'REFUSING TO RUN: inherited CHAITE_* environment variables.'
-    Write-Host 'These override the committed circuit and make the result uninterpretable.'
+    Write-Host 'REFUSING TO RUN: a policy override is set in this shell.'
+    Write-Host 'With these set, edits to Chaite.Core are INERT and the run measures a'
+    Write-Host 'policy binary rather than the reviewed circuit.'
     Write-Host ''
-    foreach ($item in $inherited) {
+    foreach ($item in $fatal) {
         Write-Host ("    {0} = {1}" -f $item.Name, $item.Value)
     }
     Write-Host ''
-    Write-Host 'Clear them in this shell, or list the ones you intend to vary in'
-    Write-Host 'CHAITE_ACCEPT_ENV (comma separated). Example for a DPS sweep:'
-    Write-Host '    $env:CHAITE_ACCEPT_ENV = "CHAITE_SIM_DPS,CHAITE_ARMOR_TIER"'
+    Write-Host 'Clear them in this shell and re-run:'
+    Write-Host '    Remove-Item Env:\CHAITE_POLICY_FILE, Env:\CHAITE_POLICY_FORMAT'
     Write-Host ''
-    throw 'Inherited CHAITE_* environment would invalidate this run.'
+    throw 'A CHAITE_POLICY_* override would invalidate this run.'
+}
+$script:inheritedEnvironment = @()
+if ($inherited.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Inherited CHAITE_* environment for this run (recorded, not refused):'
+    foreach ($item in $inherited) {
+        Write-Host ("    {0} = {1}" -f $item.Name, $item.Value)
+        $script:inheritedEnvironment += [pscustomobject]@{
+            Name = $item.Name; Value = [string]$item.Value
+        }
+    }
+    Write-Host ''
+}
+
+# The record is what actually prevents a repeat of the round-157 confusion: a
+# result that can be read back together with the exact environment that produced
+# it cannot be silently attributed to the wrong circuit.
+#
+# It is written AFTER the launch, never before: the isolated launcher validates a
+# manifest over the prepared run directory and refuses to start if it finds a file
+# the manifest does not list ("Unmanifested file in prepared run"), so an extra
+# file placed there early aborts the whole run.
+function Write-EnvironmentRecord([string]$RunDirectory) {
+    if (-not $RunDirectory -or -not (Test-Path $RunDirectory)) { return }
+    $path = Join-Path $RunDirectory 'acceptance-environment.json'
+    $record = [pscustomobject]@{
+        Schema    = 'chaite-acceptance-environment/v1'
+        RunName   = $RunName
+        WrittenAt = (Get-Date).ToUniversalTime().ToString('o')
+        Inherited = @($script:inheritedEnvironment)
+    }
+    $record | ConvertTo-Json -Depth 4 | Set-Content -Path $path -Encoding UTF8
 }
 
 function Write-Section([string]$Text) {
@@ -201,6 +239,7 @@ if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
 }
 
 $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+Write-EnvironmentRecord $runDir
 
 $hits = [int]$result.hits
 $ticks = [int]$result.ticks
