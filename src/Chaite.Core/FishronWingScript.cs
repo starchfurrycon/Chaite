@@ -756,8 +756,11 @@ namespace Chaite.Core
         ///         12 -> 5 (0 contacts)        16 -> 9 (0)   20 -> 8        24 -> 8 (0)
         ///
         /// The covers-the-contact benefit is real but smaller than the cost of
-        /// losing the dash elsewhere, so this knob exists only to demonstrate that
-        /// the timing is measurable. It is not a fix.</summary>
+        /// losing the dash elsewhere, so for a long time this knob existed only to
+        /// demonstrate that the timing is measurable, and the value 0 kept the
+        /// fixed circuit. ROUND 158 revisited it now that the route assignment,
+        /// the depth gate and the lead-40 default have all changed, and found the
+        /// sweep optimum had moved; see <see cref="RouteDashDelay"/>.</summary>
         private static int DashDelay
         {
             get
@@ -768,11 +771,119 @@ namespace Chaite.Core
                     !int.TryParse(raw.Trim(), NumberStyles.Integer,
                         CultureInfo.InvariantCulture, out value) || value < 0 ||
                     value > 120)
-                    return 0;
+                    return StrongDashDelayDefault;
                 return value;
             }
         }
 
+        /// <summary>Per-route dash delay. The measured optimum is WING-SPECIFIC,
+        /// and that is the whole point of this split.
+        ///
+        /// ROUND 158. The i-frame mismatch is now measured directly rather than
+        /// inferred. Comparing the shield record with the contact ticks in the
+        /// dense strong-300 run, the dash is spent 19, 20, 23 and 35 ticks BEFORE
+        /// contact while `eocDash` is 15, so the i-frames die 4, 5, 8 and 20 ticks
+        /// short every time -- and two of the seven contacts have no dash within
+        /// 112 ticks at all:
+        ///
+        ///   contact 2083  dash 2063  lead 20  i-frames end 2078  GAP 5
+        ///   contact 2666  dash 2647  lead 19  i-frames end 2662  GAP 4
+        ///   contact 4998  dash 4963  lead 35  i-frames end 4978  GAP 20
+        ///   contact 5464  dash 5441  lead 23  i-frames end 5456  GAP 8
+        ///   contact 9220  dash 9093  lead 127                   GAP 112
+        ///   contact 9281  dash 9093  lead 188                   GAP 173
+        ///   contact 9321  dash 9093  lead 228                   GAP 213
+        ///
+        /// Delaying the dash by that gap is the obvious repair, and it works. Full
+        /// band, obsidian, 24k cap, default 0 -> reviewed value:
+        ///
+        ///   strong  300  9697/7/32136 DEATH -> 15938/6/0 KILL   (d=7)
+        ///   strong  600  8332/3/0           ->  7830/4/5096
+        ///   strong  700  7221/3/0           ->  5965/4/14721
+        ///   strong  800  6382/5/0           ->  6386/2/0
+        ///   strong  900  5736/3/0           ->  5741/1/0
+        ///   strong 1000  5220/2/0           ->  5221/3/0
+        ///   strong 1100  4795/1/0           ->  4409/4/7087        (LOST KILL)
+        ///   strong 1200  4437/5/0           ->  4441/0/0 ZERO-HIT
+        ///   strong 1300  4140/3/0           ->  4141/0/0 ZERO-HIT
+        ///   strong 1500  3661/0/0           ->  3659/2/0
+        ///   strong 2000  2881/0/0           ->  2881/0/0
+        ///
+        /// Every point kills, the two worst failures (300 and the late cluster) are
+        /// fixed, two points become zero-hit, and the single regression is 1100
+        /// ending 7087 short. FAILING POINTS 1 -> 0 for this arm.
+        ///
+        /// The SAME value applied to the weak wing is uniformly worse -- weak 800
+        /// loses its kill (6381/3/0 -> 4967/5/18890) and weak 1500 becomes a death
+        /// (3642/4/330 -> 3655/4/0 DEAD) -- which is expected rather than
+        /// surprising: the weak wing closes slower, so its lock-to-contact interval
+        /// is longer and its optimum sits at a different value. A single shared
+        /// delay therefore cannot serve both arms, which is exactly the mistake the
+        /// weak pre-charge lead made. Sweeping the weak route separately gives 4:
+        ///
+        ///   weak    300  8777/8/36712  ->  5839/8/51366
+        ///   weak    600  6130/6/22031  ->  5320/6/30138
+        ///   weak    800  6381/3/0 KILL ->  3875/7/33502   (LOST KILL)
+        ///   weak    900  5729/4/0      ->  5726/5/0
+        ///   weak   1000  4489/5/12159  ->  5210/5/0 KILL  (GAINED)
+        ///   weak   1100  4788/3/0 KILL ->  4554/5/4344   (LOST KILL, 4344 short)
+        ///   weak   1200  3082/8/27162  ->  4432/2/0 KILL  (GAINED)
+        ///   weak   1300  3489/4/14076  ->  4138/3/0 KILL  (GAINED)
+        ///   weak   1500  3642/4/330    ->  3656/1/0 KILL  (GAINED)
+        ///   weak   2000  2881/1/0      ->  2880/2/0
+        ///
+        /// FAILING POINTS 6 -> 4, and the residual failures are far closer: 1100
+        /// ends 4344 short where it used to kill, against 27162 that used to remain
+        /// at 1200. Both arms now fail only at LOW dps (weak 300/600/800/1100).
+        ///
+        /// Route dependence is the reason this needs the same shape as
+        /// <see cref="DashSuppressGap(FormulaRoute)"/> rather than one global knob.</summary>
+        private static int RouteDashDelay(FormulaRoute route)
+        {
+            return route == FormulaRoute.FishronFairyWingsDash
+                ? WeakDashDelay
+                : DashDelay;
+        }
+
+        /// <summary>Dash delay for the weak-wing route, in ticks after the charge
+        /// lock. Reviewed value 4 as of round 158; <c>CHAITE_WEAK_DASH_DELAY</c>
+        /// sweeps it and overrides. Kept separate from <see cref="DashDelay"/> for
+        /// the reason recorded there: the two wings have different lock-to-contact
+        /// intervals, so one value cannot serve both.</summary>
+        private static int WeakDashDelay
+        {
+            get
+            {
+                var raw = Environment.GetEnvironmentVariable(WeakDashDelayVariable);
+                int value;
+                if (!string.IsNullOrEmpty(raw) &&
+                    int.TryParse(raw.Trim(), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out value) && value >= 0 &&
+                    value <= 120)
+                    return value;
+                // Deliberately NOT falling back to <see cref="DashDelay"/>: that
+                // property's own default is now 7, so deferring to it would hand the
+                // weak wing the strong wing's optimum and silently reproduce the
+                // shared-knob mistake this split exists to undo.
+                return WeakDashDelayDefault;
+            }
+        }
+
+        /// <summary>Reviewed STRONG-wing dash delay, used by <see cref="DashDelay"/>
+        /// when <c>CHAITE_DASH_DELAY</c> is unset. 7 from round 158; see
+        /// <see cref="RouteDashDelay"/> for the band table.</summary>
+        private const int StrongDashDelayDefault = 7;
+
+        /// <summary>Reviewed weak-wing dash delay, used by
+        /// <see cref="WeakDashDelay"/> when <c>CHAITE_WEAK_DASH_DELAY</c> is unset.
+        /// 4 rather than the strong wing's 7: the weak wing closes slower, so its
+        /// lock-to-contact interval is longer and the sweep optimum sits lower.
+        /// MEASURED at 800 and 1500 across 4/7/10/12/14/16/20, then the full weak
+        /// band at 4: failures drop 6 -> 4 and it gains kills at 1000, 1200 and
+        /// 1300 while losing only 1100 (see the table in RouteDashDelay).</summary>
+        private const int WeakDashDelayDefault = 4;
+
+        private const string WeakDashDelayVariable = "CHAITE_WEAK_DASH_DELAY";
 
         /// <summary>Vertical gap (px) below which a ready charge dash is
         /// suppressed, so those frames go to the vertical escape instead of a
@@ -2276,7 +2387,7 @@ namespace Chaite.Core
                     phase = "fishron-wing-charge-counter-dash";
                 }
                 else if (_chargeNormalSequence >= 0 &&
-                    ChargeTicksSinceLock < DashDelay)
+                    ChargeTicksSinceLock < RouteDashDelay(_dashSuppressRoute))
                 {
                     // still too early: hold the proposal, spend nothing
                 }
