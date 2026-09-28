@@ -3260,7 +3260,16 @@ public static class ChaiteGameProbe
             {"wingTimeMax",player.wingTimeMax},{"wingsLogic",player.wingsLogic},
             {"accRunSpeed",player.accRunSpeed},{"maxRunSpeed",player.maxRunSpeed},
             {"maxFallSpeed",player.maxFallSpeed},{"dashType",player.dashType},
+            // lifeMax is read here at EQUIPMENT-SETUP time, which is before the
+            // scenario applies its max life, so statLifeMax2 alone reports the
+            // pre-setup default (100) rather than the pool the fight actually
+            // used. Measured against the hurt trace, the real pool is 480 =
+            // 400 from the scenario plus 80 of permanent boosts, while this
+            // field said 100. Report both readings so the stale one is never
+            // mistaken for the fighting value; the larger is the effective pool.
+            {"statLifeMax",player.statLifeMax},
             {"lifeMax",player.statLifeMax2},
+            {"effectiveLifeMax",Math.Max(player.statLifeMax,player.statLifeMax2)},
             {"buffTypes",buffTypes},
             {"legacyBaseline",scenario.Legacy}
         };
