@@ -28,3 +28,5 @@ __pycache__/
 /*.probe.err
 /*.probe.log
 /*.out.log
+tmp/video/
+tmp/*.mp4
