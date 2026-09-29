@@ -17763,3 +17763,119 @@ BOSS 阶段不同而处在不同的内部相位上。**
 **源码零改动**；构建干净；测试 **749 通过 / 9 失败**；
 新增数据集 `kD3-s*`（闸门恒关 A/B，6 点）；新增脚本 `tmp/diverge197b.py`；
 `docs/fishron-native-truth.md` §201.1-§201.5。
+
+---
+
+## §202. 第 198 轮：**★★★ 分叉的完整根因 —— W 走位节拍索引 `_chargeIndex` 只对冲刺状态自增**
+
+### 202.1 ★ 修正 §201.2 的结论：差异是**可观测的**
+
+§201.2 说"tick 4969 两次运行唯一差异是 BOSS 血量"。**这是错的** ——
+当时的对比脚本没有解析 `npcs[0].ai` 数组（只看了 `life` / `position` / `velocity`）。
+把 `ai[]` 解出来之后，**分叉点在 tick 4963 就已经可观测**：
+
+| tick | A（dps450） | B（dps500） | |
+|---|---|---|---|
+| **4963** | **state=1** seq=3 timer=1 | **state=4** seq=3 timer=1 | **★ 原生状态不同** |
+| 4964 | state=1 seq=3 timer=2 | state=4 seq=3 timer=2 | |
+| … | … | … | |
+| 4969 | state=1 seq=3 timer=7 | state=4 seq=3 timer=7 | |
+| 4970 | state=1 seq=3 timer=8 | state=4 seq=3 timer=8 | |
+
+**★ 两次运行在 tick 4963 面对的原生状态分别是 `ai[0]=1` 与 `ai[0]=4`；
+`ai[3]`（序列）与 `ai[2]`（计时）完全相同。**
+
+### 202.2 ★★ 状态 1 与状态 4 在原生里分别是什么
+
+`tmp/NPC.cs` L49652–49692：
+
+```csharp
+if (flag) { num28 = 4; }        // L49652  阶段二强制改选攻击组
+switch (num28)
+{
+case 1: ai[0] = 1f; ...         // L49659  冲刺（phase-one dash）
+case 2: ai[0] = 2f; ...         // L49675  Sharknado 1
+case 3: ai[0] = 3f; ...         // L49680  Sharknado 2
+case 4: ai[0] = 4f; ...         // L49689  ★ 阶段二专属的额外攻击组
+}
+```
+
+**★★ 即 `ai[0]=4` 是**只在阶段二出现**的攻击组（由 `flag` 强制选择），
+而 `ai[0]=1` 是冲刺。**
+
+**因此 `dps450`（BOSS 血量 42525 > 39000，阶段一）看到的是**冲刺**；
+`dps500`（BOSS 血量 38584 ≤ 39000，阶段二）看到的是**阶段二专属攻击组**。
+两者的后续行为本就不同 —— 这一点是**合法且不可避免的**。**
+
+### 202.3 ★★★ 真正的机制：`_chargeIndex` 只在冲刺状态自增
+
+`FishronWingScript.cs`：
+
+```csharp
+var dash = state == 1 || state == 6 || state == 11;      // L1633
+...
+if (dash && stateEdge)                                    // L1662
+{
+    _chargeBeat = _chargeIndex % 3;                       // L1668  ★ W 走位节拍
+    _chargeIndex++;                                       // L1669  ★ 只在冲刺时自增
+    ...
+    var family = state == 1 ? 1 : state == 6 ? 2 : 3;     // L1675
+    ...
+    var slot = (_chargeIndex - 1) % pattern.Length;       // L1680
+    _patternDirection = pattern[slot];
+```
+
+**★★★ `_chargeIndex` 是一个**累计观测量**：
+它只在 `state ∈ {1, 6, 11}` 的**状态边沿**上自增。**
+
+**于是：**
+* `dps450`：BOSS 进入 `state=1` -> **`_chargeIndex++`** -> `_chargeBeat` / `_patternDirection` 前进一格；
+* `dps500`：BOSS 进入 `state=4` -> `dash == false` -> **`_chargeIndex` 不变** -> 走位节拍**停在原来的一格**。
+
+**★ 结果：从 tick 4963 起，两次运行的 W 走位节拍索引相差 1。
+在 tick 4970，`dps450` 的 `_chargeBeat` 恰好轮到"用克盾冲刺"的那一格
+（`vx` 被设为 `-14.500`，正是 `velocity.X = 14.5f * dir2`），
+而 `dps500` 仍在 `Cruise`，`vx=-4.491` 继续巡航。**
+
+**（`dps500` 在 tick 4963–4970 的 `plan.phase` 是 `fishron-wing-standoff`，
+因为 `dash == false` 走的是 `Cruise` 分支 —— 这与 `plan` 导出完全吻合。）**
+
+### 202.4 ★★★ 这条根因的可执行修复
+
+**问题：W 走位节拍被**索引到"累计冲刺次数"**上，而累计冲刺次数会随
+BOSS 的阶段跨越（`flag` 改选攻击组、跳过或插入非冲刺状态）而整体错位。**
+
+**修复方向：把节拍索引从"累计计数"改为"原生可观测序列"。**
+
+`ai[3]`（序列）**在同一 tick 两次运行完全相同（都是 3）**，
+且原生序列本身就编码了"这是本组第几次攻击"。因此：
+
+```csharp
+// 现在（累计计数，会错位）
+_chargeBeat = _chargeIndex % 3;
+_chargeIndex++;
+
+// 改为（原生序列驱动，不会错位）
+_chargeBeat = ((int)input.NativeSequence) % 3;
+```
+
+**注意**：本项目历史上"按冲刺次数排程"的设计（L1692–1718 的 `_legCharges` /
+`_legProgress`）正是 §122/§128 反复记录的"与节拍耦合"问题（见 L2436–2439 的注释：
+"a rule that is CORRECT in isolation can still be a worse controller than the heuristic
+it replaces, because the heuristic is entangled with the beat schedule"）。
+**本轮给出了这条注释所描述的纠缠的**具体位置**。**
+
+**验证方法（下一轮）**：把 `_chargeBeat` / `_patternDirection` 的索引
+改为由 `input.NativeSequence` 派生，然后重跑 450 与 500；
+若两者在 tick 4963 之后走同一分支，则说明错位被消除。
+
+### 202.5 ★ 附带确认：`IsReachableState` 不是原因
+
+`IsReachableState`（L2100）接受 `-1..12` 且 `timer >= 0 && sequence >= 0`；
+`state=4, timer=7, seq=3` **完全合法**，因此 `dps500` 并没有被提前拒绝。
+**它进入了状态机，但因为没有 `dash`，走了 `Cruise` 分支。**
+
+### 202.6 第 198 轮状态
+
+**源码零改动**；构建干净；测试 **749 通过 / 9 失败**；
+`docs/fishron-native-truth.md` §202.1-§202.6。
