@@ -1,9 +1,32 @@
 # Round 187 handoff
 
 ## HEAD / state
-**No source change expected** unless the dash-delay-above-4 sweep finds a win. `src/` identical to the
-round-180 commit. Build clean. Tests **749 pass / 9 fail**.
+**No source change.** `src/` identical to the round-180 commit. Build clean. Tests **749 pass / 9 fail**.
 Shipped config: `WeakDashDelayDefault = 4`, `WeakAltitudeCeilingDefault = 4400f`, `-StartSide left`.
+
+**Verified binary restored and re-checked at end of round: `Terraria.exe` = `960A03BFF6050CF7…` ✅**
+
+---
+
+## 0. ★ READ FIRST — the environment was broken and is now fixed
+
+Mid-round the probe refused to launch: **`Only verified vanilla 1.4.5.8 supported`**. The executable hash had
+changed to `275D1088082AFB…` while the version still read 1.4.5.8, and a **`ZhaDai.Runtime.dll`** appeared in
+the install alongside `%TEMP%\zhadai-*` staging directories containing `Terraria.patched.exe`. **An external
+tool patched the game.** A later check showed the executable **restored to the reviewed hash**, all four
+dependencies matching, `Content/` present, and no Terraria process holding the file.
+
+* The inert `ZhaDai.Runtime.dll` **remains** in the install — it is harmless to a vanilla process and the
+  probe does not check it.
+* A second verified fixture exists at `%TEMP%\zhaodai-sandbox\Terraria.exe` but **lacks `Content/` and the
+  four dependencies**, so it cannot serve as `-GameDirectory` alone.
+* **⚠ Verify the hash before every long sweep:**
+  `(Get-FileHash "D:\Program Files (x86)\Steam\steamapps\common\Terraria\Terraria.exe" -Algorithm SHA256).Hash`
+  must equal `960A03BFF6050CF7BE16DFC1A7B19E10FC2C4F8F835A6A3B135A50DD9E6BA2F3`.
+* **If it happens again: do NOT modify source and do NOT relax the hash.** The probe's refusal is correct
+  behaviour. Wait for the executable to return to the reviewed value.
+* Round-187 results taken before 11:09:32 are **unaffected**; the right-side dps-625 point was correctly
+  stopped by the probe's `Preparation input changed concurrently` check.
 
 ---
 
@@ -43,12 +66,19 @@ band cannot be moved out of range in either direction.** Moving the refill apex 
 | "descend earlier to raise apex" | 0 (unreachable) |
 | dash timing 0 | −2 |
 | dash timing 1 | worse |
+| **dash timing 7 / 10 / 14** | **worse — axis now closed at both ends** |
 | dash timing × ceiling | anti-compose |
 | start side right | −1 |
 | armour tier shroomite | strictly worse |
 
+**★ The dash-timing axis is now COMPLETELY swept (0/1/2/3/4/7/10/14) and shipped 4 is its only optimum.**
+Above 4 (this round, §188.5): dps 400 goes 6h → **7h** at both 7 and 10; dps 500 → 7h at 10; dps 550 → 7h at
+10; dps 700 → 6h; dps 725 → 6h. **No point improved from death to kill.**
+
 **The only genuine win in the whole span is the altitude ceiling (+5)**, and per §170.1 its shape was the
 only kind that ever works: it **added a missing pre-condition** rather than rewriting an existing command.
+Every lever that rewrites a quantity (dash timing, start side, altitude floor, apex refill) has been
+zero-sum or negative — that is now a strong, repeatedly confirmed pattern.
 
 ## 3. The quantified gap
 
