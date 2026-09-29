@@ -16158,3 +16158,87 @@ t=412 时 `dx=117.3`，此后 BOSS 每 tick 向左 9.28，
 
 **源码零改动**；构建干净；测试 **749 通过 / 9 失败**。
 `tmp/Player.cs`（反编译产物）可用于后续查证，**注意是 UTF-16**。
+
+### 185.6 ★★★ 反向是**原版引擎强制的**，不是脚本 bug —— 更正 §185.4 的修复方案
+
+**反编译找到了那行代码（`tmp/Player.cs`，`Player.cs:21279-21300`）：**
+
+```csharp
+int num3 = ((velocity.X != 0f) ? Math.Sign(velocity.X) : direction);   // L21279
+...
+ApplyDamageToNPC(nPC, (int)num, num2, num3, crit, null, 3097);         // L21282  盾对 NPC 造成伤害
+eocDash = 10;                                                          // L21284
+dashDelay = 30;                                                        // L21285
+if (oldStyleParkour)                                                   // L21286
+{
+    velocity.X = -num3 * 9;                                            // L21288  ★ 反向！
+    velocity.Y = -4f;
+}
+GiveImmuneTimeForCollisionAttack(4);                                   // L21291
+eocHit = i;                                                            // L21292
+
+// L21295  同一段外的收尾（非 oldStyleParkour 路径）
+if (eocHit >= 0 && !oldStyleParkour)
+{
+    int num4 = ((velocity.X != 0f) ? Math.Sign(velocity.X) : direction);
+    velocity.X = -num4 * 9;                                            // L21298  ★ 同样是 −9
+    velocity.Y = -4f;
+}
+```
+
+**★ 观测到的 `vx = −9.00, vy = −4.00` 与 `velocity.X = -num4 * 9; velocity.Y = -4f;`
+逐位吻合** —— （`-4f` 就是观测的 `vy = −4.00`）。
+
+**所以 t=413 的 −9.00 是原版"盾撞到敌人后的后坐"**，
+方向为 `−(冲刺方向的符号)`，速度恰好 9。
+
+### 185.7 ★★ 与当前几何的致命耦合
+
+- 玩家冲刺方向 `dir2 = +1`（向右，**远离** t=412 时位于左侧的 BOSS）→ 这是**正确**的选择；
+- 但原版后坐把它变成 `velocity.X = −9`（**向左**）；
+- 而 **BOSS 的冲刺速度正是 `(−9.28, −14.24)`** —— **后坐方向与 BOSS 冲锋方向几乎完全重合！**
+
+**即：这一记正确的闪避冲刺，被原版后坐直接送进了 BOSS 的冲锋轨迹，
+且速度（9）几乎等于 BOSS 的横向速度（9.28），玩家相对 BOSS 横向几乎静止。**
+
+免疫在 10 tick 后（t=421）到期，此时 BOSS 仍与玩家重叠 ⇒ **t=422 受击**。
+
+### 185.8 ★ 因此 §185.4 的"锁住水平速度"**不可行** —— 原版不允许
+
+**§185.4 提出的修复（冲刺后保持 +9 向右）在原版里做不到**：
+`dashDelay > 0` 期间进入的是 `Player.cs:21426` 分支（只递减 `eocDash`/`dashDelay`），
+**速度的 −9 由 L21288/L21298 一次性写入，脚本无法阻止**。
+
+**但链路里仍有一个真正属于脚本的自由度，而且是唯一的一个：`dir2`。**
+`DoCommonDashHandle`（L21738）从**玩家输入**推导方向：
+
+```csharp
+if (controlDash && !CCed && releaseDash) {          // L21752
+    int num2 = direction;                            // L21754  facing
+    int num3 = controlRight.ToInt() - controlLeft.ToInt();  // L21755
+    int num4 = num2;
+    if (num3 == -num2) num4 = num3;                  // L21757-21259
+    num = num4;
+}
+if ((controlRight && releaseRight && flag) || num == 1) {   // L21763
+    dir = 1; dashing = true; ...
+}
+```
+
+**★ 后坐方向 = `−(num4)` = −(冲刺方向)。所以后坐方向完全由脚本下发的
+`controlRight/controlLeft`（即 `plan.horizontal`）与 facing 决定。**
+
+**这给出一条可测的、有机制支撑的下一杠杆：**
+**在即将被 BOSS 本体接触时，选择冲刺方向使后坐方向背离 BOSS 的冲锋方向。**
+当前脚本在 t=407 选择的方向让后坐**顺着** BOSS 冲锋（最坏情况）；
+**若方向反过来，后坐会变成 +9（向右）**，即顺着 BOSS 冲锋的**反方向**，
+相对分离速率约 **18.3 px/tick**，10 tick 免疫窗口内即可脱离本体箱（§185.3 已算出）。
+
+**这属于"为已有命令补上缺失的前置条件"（改变方向选择的条件），
+不是删除命令**，符合 §170.1 的筛查规则；**须以净击杀数判定**（§177）。
+
+### 185.9 本轮状态（最终）
+
+**源码零改动**；构建干净；测试 **749 通过 / 9 失败**；
+`tmp/Player.cs` 反编译产物（**UTF-16**）保留备查；
+`docs/fishron-native-truth.md` §185.1-§185.9。
