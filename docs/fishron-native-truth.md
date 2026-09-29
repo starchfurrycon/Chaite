@@ -16537,3 +16537,67 @@ if ((controlRight && releaseRight && flag) || num == 1) {   // L21763
 出厂配置（WDD=4 + 上限 4400 + 左侧起点）仍是唯一实测最优：11 击杀 / 27 点。**
 
 **源码零改动。**
+
+---
+
+## §188. 第 187 轮：**验收环境一度被外部工具破坏，已确认恢复**
+
+### 188.1 事件
+
+第 187 轮启动"更晚冲刺"扫描时，探针拒绝启动：
+
+```
+Only verified vanilla 1.4.5.8 supported
+  at prepare-game-probe.ps1:114
+```
+
+**实测：`Terraria.exe` 的 SHA256 已不再是受验证的值。**
+
+| | SHA256 |
+|---|---|
+| 探针期望 | `960A03BFF6050CF7BE16DFC1A7B19E10FC2C4F8F835A6A3B135A50DD9E6BA2F3` |
+| **当时实际** | `275D1088082AFB516E4A48E53D170E9DDB910101B5D0BD81F7B08B3035315CC0` |
+
+**文件版本仍为 1.4.5.8、大小 26596352 字节、修改时间 `2026/9/29 11:09:32`**，
+且同目录出现 **`ZhaDai.Runtime.dll`**（版本 `0.1.0.0`，产品名 `ZhaDai.Runtime`，
+`SHA256=41A7CF823AEE3D409DD34D45D923D7B52E1F643B801F2312B28D51439C8A9F68`，修改于 11:00:32），
+同时有 Terraria 进程以 `-savedirectory ...\Temp\zhadai-live\save` 运行。
+
+**暂存目录 `%TEMP%` 下存在 `zhadai-fakegame` / `zhadai-live` / `zhadai-patched` / `zhadai-verify` /
+`zhaodai-sandbox`**，其中 `zhadai-patched` 与 `zhadai-verify` 各含一个
+`Terraria.patched.exe`（26596352 字节）。**即：有外部工具（"ZhaDai"）在改写这份 Terraria 安装。**
+
+**本轮 §187.1-§187.4 的龙卷发现与 §187.7 起点侧结论不受影响**
+（它们的 run 在 11:09:32 之前完成；右侧扫描的 625 号点被该检查正确拦下）。
+
+### 188.2 恢复确认
+
+**随后复查时，`Terraria.exe` 已回到受验证的值**：
+
+| 项 | 状态 |
+|---|---|
+| `Terraria.exe` SHA256 | `960A03BFF6050CF7BE16DFC1A7B19E10FC2C4F8F835A6A3B135A50DD9E6BA2F3` ✅ |
+| 4 个依赖 DLL | 全部与探针清单一致 ✅ |
+| `Content/` | 存在 ✅ |
+| Terraria 进程 | **未运行**（文件未被占用）✅ |
+
+**`C:\Users\lenovo\AppData\Local\Temp\zhaodai-sandbox\Terraria.exe` 也是一份受验证的夹具**
+（哈希一致，26597888 字节，2026/9/13），但**该目录没有 `Content/` 与 4 个依赖**，
+所以**不能**单独作为 `-GameDirectory` 使用。
+
+**残留**：`ZhaDai.Runtime.dll` 仍在安装目录里（未随 exe 一起还原），
+**但对原版进程是惰性的**（原版 Terraria 不会加载任意 DLL），**且探针不校验它**，故不影响验收。
+
+### 188.3 教训与后续注意
+
+* **长扫描开始前必须先校验 `Terraria.exe` 哈希**；本次事故让一个 40 点的扫描白费。
+* 若再次出现 `Only verified vanilla 1.4.5.8 supported`：
+  **不要修改源码、不要放宽哈希**（探针拒绝是正确行为）；
+  先确认外部工具是否仍在运行，等 exe 回到受验证值，或在取得业主同意后从原始安装恢复。
+* 探针已内置并发修改检测（`Preparation input changed concurrently`），**该检查正确工作过一次**。
+
+### 188.4 本轮状态
+
+**源码零改动**；构建干净；测试 **749 通过 / 9 失败**；
+环境已恢复，`kS-w*`（更晚冲刺 7/10/14/20）扫描重新启动；
+`docs/fishron-native-truth.md` §188.1-§188.4。
