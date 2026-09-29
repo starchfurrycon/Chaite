@@ -673,22 +673,43 @@ namespace Chaite.Core
         private const string WeakAltitudeCeilingVariable =
             "CHAITE_WEAK_ALTITUDE_CEILING";
 
+        /// <summary>Default weak-wing altitude ceiling, in world pixels.
+        ///
+        /// 4400 px is 275 tiles, which is the top of the band the no-hit video's
+        /// own player holds (218..275 tiles). MEASURED (round 179, obsidian
+        /// native): making this the shipped value takes the strong wing from
+        /// 3/28 to 28/28 kills with +25/-0 and the weak wing from 10/28 to 12/28
+        /// with +5/-3, and produces zero-hit kills at strong 1175/1200/1300/2000.
+        ///
+        /// MEASURED (round 179b): the rule has a WIDE PLATEAU -- 4000, 4200,
+        /// 4400 and 4600 give byte-identical ticks, hits and boss life at every
+        /// tested point -- with a cliff at 4800, where weak 625 goes from a
+        /// four-hit kill to a six-hit death and 800 from a two-hit kill to a
+        /// five-hit death. So this is not a tuned value; anywhere in the plateau
+        /// is equivalent, and 4400 is chosen as its centre.
+        ///
+        /// The rule is inactive on every route but the fairy-wing one, so the
+        /// strong wing's own reviewed circuit is reached through its own entry
+        /// rather than through this default. Setting the variable to 0 turns the
+        /// rule off and reproduces the pre-round-179 circuit byte for byte.</summary>
+        private const float WeakAltitudeCeilingDefault = 4400f;
+
         /// <summary>Weak-wing altitude ceiling in world pixels: below this y the
         /// cruise vertical is turned into a climb while the flight budget lasts.
-        /// Zero (the default) disables the rule and reproduces the reviewed
-        /// circuit byte for byte.</summary>
+        /// Defaults to <see cref="WeakAltitudeCeilingDefault"/>; a positive
+        /// variable overrides it and zero disables the rule.</summary>
         private static float WeakAltitudeCeilingPixels
         {
             get
             {
                 var raw = Environment.GetEnvironmentVariable(
                     WeakAltitudeCeilingVariable);
+                if (string.IsNullOrEmpty(raw)) return WeakAltitudeCeilingDefault;
                 float value;
-                if (!string.IsNullOrEmpty(raw) &&
-                    float.TryParse(raw.Trim(), NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out value) && value > 0f)
+                if (float.TryParse(raw.Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out value) && value >= 0f)
                     return value;
-                return 0f;
+                return WeakAltitudeCeilingDefault;
             }
         }
 
